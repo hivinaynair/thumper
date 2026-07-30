@@ -421,9 +421,43 @@ main.main-flush {
 	line-height: 1.35;
 }
 
+.cookie-sync-hint p {
+	margin: 0;
+}
+
 .cookie-sync-hint code {
 	font-family: var(--font-mono), ui-monospace, monospace;
 	font-size: 0.9em;
+}
+
+.cookie-sync-hint a {
+	color: var(--ink);
+	text-decoration: underline;
+	text-underline-offset: 0.18em;
+}
+
+.cookie-sync-hint a:hover {
+	color: var(--bronze);
+}
+
+.install-steps {
+	margin: 0.4rem 0 0;
+	padding: 0;
+	list-style: none;
+	counter-reset: step;
+	display: grid;
+	gap: 0.2rem;
+}
+
+.install-steps li {
+	counter-increment: step;
+	opacity: 0.85;
+}
+
+/* Numbers sit inline on the right-aligned block, where list markers can't. */
+.install-steps li::before {
+	content: counter(step) ". ";
+	opacity: 0.6;
 }
 
 @media (max-width: 720px) {

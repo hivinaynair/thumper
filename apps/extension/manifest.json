@@ -7,6 +7,7 @@
   "host_permissions": [
     "https://*.youtube.com/*",
     "https://*.soundcloud.com/*",
+    "https://thumper.vinaynair.dev/*",
     "http://localhost:3004/*",
     "https://*/*"
   ],
@@ -20,7 +21,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["http://localhost:3004/*"],
+      "matches": ["https://thumper.vinaynair.dev/*", "http://localhost:3004/*"],
       "js": ["content.js"],
       "run_at": "document_start"
     }
