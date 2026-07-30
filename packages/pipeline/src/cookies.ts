@@ -1,7 +1,19 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+} from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { assertPathInside, dataRoot, userRoot } from "./paths";
+import { dataRoot } from "./paths";
+import {
+  deleteObject,
+  headObject,
+  putBytes,
+  readBytes,
+  userStorageKey,
+} from "./storage";
 
 const ALGO = "aes-256-gcm";
 
@@ -34,9 +46,8 @@ export function decryptBytes(payload: Buffer): Buffer {
 
 export type CookieProvider = "youtube" | "soundcloud" | "patreon";
 
-function cookieFilePath(userId: string, provider: CookieProvider): string {
-  const root = path.join(userRoot(userId), "cookies");
-  return assertPathInside(root, path.join(root, `${provider}.cookies.enc`));
+function cookieKey(userId: string, provider: CookieProvider): string {
+  return userStorageKey(userId, "cookies", `${provider}.cookies.enc`);
 }
 
 export async function saveEncryptedCookies(
@@ -44,21 +55,17 @@ export async function saveEncryptedCookies(
   provider: CookieProvider,
   netscapeText: string,
 ): Promise<void> {
-  const file = cookieFilePath(userId, provider);
-  await fs.mkdir(path.dirname(file), { recursive: true });
   const encrypted = encryptBytes(Buffer.from(netscapeText, "utf8"));
-  await fs.writeFile(file, encrypted, { mode: 0o600 });
+  await putBytes(cookieKey(userId, provider), encrypted, {
+    contentType: "application/octet-stream",
+  });
 }
 
 export async function deleteCookies(
   userId: string,
   provider: CookieProvider,
 ): Promise<void> {
-  try {
-    await fs.unlink(cookieFilePath(userId, provider));
-  } catch {
-    /* missing ok */
-  }
+  await deleteObject(cookieKey(userId, provider));
 }
 
 export type CookieProviderStatus = {
@@ -77,15 +84,11 @@ export async function getCookieStatus(
   const providers = ["youtube", "soundcloud"] as const;
   const out = {} as CookieStatusMap;
   for (const provider of providers) {
-    try {
-      const stat = await fs.stat(cookieFilePath(userId, provider));
-      out[provider] = {
-        present: stat.isFile() && stat.size > 0,
-        updatedAt: stat.mtime.toISOString(),
-      };
-    } catch {
-      out[provider] = { present: false, updatedAt: null };
-    }
+    const meta = await headObject(cookieKey(userId, provider));
+    out[provider] = {
+      present: Boolean(meta && meta.size > 0),
+      updatedAt: meta?.updatedAt?.toISOString() ?? null,
+    };
   }
   return out;
 }
@@ -95,9 +98,9 @@ export async function materializeCookieFile(
   userId: string,
   provider: CookieProvider,
 ): Promise<string | null> {
-  const file = cookieFilePath(userId, provider);
   try {
-    const encrypted = await fs.readFile(file);
+    const encrypted = await readBytes(cookieKey(userId, provider));
+    if (!encrypted) return null;
     const plain = decryptBytes(encrypted);
     const tmpDir = path.join(dataRoot(), "tmp");
     await fs.mkdir(tmpDir, { recursive: true });

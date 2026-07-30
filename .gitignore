@@ -26,6 +26,8 @@ coverage
 out/
 build
 dist
+__pycache__/
+*.py[cod]
 
 
 # Debug

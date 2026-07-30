@@ -7,6 +7,7 @@
     "dev": "bun --watch --env-file=.env src/index.ts",
     "build": "bun build src/index.ts --outdir dist --target bun --packages external",
     "start": "bun --env-file=.env src/index.ts",
+    "process-job": "bun src/process-job.ts",
     "check-types": "tsc --noEmit",
     "lint": "echo ok"
   },

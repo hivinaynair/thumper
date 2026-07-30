@@ -30,6 +30,8 @@ import { assertPathInside, userRoot } from "./paths";
 import { expandPlaylistEntries, type PlaylistEntry } from "./playlist";
 import { ProcessCancelledError } from "./process";
 import { fetchSpotifyCatalog, type SpotifyTrackMeta } from "./spotify";
+import { putLocalFile, useBlobStorage, userStorageKey } from "./storage";
+import { randomUUID } from "node:crypto";
 
 export type ProgressUpdater = (patch: {
   status?: "running" | "cancelling" | "cancelled" | "completed" | "failed";
@@ -212,7 +214,20 @@ async function processTrack(params: {
   await ensureNotCancelled(signal, db, payload.jobId);
 
   const stat = await fs.stat(outPath);
-  const relativePath = path.relative(userRoot(payload.userId), outPath);
+  let relativePath = path.relative(userRoot(payload.userId), outPath);
+
+  if (useBlobStorage()) {
+    const key = userStorageKey(
+      payload.userId,
+      "downloads",
+      randomUUID(),
+      filename,
+    );
+    await putLocalFile(key, outPath, {
+      contentType: mimeFor(payload.audioFormat),
+    });
+    relativePath = key;
+  }
 
   const [fileRow] = await db
     .insert(files)
@@ -283,7 +298,11 @@ async function resolveSoundCloudMeta(params: {
   let durationMs: number | undefined;
 
   try {
-    const info = await dumpJson(params.trackUrl, params.cookieTmp, params.signal);
+    const info = await dumpJson(
+      params.trackUrl,
+      params.cookieTmp,
+      params.signal,
+    );
     if (!title) title = String(info.title ?? info.track ?? "").trim();
     if (!artist) {
       artist = String(
@@ -300,7 +319,10 @@ async function resolveSoundCloudMeta(params: {
 
   if (!title) title = "track";
   const artists = artist
-    ? artist.split(/,|&/).map((s) => s.trim()).filter(Boolean)
+    ? artist
+        .split(/,|&/)
+        .map((s) => s.trim())
+        .filter(Boolean)
     : [];
 
   return { title, artists, durationMs };
@@ -520,8 +542,7 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
       outDir,
       matchedUrl: payload.spotifyUrl ? trackUrl : undefined,
       catalogUrl:
-        payload.spotifyUrl ??
-        (kind === "soundcloud" ? payload.url : null),
+        payload.spotifyUrl ?? (kind === "soundcloud" ? payload.url : null),
     });
   } catch (err) {
     if (err instanceof ProcessCancelledError) {
@@ -543,7 +564,9 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
     if (cookieTmp) {
       await fs.unlink(cookieTmp).catch(() => undefined);
     }
-    await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+    await fs
+      .rm(workDir, { recursive: true, force: true })
+      .catch(() => undefined);
   }
 }
 

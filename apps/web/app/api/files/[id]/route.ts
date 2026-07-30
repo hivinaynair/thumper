@@ -1,10 +1,8 @@
 import { auth } from "@clerk/nextjs/server";
 import { files } from "@thumper/db";
-import { assertPathInside, userRoot } from "@thumper/pipeline";
+import { resolveDownloadTarget } from "@thumper/pipeline";
 import { and, eq } from "drizzle-orm";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
-import path from "node:path";
 import { Readable } from "node:stream";
 import { NextResponse } from "next/server";
 import { getDb } from "../../../../lib/db";
@@ -13,7 +11,8 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: Request, ctx: Ctx) {
   const { userId } = await auth();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!userId)
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await ctx.params;
   const db = getDb();
 
@@ -25,18 +24,28 @@ export async function GET(_req: Request, ctx: Ctx) {
 
   if (!file) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const absolute = assertPathInside(
-    userRoot(userId),
-    path.join(userRoot(userId), file.relativePath),
-  );
+  const target = await resolveDownloadTarget(userId, file.relativePath);
+  if (!target) {
+    return NextResponse.json({ error: "File missing" }, { status: 404 });
+  }
+
+  if (target.kind === "blob") {
+    return new NextResponse(target.stream, {
+      headers: {
+        "Content-Type":
+          target.contentType || file.mime || "application/octet-stream",
+        "Content-Length": String(target.size),
+        "Content-Disposition": `attachment; filename="${file.filename.replace(/"/g, "")}"`,
+        "Cache-Control": "private, no-store",
+      },
+    });
+  }
 
   try {
-    const info = await stat(absolute);
-    const stream = createReadStream(absolute);
+    const stream = createReadStream(target.absolutePath);
     return new NextResponse(Readable.toWeb(stream) as ReadableStream, {
       headers: {
         "Content-Type": file.mime ?? "application/octet-stream",
-        "Content-Length": String(info.size),
         "Content-Disposition": `attachment; filename="${file.filename.replace(/"/g, "")}"`,
       },
     });

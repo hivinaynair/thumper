@@ -19,6 +19,7 @@
     "@thumper/db": "workspace:*",
     "@thumper/pipeline": "workspace:*",
     "@thumper/shared": "workspace:*",
+    "@vercel/blob": "^2.0.0",
     "drizzle-orm": "^0.45.2",
     "next": "^16.2.12",
     "pg-boss": "^12.26.3",

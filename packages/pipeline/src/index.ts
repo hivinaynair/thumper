@@ -1,3 +1,4 @@
+export * from "./storage";
 export * from "./audio-quality";
 export * from "./convert";
 export * from "./cookies";
