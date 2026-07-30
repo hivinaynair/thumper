@@ -5,6 +5,7 @@ import type { Db } from "@thumper/db";
 import { files, jobs } from "@thumper/db";
 import {
   detectSourceKind,
+  MAX_PLAYLIST_TRACKS,
   sanitizeFilename,
   type AudioFormat,
   type DeliveryDestination,
@@ -14,9 +15,11 @@ import { convertAudio } from "./convert";
 import { materializeCookieFile } from "./cookies";
 import { downloadMedia, dumpJson } from "./download";
 import { uploadToDrive } from "./drive";
+import { matchSpotifyTrackToMirror, mirrorSpotifyTracks } from "./match";
 import { assertPathInside, userRoot } from "./paths";
 import { expandPlaylistEntries, type PlaylistEntry } from "./playlist";
 import { ProcessCancelledError } from "./process";
+import { fetchSpotifyCatalog } from "./spotify";
 
 export type ProgressUpdater = (patch: {
   status?: "running" | "cancelling" | "cancelled" | "completed" | "failed";
@@ -42,6 +45,8 @@ export type ProgressUpdater = (patch: {
     playlist?: boolean;
     trackCount?: number;
     childJobIds?: string[];
+    unmatchedCount?: number;
+    matchScore?: number;
   };
 }) => Promise<void>;
 
@@ -85,6 +90,8 @@ async function processTrack(params: {
   cookieTmp: string | null;
   workDir: string;
   outDir: string;
+  matchedUrl?: string;
+  matchScore?: number;
 }): Promise<void> {
   const { deps, soundcloud, cookieTmp, workDir, outDir } = params;
   const { db, payload, signal, update } = deps;
@@ -92,6 +99,7 @@ async function processTrack(params: {
   await update({
     title: params.titleHint,
     artist: params.artistHint,
+    matchedUrl: params.matchedUrl ?? params.trackUrl,
     stage: "downloading",
     progress: 20,
   });
@@ -199,6 +207,7 @@ async function processTrack(params: {
       driveFileId,
       driveUrl,
       qualityLabel,
+      matchScore: params.matchScore,
     },
   });
 }
@@ -215,10 +224,87 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
     await fs.mkdir(outDir, { recursive: true });
 
     const kind = detectSourceKind(payload.url);
-    if (kind !== "youtube" && kind !== "soundcloud") {
-      throw new Error("Only YouTube and SoundCloud URLs are supported");
+    if (kind !== "youtube" && kind !== "soundcloud" && kind !== "spotify") {
+      throw new Error(
+        "Only YouTube, SoundCloud, and Spotify (mirror) URLs are supported",
+      );
     }
 
+    // ——— Spotify catalog → mirror to YT/SC ———
+    if (kind === "spotify") {
+      await ensureNotCancelled(signal, db, payload.jobId);
+      const catalog = await fetchSpotifyCatalog(payload.url);
+      if (!catalog || catalog.tracks.length === 0) {
+        throw new Error("Could not read Spotify catalog metadata");
+      }
+
+      await update({
+        title: catalog.title,
+        progress: 15,
+      });
+
+      const tracks = catalog.tracks.slice(0, MAX_PLAYLIST_TRACKS);
+
+      if (tracks.length > 1) {
+        if (!deps.enqueueChildTracks) {
+          throw new Error("Playlist expand requires worker enqueue support");
+        }
+        await update({ progress: 25 });
+        const { matched, failed } = await mirrorSpotifyTracks(tracks, {
+          signal,
+        });
+        if (matched.length === 0) {
+          throw new Error(
+            `No confident YouTube/SoundCloud mirrors found for ${tracks.length} Spotify tracks (need score ≥ 78)`,
+          );
+        }
+        const childJobIds = await deps.enqueueChildTracks(matched);
+        await update({
+          status: "completed",
+          stage: "done",
+          progress: 100,
+          title: catalog.title,
+          result: {
+            playlist: true,
+            trackCount: childJobIds.length,
+            childJobIds,
+            unmatchedCount: failed.length,
+          },
+        });
+        return;
+      }
+
+      // Single Spotify track
+      const track = tracks[0]!;
+      const mirror = await matchSpotifyTrackToMirror(track, { signal });
+      if (!mirror) {
+        throw new Error(
+          `No confident mirror for “${track.artists[0] ?? "?"} – ${track.title}” on YouTube/SoundCloud`,
+        );
+      }
+
+      const mirrorKind = detectSourceKind(mirror.url);
+      cookieTmp = await materializeCookieFile(
+        payload.userId,
+        mirrorKind === "soundcloud" ? "soundcloud" : "youtube",
+      );
+
+      await processTrack({
+        deps,
+        trackUrl: mirror.url,
+        titleHint: mirror.title,
+        artistHint: mirror.artist,
+        soundcloud: mirrorKind === "soundcloud",
+        cookieTmp,
+        workDir,
+        outDir,
+        matchedUrl: mirror.url,
+        matchScore: mirror.matchScore,
+      });
+      return;
+    }
+
+    // ——— YouTube / SoundCloud ———
     cookieTmp = await materializeCookieFile(
       payload.userId,
       kind === "soundcloud" ? "soundcloud" : "youtube",
@@ -271,6 +357,7 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
       cookieTmp,
       workDir,
       outDir,
+      matchedUrl: payload.spotifyUrl ? trackUrl : undefined,
     });
   } catch (err) {
     if (err instanceof ProcessCancelledError) {

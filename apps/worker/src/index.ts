@@ -108,7 +108,8 @@ async function main() {
         .insert(jobs)
         .values({
           userId: parent.userId,
-          sourceUrl: track.url,
+          sourceUrl: track.spotifyUrl ?? track.url,
+          matchedUrl: track.url,
           sourceKind: kind,
           audioFormat: parent.audioFormat,
           destination: parent.destination,
@@ -130,6 +131,7 @@ async function main() {
         titleHint: track.title,
         artistHint: track.artist,
         parentJobId: parent.jobId,
+        spotifyUrl: track.spotifyUrl,
       } satisfies DownloadJobPayload);
 
       await db

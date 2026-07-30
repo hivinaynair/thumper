@@ -6,7 +6,6 @@ export type AudioFormat = z.infer<typeof AudioFormatSchema>;
 export const DeliveryDestinationSchema = z.enum(["browser", "drive", "both"]);
 export type DeliveryDestination = z.infer<typeof DeliveryDestinationSchema>;
 
-/** DB may still contain legacy values; only youtube + soundcloud are accepted for new jobs. */
 export const SourceKindSchema = z.enum([
   "youtube",
   "soundcloud",
@@ -15,7 +14,12 @@ export const SourceKindSchema = z.enum([
 ]);
 export type SourceKind = z.infer<typeof SourceKindSchema>;
 
-export const SupportedSourceKindSchema = z.enum(["youtube", "soundcloud"]);
+/** Accepted inputs. Spotify is catalog-only — audio is mirrored from YT/SC. */
+export const SupportedSourceKindSchema = z.enum([
+  "youtube",
+  "soundcloud",
+  "spotify",
+]);
 export type SupportedSourceKind = z.infer<typeof SupportedSourceKindSchema>;
 
 export const JobStatusSchema = z.enum([
@@ -55,13 +59,15 @@ export const MAX_PLAYLIST_TRACKS = 100;
 export const DownloadJobPayloadSchema = z.object({
   jobId: z.string().uuid(),
   userId: z.string().min(1),
+  /** URL to download (YouTube/SoundCloud). For Spotify parents this is the Spotify URL. */
   url: z.string().url(),
   audioFormat: AudioFormatSchema,
   destination: DeliveryDestinationSchema,
   titleHint: z.string().optional(),
   artistHint: z.string().optional(),
-  /** Set on child track jobs spawned from a playlist parent. */
   parentJobId: z.string().uuid().optional(),
+  /** Provenance when mirrored from Spotify. */
+  spotifyUrl: z.string().url().optional(),
 });
 export type DownloadJobPayload = z.infer<typeof DownloadJobPayloadSchema>;
 
@@ -80,7 +86,7 @@ export function detectSourceKind(url: string): SourceKind | null {
 
 export function isSupportedSource(url: string): boolean {
   const kind = detectSourceKind(url);
-  return kind === "youtube" || kind === "soundcloud";
+  return kind === "youtube" || kind === "soundcloud" || kind === "spotify";
 }
 
 export function looksLikePlaylistUrl(url: string): boolean {
@@ -92,8 +98,9 @@ export function looksLikePlaylistUrl(url: string): boolean {
       if (path.includes("/playlist")) return true;
       if (u.searchParams.has("list")) return true;
     }
-    if (host.includes("soundcloud.com")) {
-      if (path.includes("/sets/")) return true;
+    if (host.includes("soundcloud.com") && path.includes("/sets/")) return true;
+    if (host.includes("spotify.com")) {
+      if (path.includes("/playlist/") || path.includes("/album/")) return true;
     }
     return false;
   } catch {

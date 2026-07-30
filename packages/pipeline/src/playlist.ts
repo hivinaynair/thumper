@@ -6,6 +6,8 @@ export type PlaylistEntry = {
   url: string;
   title?: string;
   artist?: string;
+  /** Original Spotify track URL when this entry was mirrored. */
+  spotifyUrl?: string;
 };
 
 /**

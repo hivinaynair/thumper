@@ -44,7 +44,8 @@ Point DNS at the droplet and set your domain in `docker/caddy/Caddyfile`.
 ## Notes
 
 - Package manager is Bun — no pnpm/npm/yarn
-- Sources: **YouTube + SoundCloud** only (tracks and playlists/sets, max 100 tracks)
+- Sources: **YouTube + SoundCloud** (direct) and **Spotify** (catalog only — mirrored via scored YouTube/SoundCloud match, never Spotify audio)
+- Playlists supported (max 100 tracks); Spotify mirrors require match score ≥ 78
 - Media lives under `DATA_DIR/users/{userId}/` — never under `public/`
 - Cookies encrypted at rest (`COOKIE_ENCRYPTION_KEY`)
 - SoundCloud preview streams fail closed

@@ -20,6 +20,8 @@ type Job = {
     qualityLabel?: string;
     playlist?: boolean;
     trackCount?: number;
+    unmatchedCount?: number;
+    matchScore?: number;
   } | null;
 };
 
@@ -94,14 +96,16 @@ export default function DownloaderPage() {
       <div>
         <h1 style={{ margin: "0 0 0.35rem" }}>Downloader</h1>
         <p className="muted" style={{ margin: 0 }}>
-          Jobs run on the worker (concurrency 1). Progress is stored in Postgres.
+          Jobs run on the worker (concurrency 1). Spotify links are mirrored to
+          YouTube/SoundCloud with a confidence score — audio is never taken from
+          Spotify.
         </p>
       </div>
 
       <form className="panel" onSubmit={createJob}>
         <h2>New job</h2>
         <label>
-          URL (YouTube / SoundCloud track or playlist)
+          URL (YouTube / SoundCloud / Spotify playlist or track)
           <input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
@@ -188,12 +192,22 @@ export default function DownloaderPage() {
                 <div className="muted">
                   {job.stage} · {job.audioFormat} · {job.destination}
                   {job.result?.playlist
-                    ? ` · playlist (${job.result.trackCount ?? "?"} tracks)`
+                    ? ` · playlist (${job.result.trackCount ?? "?"} tracks${
+                        job.result.unmatchedCount
+                          ? `, ${job.result.unmatchedCount} unmatched`
+                          : ""
+                      })`
+                    : ""}
+                  {job.result?.matchScore
+                    ? ` · match ${job.result.matchScore}`
                     : ""}
                   {job.result?.qualityLabel
                     ? ` · ${job.result.qualityLabel}`
                     : ""}
                 </div>
+                {job.matchedUrl ? (
+                  <div className="muted">Mirror: {job.matchedUrl}</div>
+                ) : null}
                 <div className="bar">
                   <span style={{ width: `${job.progress}%` }} />
                 </div>

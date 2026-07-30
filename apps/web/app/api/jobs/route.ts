@@ -45,14 +45,18 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         error:
-          "Only YouTube and SoundCloud track or playlist URLs are supported",
+          "Only YouTube, SoundCloud, or Spotify (mirrored via YT/SC) URLs are supported",
       },
       { status: 400 },
     );
   }
 
   const sourceKind = detectSourceKind(input.url);
-  if (sourceKind !== "youtube" && sourceKind !== "soundcloud") {
+  if (
+    sourceKind !== "youtube" &&
+    sourceKind !== "soundcloud" &&
+    sourceKind !== "spotify"
+  ) {
     return NextResponse.json({ error: "Unsupported URL" }, { status: 400 });
   }
 
