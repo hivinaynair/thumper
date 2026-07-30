@@ -590,23 +590,24 @@ textarea {
 	box-shadow: none;
 }
 
+/* Same pill geometry as .btn — only the weight of the outline differs, so it
+   reads as the quieter sibling of the primary action next to it. */
 .btn.secondary {
-	font-weight: 600;
-	font-size: 0.92rem;
-	letter-spacing: -0.01em;
-	text-transform: none;
-	border-radius: var(--radius);
-	padding: 0.72rem 1.15rem;
 	background: transparent;
-	color: var(--ink);
-	border: 1px solid rgba(92, 92, 92, 0.55);
+	color: rgba(237, 230, 220, 0.72);
+	border-color: rgba(237, 230, 220, 0.3);
 	box-shadow: none;
 }
 
 .btn.secondary:hover {
-	background: rgba(237, 230, 220, 0.06);
+	background: rgba(237, 230, 220, 0.08);
 	color: var(--ink);
-	border-color: rgba(237, 230, 220, 0.35);
+	border-color: rgba(237, 230, 220, 0.7);
+	box-shadow: none;
+}
+
+.btn.secondary:active {
+	background: rgba(237, 230, 220, 0.14);
 	box-shadow: none;
 }
 
