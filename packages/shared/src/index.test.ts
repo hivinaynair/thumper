@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { detectSourceKind, sanitizeFilename } from "./index";
 
 describe("detectSourceKind", () => {
@@ -21,6 +21,6 @@ describe("detectSourceKind", () => {
 
 describe("sanitizeFilename", () => {
   it("strips illegal characters", () => {
-    expect(sanitizeFilename('a/b:c*d?.wav')).toBe("abcd.wav");
+    expect(sanitizeFilename("a/b:c*d?.wav")).toBe("abcd.wav");
   });
 });

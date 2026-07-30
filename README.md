@@ -1,6 +1,6 @@
 # Thumper
 
-Private friends-and-family DJ audio harvest tool. Turborepo monorepo:
+Private friends-and-family DJ audio harvest tool. Turborepo monorepo (**Bun only**):
 
 - `apps/web` — Next.js 16 + Clerk BFF/UI
 - `apps/worker` — pg-boss consumer (yt-dlp / FFmpeg), concurrency 1
@@ -9,6 +9,8 @@ Private friends-and-family DJ audio harvest tool. Turborepo monorepo:
 - `packages/db` — Drizzle schema (jobs = UI source of truth)
 - `packages/pipeline` — download / convert / cookies / Drive
 
+Requires [Bun](https://bun.sh) ≥ 1.3.
+
 ## Quick start (local)
 
 ```bash
@@ -16,17 +18,17 @@ cp .env.example .env
 # fill Clerk keys + COOKIE_ENCRYPTION_KEY
 
 docker compose up -d postgres
-pnpm install
-pnpm --filter web exec -- cp .env.example .env.local   # or symlink
-pnpm --filter worker exec -- cp .env.example .env
+bun install
+cp apps/web/.env.example apps/web/.env.local
+cp apps/worker/.env.example apps/worker/.env
 
 # Clerk: enable invite-only; add Google OAuth with drive.file for Drive delivery
-pnpm dev
+bun run dev
 ```
 
 - Web: http://localhost:3000  
-- Worker: separate process via `pnpm dev` filter  
-- Extension: `pnpm --filter extension build` → Chrome → Load unpacked → `apps/extension/dist`
+- Worker: started via `bun run dev` (turbo filter)  
+- Extension: `bun run --filter extension build` → Chrome → Load unpacked → `apps/extension/dist`
 
 ## Production (Droplet)
 
@@ -41,6 +43,7 @@ Point DNS at the droplet and set your domain in `docker/caddy/Caddyfile`.
 
 ## Notes
 
+- Package manager is Bun — no pnpm/npm/yarn
 - Media lives under `DATA_DIR/users/{userId}/` — never under `public/`
 - Cookies encrypted at rest (`COOKIE_ENCRYPTION_KEY`)
 - SoundCloud preview streams fail closed

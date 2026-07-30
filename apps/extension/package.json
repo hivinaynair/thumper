@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "node ./build.mjs",
+    "build": "bun ./build.mjs",
     "check-types": "tsc --noEmit",
     "lint": "echo ok"
   },

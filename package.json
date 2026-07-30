@@ -1,6 +1,7 @@
 {
   "name": "thumper",
   "private": true,
+  "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --filter=web --filter=worker",
@@ -9,8 +10,8 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "check-types": "turbo run check-types",
-    "db:generate": "pnpm --filter @thumper/db generate",
-    "db:migrate": "pnpm --filter @thumper/db migrate",
+    "db:generate": "bun run --filter @thumper/db generate",
+    "db:migrate": "bun run --filter @thumper/db migrate",
     "format": "prettier --write \"**/*.{ts,tsx,md,json}\""
   },
   "devDependencies": {
@@ -18,8 +19,9 @@
     "turbo": "^2.10.7",
     "typescript": "^5.9.2"
   },
-  "packageManager": "pnpm@10.10.0",
+  "packageManager": "bun@1.3.14",
   "engines": {
-    "node": ">=22.22.0"
+    "node": ">=22.22.0",
+    "bun": ">=1.3.0"
   }
 }

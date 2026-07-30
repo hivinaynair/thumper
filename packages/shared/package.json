@@ -9,15 +9,15 @@
   "scripts": {
     "check-types": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
-    "test": "vitest run"
+    "test": "bun test"
   },
   "dependencies": {
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@thumper/typescript-config": "workspace:*",
+    "@types/bun": "^1.3.9",
     "@types/node": "^22.15.3",
-    "typescript": "^5.9.2",
-    "vitest": "^4.1.10"
+    "typescript": "^5.9.2"
   }
 }
