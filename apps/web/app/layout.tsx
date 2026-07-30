@@ -7,6 +7,7 @@ import {
 } from "@clerk/nextjs";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
+import { ClearStaleServiceWorkers } from "./components/clear-stale-service-workers";
 import "./globals.css";
 
 const sans = Geist({ subsets: ["latin"], variable: "--font-sans" });
@@ -24,6 +25,7 @@ export default function RootLayout({
     <ClerkProvider>
       <html lang="en">
         <body className={`${sans.variable} ${mono.variable}`}>
+          <ClearStaleServiceWorkers />
           <header className="topbar">
             <Link href="/" className="brand">
               Thumper
