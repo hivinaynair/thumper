@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --watch --env-file=.env src/index.ts",
+    "dev": "bun --watch src/index.ts",
     "build": "bun build src/index.ts --outdir dist --target bun --packages external",
-    "start": "bun --env-file=.env src/index.ts",
+    "start": "bun src/index.ts",
     "process-job": "bun src/process-job.ts",
     "check-types": "tsc --noEmit",
     "lint": "echo ok"

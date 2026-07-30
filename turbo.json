@@ -1,10 +1,25 @@
 {
   "$schema": "https://turborepo.dev/schema.json",
   "ui": "tui",
+  "globalEnv": [
+    "NODE_ENV",
+    "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+    "NEXT_PUBLIC_CLERK_SIGN_IN_URL",
+    "CLERK_SECRET_KEY",
+    "DATABASE_URL",
+    "COOKIE_ENCRYPTION_KEY",
+    "DATA_DIR",
+    "WORKER_CONCURRENCY",
+    "YT_DLP_PATH",
+    "PROCESS_BACKEND",
+    "MODAL_JOB_URL",
+    "MODAL_WEBHOOK_SECRET",
+    "BLOB_READ_WRITE_TOKEN"
+  ],
+  "globalDependencies": [".env"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**", "!.next/dev/**"]
     },
     "lint": {

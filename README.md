@@ -16,12 +16,11 @@ Requires [Bun](https://bun.sh) ≥ 1.3.
 
 ```bash
 cp .env.example .env
-# fill Clerk keys + COOKIE_ENCRYPTION_KEY
+# fill Clerk keys + COOKIE_ENCRYPTION_KEY + absolute DATA_DIR
+# one env file for the whole repo — no per-app .env files
 
 docker compose up -d postgres
 bun install
-cp apps/web/.env.example apps/web/.env.local
-cp apps/worker/.env.example apps/worker/.env
 
 # Local worker needs yt-dlp + ffmpeg on PATH (Homebrew on macOS)
 brew install yt-dlp ffmpeg
@@ -36,7 +35,12 @@ bun run dev
 - Worker: started via `bun run dev` (turbo filter) — uses `PROCESS_BACKEND=pgboss` (default)
 - Extension: `bun run --filter extension build` → Chrome → Load unpacked → `apps/extension/dist`
 
-Local mode stores cookies/media under `DATA_DIR` (default `../../data`). Leave `BLOB_READ_WRITE_TOKEN` unset.
+Local mode stores cookies/media under `DATA_DIR`. Leave `BLOB_READ_WRITE_TOKEN` unset.
+
+Env: one root `.env`, loaded by bun on root scripts and forwarded to each package by
+turbo's `globalEnv`. Run tasks from the repo root (`bun run dev`, `bun run dev:web`) —
+`cd apps/web && bun run dev` won't see it. New vars must be added to `globalEnv` in
+[`turbo.json`](turbo.json) or turbo's strict env mode filters them out.
 
 ## Production (Vercel + Modal + Neon + Blob)
 
