@@ -12,12 +12,14 @@ import {
   type DeliveryDestination,
   type DownloadJobPayload,
 } from "@thumper/shared";
+import { FILE_TTL_MS } from "./cleanup";
 import { convertAudio } from "./convert";
 import { materializeCookieFile } from "./cookies";
 import {
   downloadMedia,
   dumpJson,
   isSoundCloudPreviewError,
+  isSoundCloudUnavailableError,
   SoundCloudPreviewError,
 } from "./download";
 import { uploadToDrive } from "./drive";
@@ -152,7 +154,7 @@ async function processTrack(params: {
     if (
       soundcloud &&
       params.allowYoutubeFallback !== false &&
-      isSoundCloudPreviewError(err)
+      isSoundCloudUnavailableError(err)
     ) {
       await fallbackSoundCloudToYoutube({
         deps,
@@ -164,6 +166,7 @@ async function processTrack(params: {
         outDir,
         matchScore: params.matchScore,
         catalogUrl: params.catalogUrl ?? params.trackUrl,
+        reason: isSoundCloudPreviewError(err) ? "preview-only" : "blocked",
       });
       return;
     }
@@ -217,7 +220,13 @@ async function processTrack(params: {
   const stat = await fs.stat(outPath);
   let relativePath = path.relative(userRoot(payload.userId), outPath);
 
-  if (useBlobStorage()) {
+  const blobMode = useBlobStorage();
+  // Drive-only jobs don't need an object-store copy: Drive holds the durable
+  // artifact, and without a file row the UI shows no Download button. Skipping
+  // it avoids storing a full duplicate of every track.
+  const skipObjectStore = blobMode && payload.destination === "drive";
+
+  if (blobMode && !skipObjectStore) {
     const key = userStorageKey(
       payload.userId,
       "downloads",
@@ -230,18 +239,20 @@ async function processTrack(params: {
     relativePath = key;
   }
 
-  const [fileRow] = await db
-    .insert(files)
-    .values({
-      userId: payload.userId,
-      jobId: payload.jobId,
-      relativePath,
-      filename,
-      mime: mimeFor(payload.audioFormat),
-      sizeBytes: Number(stat.size),
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-    })
-    .returning();
+  const [fileRow] = skipObjectStore
+    ? []
+    : await db
+        .insert(files)
+        .values({
+          userId: payload.userId,
+          jobId: payload.jobId,
+          relativePath,
+          filename,
+          mime: mimeFor(payload.audioFormat),
+          sizeBytes: Number(stat.size),
+          expiresAt: new Date(Date.now() + FILE_TTL_MS),
+        })
+        .returning();
 
   let driveFileId: string | undefined;
   let driveUrl: string | undefined;
@@ -270,6 +281,13 @@ async function processTrack(params: {
   }
 
   await update({ stage: "cleanup", progress: 95 });
+
+  // In blob mode the converted file on disk is now redundant — either it's in
+  // the object store, or the job was Drive-only and Google has it. Local/disk
+  // deployments keep it, since there `outDir` *is* the storage.
+  if (blobMode) {
+    await fs.unlink(outPath).catch(() => undefined);
+  }
   await update({
     status: "completed",
     stage: "done",
@@ -337,6 +355,8 @@ async function fallbackSoundCloudToYoutube(params: {
   outDir: string;
   matchScore?: number;
   catalogUrl?: string | null;
+  /** Why SoundCloud couldn't serve the audio — used only for the error text. */
+  reason: "preview-only" | "blocked";
 }): Promise<void> {
   const { deps, workDir, outDir } = params;
   const { payload, signal, update } = deps;
@@ -357,8 +377,12 @@ async function fallbackSoundCloudToYoutube(params: {
 
   const mirror = await matchTrackToYoutube(meta, { signal });
   if (!mirror) {
+    const because =
+      params.reason === "preview-only"
+        ? "SoundCloud was preview-only"
+        : "SoundCloud audio is DRM-protected or blocked in your region";
     throw new Error(
-      `SoundCloud was preview-only and no confident YouTube mirror found for “${meta.artists[0] ?? "?"} – ${meta.title}”`,
+      `${because} and no confident YouTube mirror found for “${meta.artists[0] ?? "?"} – ${meta.title}”`,
     );
   }
 

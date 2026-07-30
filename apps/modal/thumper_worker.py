@@ -111,6 +111,34 @@ def process_job(job_id: str) -> str:
     return _run_process_job(job_id)
 
 
+@app.function(
+    image=worker_image,
+    secrets=[secrets],
+    schedule=modal.Period(minutes=20),
+    timeout=300,
+)
+def sweep_expired() -> str:
+    """Delete Blob objects past their expiry (see FILE_TTL_MS in the pipeline)."""
+    env = os.environ.copy()
+    env.setdefault("DATA_DIR", "/tmp/thumper-data")
+
+    result = subprocess.run(
+        ["bun", "src/sweep.ts"],
+        cwd="/app/apps/worker",
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"sweep failed ({result.returncode})\n"
+            f"stdout:\n{result.stdout[-2000:]}\n"
+            f"stderr:\n{result.stderr[-2000:]}"
+        )
+    return result.stdout[-1000:]
+
+
 @app.function(image=endpoint_image, secrets=[secrets], timeout=30)
 @modal.fastapi_endpoint(method="POST")
 def wake(item: dict):

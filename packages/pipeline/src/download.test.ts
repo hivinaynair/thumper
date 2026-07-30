@@ -1,0 +1,47 @@
+import { describe, expect, it } from "bun:test";
+import {
+  isSoundCloudPreviewError,
+  isSoundCloudUnavailableError,
+  SoundCloudPreviewError,
+} from "./download";
+
+describe("isSoundCloudUnavailableError", () => {
+  it("matches the DRM error yt-dlp reports for encrypted tracks", () => {
+    const err = new Error(
+      "/opt/venv/bin/yt-dlp failed (1): ERROR: [soundcloud] 2269449665: This video is DRM protected",
+    );
+    expect(isSoundCloudUnavailableError(err)).toBe(true);
+  });
+
+  it("matches geo-blocked tracks", () => {
+    for (const message of [
+      "ERROR: [soundcloud] 123: The uploader has not made this video available in your country",
+      "ERROR: This video is not available from your location",
+      "ERROR: [soundcloud] 123: Video is geo restricted",
+    ]) {
+      expect(isSoundCloudUnavailableError(new Error(message))).toBe(true);
+    }
+  });
+
+  it("still covers preview-only tracks", () => {
+    expect(
+      isSoundCloudUnavailableError(new SoundCloudPreviewError("preview-only")),
+    ).toBe(true);
+  });
+
+  it("ignores ordinary download failures so they surface as errors", () => {
+    for (const message of [
+      "ERROR: unable to download video data: HTTP Error 403: Forbidden",
+      "ERROR: [soundcloud] 123: Unable to extract client id",
+      "ffmpeg exited with code 1",
+    ]) {
+      expect(isSoundCloudUnavailableError(new Error(message))).toBe(false);
+    }
+  });
+
+  it("does not treat DRM as preview-only", () => {
+    expect(isSoundCloudPreviewError(new Error("This video is DRM protected"))).toBe(
+      false,
+    );
+  });
+});

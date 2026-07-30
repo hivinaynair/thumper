@@ -1,8 +1,10 @@
 const originInput = document.getElementById("origin");
 const msg = document.getElementById("msg");
 
+const DEFAULT_ORIGIN = "https://thumper.vinaynair.dev";
+
 chrome.storage.sync.get(["origin"], (data) => {
-  originInput.value = data.origin || "http://localhost:3004";
+  originInput.value = data.origin || DEFAULT_ORIGIN;
 });
 
 document.getElementById("sync").addEventListener("click", async () => {

@@ -118,6 +118,24 @@ export function isSoundCloudPreviewError(err: unknown): boolean {
   return err instanceof Error && /preview-only/i.test(err.message);
 }
 
+/**
+ * SoundCloud won't hand over playable audio at all — preview-only, Widevine
+ * DRM, or region-locked. Distinct from a transient download failure: retrying
+ * won't help, but a YouTube mirror can still satisfy the job.
+ *
+ * Only consulted for SoundCloud sources, so the patterns stay narrow rather
+ * than swallowing genuine download faults.
+ */
+export function isSoundCloudUnavailableError(err: unknown): boolean {
+  if (isSoundCloudPreviewError(err)) return true;
+  if (!(err instanceof Error)) return false;
+  // "available in your country" (unanchored) catches yt-dlp's actual phrasing,
+  // "The uploader has not made this video available in your country".
+  return /DRM protected|available in your country|not available from your location|geo[\s-]?restricted|blocked it in your country/i.test(
+    err.message,
+  );
+}
+
 export async function dumpJson(
   url: string,
   cookiePath?: string | null,

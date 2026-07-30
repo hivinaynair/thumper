@@ -1,6 +1,10 @@
 import { createClerkClient } from "@clerk/backend";
 import { createDb, jobs } from "@thumper/db";
-import { runDownloadJob, type PlaylistEntry } from "@thumper/pipeline";
+import {
+  runDownloadJob,
+  sweepExpiredFiles,
+  type PlaylistEntry,
+} from "@thumper/pipeline";
 import {
   detectSourceKind,
   DownloadJobPayloadSchema,
@@ -177,6 +181,19 @@ async function main() {
       }
     },
   );
+
+  // Expired files are swept here for disk/Compose deployments. Under Modal the
+  // worker is one-shot, so a scheduled function does the sweep instead.
+  const sweep = async () => {
+    try {
+      const { deleted, failed } = await sweepExpiredFiles(db);
+      if (deleted || failed) log.info({ deleted, failed }, "Expiry sweep");
+    } catch (err) {
+      log.warn({ err }, "Expiry sweep failed");
+    }
+  };
+  void sweep();
+  setInterval(() => void sweep(), 15 * 60 * 1000).unref();
 
   log.info(
     { concurrency: env.WORKER_CONCURRENCY },
