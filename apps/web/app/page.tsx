@@ -7,8 +7,8 @@ export default function HomePage() {
       <p className="muted">Private booth tool · friends & family</p>
       <h1>Thumper</h1>
       <p>
-        Harvest high-quality audio from YouTube, SoundCloud, Spotify mirrors,
-        and Patreon — convert to FLAC/WAV/ALAC, deliver to browser or Drive.
+        Harvest high-quality audio from YouTube and SoundCloud — tracks or
+        playlists — convert to FLAC/WAV/ALAC, deliver to browser or Drive.
       </p>
       <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
         <Show when="signed-in">

@@ -1,9 +1,11 @@
 import { createClerkClient } from "@clerk/backend";
 import { createDb, jobs } from "@thumper/db";
-import { runDownloadJob } from "@thumper/pipeline";
+import { runDownloadJob, type PlaylistEntry } from "@thumper/pipeline";
 import {
+  detectSourceKind,
   DownloadJobPayloadSchema,
   QUEUE_NAME_DOWNLOAD,
+  type DownloadJobPayload,
 } from "@thumper/shared";
 import { eq } from "drizzle-orm";
 import { PgBoss } from "pg-boss";
@@ -50,9 +52,7 @@ async function getGoogleAccessToken(userId: string): Promise<string | null> {
 
 async function updateJob(
   jobId: string,
-  patch: Parameters<
-    Parameters<typeof runDownloadJob>[0]["update"]
-  >[0],
+  patch: Parameters<Parameters<typeof runDownloadJob>[0]["update"]>[0],
 ) {
   const values: Record<string, unknown> = {
     updatedAt: new Date(),
@@ -65,7 +65,11 @@ async function updateJob(
   if (patch.matchedUrl !== undefined) values.matchedUrl = patch.matchedUrl;
   if (patch.error !== undefined) values.error = patch.error;
   if (patch.result !== undefined) values.result = patch.result;
-  if (patch.status === "completed" || patch.status === "failed" || patch.status === "cancelled") {
+  if (
+    patch.status === "completed" ||
+    patch.status === "failed" ||
+    patch.status === "cancelled"
+  ) {
     values.completedAt = new Date();
   }
   await db.update(jobs).set(values).where(eq(jobs.id, jobId));
@@ -75,10 +79,8 @@ async function main() {
   const boss = new PgBoss(env.DATABASE_URL);
   boss.on("error", (err: Error) => log.error({ err }, "pg-boss error"));
   await boss.start();
-
   await boss.createQueue(QUEUE_NAME_DOWNLOAD);
 
-  // Poll for cancel requests
   setInterval(async () => {
     try {
       const cancelling = await db
@@ -92,6 +94,53 @@ async function main() {
       log.warn({ err }, "cancel poll failed");
     }
   }, 1000).unref();
+
+  async function enqueueChildTracks(
+    parent: DownloadJobPayload,
+    tracks: PlaylistEntry[],
+  ): Promise<string[]> {
+    const childIds: string[] = [];
+    for (const track of tracks) {
+      const kind = detectSourceKind(track.url) ?? detectSourceKind(parent.url);
+      if (kind !== "youtube" && kind !== "soundcloud") continue;
+
+      const [child] = await db
+        .insert(jobs)
+        .values({
+          userId: parent.userId,
+          sourceUrl: track.url,
+          sourceKind: kind,
+          audioFormat: parent.audioFormat,
+          destination: parent.destination,
+          title: track.title,
+          artist: track.artist,
+          status: "queued",
+          stage: "queued",
+          progress: 0,
+        })
+        .returning();
+      if (!child) continue;
+
+      const bossId = await boss.send(QUEUE_NAME_DOWNLOAD, {
+        jobId: child.id,
+        userId: parent.userId,
+        url: track.url,
+        audioFormat: parent.audioFormat,
+        destination: parent.destination,
+        titleHint: track.title,
+        artistHint: track.artist,
+        parentJobId: parent.jobId,
+      } satisfies DownloadJobPayload);
+
+      await db
+        .update(jobs)
+        .set({ pgBossId: bossId ?? null, updatedAt: new Date() })
+        .where(eq(jobs.id, child.id));
+
+      childIds.push(child.id);
+    }
+    return childIds;
+  }
 
   await boss.work(
     QUEUE_NAME_DOWNLOAD,
@@ -116,6 +165,7 @@ async function main() {
           signal: ac.signal,
           update: (patch) => updateJob(payload.jobId, patch),
           getGoogleAccessToken,
+          enqueueChildTracks: (tracks) => enqueueChildTracks(payload, tracks),
         });
       } finally {
         abortControllers.delete(payload.jobId);

@@ -18,6 +18,8 @@ type Job = {
     fileId?: string;
     driveUrl?: string;
     qualityLabel?: string;
+    playlist?: boolean;
+    trackCount?: number;
   } | null;
 };
 
@@ -99,7 +101,7 @@ export default function DownloaderPage() {
       <form className="panel" onSubmit={createJob}>
         <h2>New job</h2>
         <label>
-          URL (YouTube / SoundCloud / Spotify / Patreon)
+          URL (YouTube / SoundCloud track or playlist)
           <input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
@@ -151,7 +153,6 @@ export default function DownloaderPage() {
           >
             <option value="youtube">YouTube</option>
             <option value="soundcloud">SoundCloud</option>
-            <option value="patreon">Patreon</option>
           </select>
         </label>
         <label>
@@ -186,6 +187,9 @@ export default function DownloaderPage() {
                 </header>
                 <div className="muted">
                   {job.stage} · {job.audioFormat} · {job.destination}
+                  {job.result?.playlist
+                    ? ` · playlist (${job.result.trackCount ?? "?"} tracks)`
+                    : ""}
                   {job.result?.qualityLabel
                     ? ` · ${job.result.qualityLabel}`
                     : ""}

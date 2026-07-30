@@ -15,14 +15,8 @@ import { materializeCookieFile } from "./cookies";
 import { downloadMedia, dumpJson } from "./download";
 import { uploadToDrive } from "./drive";
 import { assertPathInside, userRoot } from "./paths";
+import { expandPlaylistEntries, type PlaylistEntry } from "./playlist";
 import { ProcessCancelledError } from "./process";
-import {
-  buildYoutubeSearchQuery,
-  durationMatchFilter,
-  fetchSpotifyTrackMeta,
-} from "./spotify";
-import { getYtDlpPath } from "./paths";
-import { runCommandOk } from "./process";
 
 export type ProgressUpdater = (patch: {
   status?: "running" | "cancelling" | "cancelled" | "completed" | "failed";
@@ -45,6 +39,9 @@ export type ProgressUpdater = (patch: {
     driveFileId?: string;
     driveUrl?: string;
     qualityLabel?: string;
+    playlist?: boolean;
+    trackCount?: number;
+    childJobIds?: string[];
   };
 }) => Promise<void>;
 
@@ -54,6 +51,7 @@ export type RunJobDeps = {
   signal: AbortSignal;
   update: ProgressUpdater;
   getGoogleAccessToken?: (userId: string) => Promise<string | null>;
+  enqueueChildTracks?: (tracks: PlaylistEntry[]) => Promise<string[]>;
 };
 
 function extFor(format: AudioFormat): string {
@@ -78,71 +76,131 @@ async function ensureNotCancelled(signal: AbortSignal, db: Db, jobId: string) {
   }
 }
 
-async function resolveDownloadUrl(
-  payload: DownloadJobPayload,
-  signal: AbortSignal,
-  update: ProgressUpdater,
-): Promise<{ url: string; title?: string; artist?: string; soundcloud: boolean }> {
-  if (payload.confirmedMatchUrl) {
-    await update({ matchedUrl: payload.confirmedMatchUrl });
-    return {
-      url: payload.confirmedMatchUrl,
-      title: payload.titleHint,
-      artist: payload.artistHint,
-      soundcloud: false,
-    };
+async function processTrack(params: {
+  deps: RunJobDeps;
+  trackUrl: string;
+  titleHint?: string;
+  artistHint?: string;
+  soundcloud: boolean;
+  cookieTmp: string | null;
+  workDir: string;
+  outDir: string;
+}): Promise<void> {
+  const { deps, soundcloud, cookieTmp, workDir, outDir } = params;
+  const { db, payload, signal, update } = deps;
+
+  await update({
+    title: params.titleHint,
+    artist: params.artistHint,
+    stage: "downloading",
+    progress: 20,
+  });
+  await ensureNotCancelled(signal, db, payload.jobId);
+
+  const downloaded = await downloadMedia({
+    url: params.trackUrl,
+    workDir,
+    cookiePath: cookieTmp,
+    soundcloud,
+    signal,
+  });
+
+  if (soundcloud) {
+    try {
+      const info = await dumpJson(params.trackUrl, cookieTmp, signal);
+      const duration = Number(info.duration ?? 0);
+      if (duration > 0 && duration <= 35) {
+        throw new Error(
+          "SoundCloud track appears to be preview-only (≤35s). Upload a full-access cookie or pick another source.",
+        );
+      }
+    } catch (err) {
+      if (err instanceof ProcessCancelledError) throw err;
+      if (err instanceof Error && err.message.includes("preview-only")) {
+        throw err;
+      }
+    }
   }
 
-  const kind = detectSourceKind(payload.url);
-  if (kind === "spotify") {
-    const meta = await fetchSpotifyTrackMeta(payload.url);
-    if (!meta) throw new Error("Could not read Spotify metadata");
-    await update({
-      title: meta.title,
-      artist: meta.artists.join(", "),
-      progress: 10,
-    });
+  const title = params.titleHint ?? downloaded.title ?? "track";
+  const artist = params.artistHint;
+  await update({ title, artist, stage: "converting", progress: 55 });
+  await ensureNotCancelled(signal, db, payload.jobId);
 
-    const query = buildYoutubeSearchQuery(meta);
-    const filter = durationMatchFilter(meta.durationMs);
-    const args = ["--flat-playlist", "--print", "%(id)s", "--no-warnings"];
-    if (filter) args.push("--match-filter", filter);
-    args.push(query);
-    const { stdout } = await runCommandOk(getYtDlpPath(), args, { signal });
-    const ids = stdout
-      .split("\n")
-      .map((l: string) => l.trim())
-      .filter(Boolean);
-    if (!ids[0]) {
+  const filename = `${sanitizeFilename(
+    artist ? `${artist} - ${title}` : title,
+  )}.${extFor(payload.audioFormat)}`;
+  const outPath = assertPathInside(outDir, path.join(outDir, filename));
+
+  const { qualityLabel } = await convertAudio({
+    inputPath: downloaded.filePath,
+    outputPath: outPath,
+    target: payload.audioFormat,
+    title,
+    artist,
+    signal,
+  });
+
+  await update({ stage: "delivering", progress: 80 });
+  await ensureNotCancelled(signal, db, payload.jobId);
+
+  const stat = await fs.stat(outPath);
+  const relativePath = path.relative(userRoot(payload.userId), outPath);
+
+  const [fileRow] = await db
+    .insert(files)
+    .values({
+      userId: payload.userId,
+      jobId: payload.jobId,
+      relativePath,
+      filename,
+      mime: mimeFor(payload.audioFormat),
+      sizeBytes: Number(stat.size),
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    })
+    .returning();
+
+  let driveFileId: string | undefined;
+  let driveUrl: string | undefined;
+
+  const wantsDrive =
+    payload.destination === "drive" || payload.destination === "both";
+  if (wantsDrive) {
+    const token = await deps.getGoogleAccessToken?.(payload.userId);
+    if (!token) {
       throw new Error(
-        "No YouTube match for Spotify track — confirm a match in the UI",
+        "Google Drive selected but no Google token with drive.file — reconnect Google in account settings",
       );
     }
-    const matchedUrl = `https://www.youtube.com/watch?v=${ids[0]}`;
-    await update({ matchedUrl, progress: 15 });
-    return {
-      url: matchedUrl,
-      title: meta.title,
-      artist: meta.artists.join(", "),
-      soundcloud: false,
-    };
+    const uploaded = await uploadToDrive({
+      accessToken: token,
+      filePath: outPath,
+      filename,
+      mimeType: mimeFor(payload.audioFormat),
+    });
+    driveFileId = uploaded.fileId;
+    driveUrl = uploaded.webViewLink;
+    if (fileRow) {
+      await db
+        .update(files)
+        .set({ driveFileId, driveUrl })
+        .where(eq(files.id, fileRow.id));
+    }
   }
 
-  if (kind === "soundcloud") {
-    return {
-      url: payload.url,
-      title: payload.titleHint,
-      artist: payload.artistHint,
-      soundcloud: true,
-    };
-  }
-
-  return {
-    url: payload.url,
-    title: payload.titleHint,
-    artist: payload.artistHint,
-    soundcloud: false,
-  };
+  await update({ stage: "cleanup", progress: 95 });
+  await update({
+    status: "completed",
+    stage: "done",
+    progress: 100,
+    result: {
+      fileId: fileRow?.id,
+      relativePath,
+      driveFileId,
+      driveUrl,
+      qualityLabel,
+    },
+  });
 }
 
 export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
@@ -150,8 +208,6 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
   const workDir = path.join(userRoot(payload.userId), "tmp", payload.jobId);
   const outDir = path.join(userRoot(payload.userId), "downloads");
   let cookieTmp: string | null = null;
-  let rawPath: string | null = null;
-  let outPath: string | null = null;
 
   try {
     await update({ status: "running", stage: "resolving", progress: 5 });
@@ -159,135 +215,62 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
     await fs.mkdir(outDir, { recursive: true });
 
     const kind = detectSourceKind(payload.url);
-    const cookieProvider =
-      kind === "soundcloud"
-        ? "soundcloud"
-        : kind === "patreon"
-          ? "patreon"
-          : "youtube";
-    cookieTmp = await materializeCookieFile(payload.userId, cookieProvider);
-
-    await ensureNotCancelled(signal, db, payload.jobId);
-    const resolved = await resolveDownloadUrl(payload, signal, update);
-
-    await update({ stage: "downloading", progress: 20 });
-    await ensureNotCancelled(signal, db, payload.jobId);
-
-    const downloaded = await downloadMedia({
-      url: resolved.url,
-      workDir,
-      cookiePath: cookieTmp,
-      soundcloud: resolved.soundcloud,
-      signal,
-    });
-    rawPath = downloaded.filePath;
-
-    // Optional duration sanity for SC previews via dump
-    if (resolved.soundcloud) {
-      try {
-        const info = await dumpJson(resolved.url, cookieTmp, signal);
-        const duration = Number(info.duration ?? 0);
-        if (duration > 0 && duration <= 35) {
-          throw new Error(
-            "SoundCloud track appears to be preview-only (≤35s). Upload a full-access cookie or pick another source.",
-          );
-        }
-      } catch (err) {
-        if (err instanceof ProcessCancelledError) throw err;
-        if (err instanceof Error && err.message.includes("preview-only")) {
-          throw err;
-        }
-      }
+    if (kind !== "youtube" && kind !== "soundcloud") {
+      throw new Error("Only YouTube and SoundCloud URLs are supported");
     }
 
-    const title = resolved.title ?? downloaded.title ?? "track";
-    const artist = resolved.artist;
-    await update({
-      title,
-      artist,
-      stage: "converting",
-      progress: 55,
-    });
+    cookieTmp = await materializeCookieFile(
+      payload.userId,
+      kind === "soundcloud" ? "soundcloud" : "youtube",
+    );
     await ensureNotCancelled(signal, db, payload.jobId);
 
-    const filename = `${sanitizeFilename(
-      artist ? `${artist} - ${title}` : title,
-    )}.${extFor(payload.audioFormat)}`;
-    outPath = assertPathInside(outDir, path.join(outDir, filename));
+    let trackUrl = payload.url;
+    let titleHint = payload.titleHint;
+    let artistHint = payload.artistHint;
 
-    const { qualityLabel } = await convertAudio({
-      inputPath: downloaded.filePath,
-      outputPath: outPath,
-      target: payload.audioFormat,
-      title,
-      artist,
-      signal: signal,
-    });
-
-    await update({ stage: "delivering", progress: 80 });
-    await ensureNotCancelled(signal, db, payload.jobId);
-
-    const finalOutPath = outPath;
-    const stat = await fs.stat(finalOutPath);
-    const relativePath = path.relative(userRoot(payload.userId), finalOutPath);
-
-    const [fileRow] = await db
-      .insert(files)
-      .values({
-        userId: payload.userId,
-        jobId: payload.jobId,
-        relativePath,
-        filename,
-        mime: mimeFor(payload.audioFormat),
-        sizeBytes: Number(stat.size),
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      })
-      .returning();
-
-    let driveFileId: string | undefined;
-    let driveUrl: string | undefined;
-
-    const wantsDrive =
-      payload.destination === "drive" || payload.destination === "both";
-    if (wantsDrive) {
-      const token = await deps.getGoogleAccessToken?.(payload.userId);
-      if (!token) {
-        throw new Error(
-          "Google Drive selected but no Google token with drive.file — reconnect Google in account settings",
-        );
-      }
-      const uploaded = await uploadToDrive({
-        accessToken: token,
-        filePath: finalOutPath,
-        filename,
-        mimeType: mimeFor(payload.audioFormat),
+    if (!payload.parentJobId && deps.enqueueChildTracks) {
+      const expanded = await expandPlaylistEntries(payload.url, {
+        signal,
+        cookiePath: cookieTmp,
       });
-      driveFileId = uploaded.fileId;
-      driveUrl = uploaded.webViewLink;
-      if (fileRow) {
-        await db
-          .update(files)
-          .set({ driveFileId, driveUrl })
-          .where(eq(files.id, fileRow.id));
+
+      if (expanded.entries.length > 1) {
+        await update({
+          title: expanded.title ?? payload.titleHint ?? "Playlist",
+          progress: 40,
+        });
+        const childJobIds = await deps.enqueueChildTracks(expanded.entries);
+        await update({
+          status: "completed",
+          stage: "done",
+          progress: 100,
+          title: expanded.title ?? payload.titleHint ?? "Playlist",
+          result: {
+            playlist: true,
+            trackCount: childJobIds.length,
+            childJobIds,
+          },
+        });
+        return;
+      }
+
+      if (expanded.entries[0]) {
+        trackUrl = expanded.entries[0].url;
+        titleHint = titleHint ?? expanded.entries[0].title;
+        artistHint = artistHint ?? expanded.entries[0].artist;
       }
     }
 
-    await update({
-      stage: "cleanup",
-      progress: 95,
-    });
-
-    await update({
-      status: "completed",
-      stage: "done",
-      progress: 100,
-      result: {
-        fileId: fileRow?.id,
-        relativePath,
-        driveFileId,
-        driveUrl,
-        qualityLabel,
-      },
+    await processTrack({
+      deps,
+      trackUrl,
+      titleHint,
+      artistHint,
+      soundcloud: kind === "soundcloud",
+      cookieTmp,
+      workDir,
+      outDir,
     });
   } catch (err) {
     if (err instanceof ProcessCancelledError) {
@@ -310,9 +293,6 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
       await fs.unlink(cookieTmp).catch(() => undefined);
     }
     await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
-    // Keep outPath for browser delivery; TTL cleanup removes later
-    void rawPath;
-    void outPath;
   }
 }
 

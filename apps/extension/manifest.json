@@ -7,7 +7,6 @@
   "host_permissions": [
     "https://*.youtube.com/*",
     "https://*.soundcloud.com/*",
-    "https://*.patreon.com/*",
     "http://localhost:3000/*",
     "https://*/*"
   ],

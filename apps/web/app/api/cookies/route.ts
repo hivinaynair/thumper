@@ -7,7 +7,7 @@ import {
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-const ProviderSchema = z.enum(["youtube", "soundcloud", "patreon"]);
+const ProviderSchema = z.enum(["youtube", "soundcloud"]);
 
 export async function PUT(req: Request) {
   const { userId } = await auth();

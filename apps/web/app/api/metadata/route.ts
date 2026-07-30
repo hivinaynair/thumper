@@ -1,6 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
-import { detectSourceKind } from "@thumper/shared";
-import { fetchSpotifyTrackMeta } from "@thumper/pipeline";
+import { detectSourceKind, isSupportedSource } from "@thumper/shared";
 import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
@@ -10,11 +9,12 @@ export async function GET(req: Request) {
   const url = new URL(req.url).searchParams.get("url");
   if (!url) return NextResponse.json({ error: "url required" }, { status: 400 });
 
-  const kind = detectSourceKind(url);
-  if (kind === "spotify") {
-    const meta = await fetchSpotifyTrackMeta(url);
-    return NextResponse.json({ kind, meta });
+  if (!isSupportedSource(url)) {
+    return NextResponse.json(
+      { error: "Only YouTube and SoundCloud are supported" },
+      { status: 400 },
+    );
   }
 
-  return NextResponse.json({ kind, meta: null });
+  return NextResponse.json({ kind: detectSourceKind(url), meta: null });
 }

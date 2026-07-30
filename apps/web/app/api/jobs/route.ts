@@ -3,6 +3,7 @@ import { jobs } from "@thumper/db";
 import {
   CreateJobInputSchema,
   detectSourceKind,
+  isSupportedSource,
   QUEUE_NAME_DOWNLOAD,
 } from "@thumper/shared";
 import { desc, eq } from "drizzle-orm";
@@ -20,7 +21,7 @@ export async function GET() {
     .from(jobs)
     .where(eq(jobs.userId, userId))
     .orderBy(desc(jobs.createdAt))
-    .limit(50);
+    .limit(100);
 
   return NextResponse.json({ jobs: rows });
 }
@@ -40,14 +41,27 @@ export async function POST(req: Request) {
   }
 
   const input = parsed.data;
+  if (!isSupportedSource(input.url)) {
+    return NextResponse.json(
+      {
+        error:
+          "Only YouTube and SoundCloud track or playlist URLs are supported",
+      },
+      { status: 400 },
+    );
+  }
+
   const sourceKind = detectSourceKind(input.url);
-  if (!sourceKind) {
+  if (sourceKind !== "youtube" && sourceKind !== "soundcloud") {
     return NextResponse.json({ error: "Unsupported URL" }, { status: 400 });
   }
 
-  const recent = await db.select({ id: jobs.id }).from(jobs).where(eq(jobs.userId, userId));
-  if (recent.length > 200) {
-    return NextResponse.json({ error: "Daily job limit reached" }, { status: 429 });
+  const recent = await db
+    .select({ id: jobs.id })
+    .from(jobs)
+    .where(eq(jobs.userId, userId));
+  if (recent.length > 500) {
+    return NextResponse.json({ error: "Job limit reached" }, { status: 429 });
   }
 
   const [job] = await db
@@ -60,7 +74,6 @@ export async function POST(req: Request) {
       destination: input.destination,
       title: input.titleHint,
       artist: input.artistHint,
-      matchedUrl: input.confirmedMatchUrl,
       status: "queued",
       stage: "queued",
       progress: 0,
@@ -79,7 +92,6 @@ export async function POST(req: Request) {
     url: input.url,
     audioFormat: input.audioFormat,
     destination: input.destination,
-    confirmedMatchUrl: input.confirmedMatchUrl,
     titleHint: input.titleHint,
     artistHint: input.artistHint,
   });

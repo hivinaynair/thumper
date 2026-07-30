@@ -1,7 +1,6 @@
 const PROVIDERS = {
   youtube: [".youtube.com", ".google.com"],
   soundcloud: [".soundcloud.com"],
-  patreon: [".patreon.com"],
 };
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
