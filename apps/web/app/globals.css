@@ -236,7 +236,8 @@ main.main-flush {
 	color: var(--bronze);
 }
 
-.hero h1 {
+/* Direct child only — Clerk's card renders its own <h1> inside .hero-copy */
+.hero-copy > h1 {
 	margin: 0;
 	font-family: var(--font-display), Georgia, serif;
 	font-size: clamp(3.25rem, 14vw, 6.75rem);
@@ -271,7 +272,7 @@ main.main-flush {
 	padding-bottom: 3rem;
 }
 
-.auth-copy h1 {
+.auth-copy > h1 {
 	font-size: clamp(2.6rem, 12vw, 4.5rem);
 }
 

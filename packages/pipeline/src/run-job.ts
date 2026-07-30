@@ -5,6 +5,7 @@ import type { Db } from "@thumper/db";
 import { files, jobs } from "@thumper/db";
 import {
   detectSourceKind,
+  GOOGLE_DRIVE_TOKEN_ERROR,
   MAX_PLAYLIST_TRACKS,
   sanitizeFilename,
   type AudioFormat,
@@ -250,9 +251,7 @@ async function processTrack(params: {
   if (wantsDrive) {
     const token = await deps.getGoogleAccessToken?.(payload.userId);
     if (!token) {
-      throw new Error(
-        "Google Drive selected but no Google token with drive.file — open your account menu and reconnect Google",
-      );
+      throw new Error(GOOGLE_DRIVE_TOKEN_ERROR);
     }
     const uploaded = await uploadToDrive({
       accessToken: token,
@@ -410,6 +409,13 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
       throw new Error(
         "Only YouTube, SoundCloud, and Spotify (mirror) URLs are supported",
       );
+    }
+
+    // Child jobs are enqueued by the worker and skip the API route's Drive
+    // check, so verify here too — before downloading and converting anything.
+    if (payload.destination === "drive" || payload.destination === "both") {
+      const token = await deps.getGoogleAccessToken?.(payload.userId);
+      if (!token) throw new Error(GOOGLE_DRIVE_TOKEN_ERROR);
     }
 
     // ——— Spotify catalog → mirror to YT/SC ———
