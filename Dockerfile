@@ -30,13 +30,13 @@ RUN bunx turbo run build --filter=web --filter=worker
 
 FROM base AS web
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV PORT=3004
 ENV DATA_DIR=/data
 COPY --from=build /app /app
 WORKDIR /app/apps/web
-EXPOSE 3000
+EXPOSE 3004
 USER bun
-CMD ["bun", "x", "next", "start", "-p", "3000"]
+CMD ["bun", "x", "next", "start", "-p", "3004"]
 
 FROM base AS worker
 ENV NODE_ENV=production

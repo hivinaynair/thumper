@@ -236,13 +236,12 @@ function pickBest(
 }
 
 /**
- * Mirror a Spotify track onto YouTube (preferred) then SoundCloud.
- * Uses multi-candidate search + spotDL-inspired scoring. Never downloads Spotify audio.
+ * Find a confident YouTube mirror for a track (title + artists + optional duration).
  */
-export async function matchSpotifyTrackToMirror(
+export async function matchTrackToYoutube(
   track: SpotifyTrackMeta,
   options: SpawnOptions = {},
-): Promise<(PlaylistEntry & { matchScore: number; mirrorSource: string }) | null> {
+): Promise<(PlaylistEntry & { matchScore: number; mirrorSource: "youtube" }) | null> {
   const ytQuery = buildYoutubeSearchQuery(track);
   const ytCandidates = await searchCandidates(ytQuery, "youtube", options);
   // Second query without "official audio" if first pool is thin
@@ -260,16 +259,27 @@ export async function matchSpotifyTrackToMirror(
   }
 
   const bestYt = pickBest(track, ytCandidates);
-  if (bestYt) {
-    return {
-      url: bestYt.url,
-      title: track.title,
-      artist: track.artists.join(", ") || undefined,
-      spotifyUrl: track.spotifyUrl,
-      matchScore: Math.round(bestYt.score),
-      mirrorSource: "youtube",
-    };
-  }
+  if (!bestYt) return null;
+  return {
+    url: bestYt.url,
+    title: track.title,
+    artist: track.artists.join(", ") || undefined,
+    spotifyUrl: track.spotifyUrl,
+    matchScore: Math.round(bestYt.score),
+    mirrorSource: "youtube",
+  };
+}
+
+/**
+ * Mirror a Spotify track onto YouTube (preferred) then SoundCloud.
+ * Uses multi-candidate search + spotDL-inspired scoring. Never downloads Spotify audio.
+ */
+export async function matchSpotifyTrackToMirror(
+  track: SpotifyTrackMeta,
+  options: SpawnOptions = {},
+): Promise<(PlaylistEntry & { matchScore: number; mirrorSource: string }) | null> {
+  const bestYt = await matchTrackToYoutube(track, options);
+  if (bestYt) return bestYt;
 
   const scCandidates = await searchCandidates(
     buildSoundCloudSearchQuery(track),

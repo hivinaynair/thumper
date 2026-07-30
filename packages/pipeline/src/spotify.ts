@@ -6,6 +6,7 @@ export type SpotifyTrackMeta = {
   artists: string[];
   durationMs?: number;
   spotifyUrl?: string;
+  artworkUrl?: string;
 };
 
 export type SpotifyCatalog = {
@@ -13,6 +14,7 @@ export type SpotifyCatalog = {
   id: string;
   title: string;
   tracks: SpotifyTrackMeta[];
+  artworkUrl?: string;
 };
 
 type SpotifyEmbedEntity = {
@@ -22,6 +24,9 @@ type SpotifyEmbedEntity = {
   durationMs?: number;
   artists?: Array<{ name: string } | string>;
   subtitle?: string;
+  visualIdentity?: {
+    image?: Array<{ url?: string; maxHeight?: number; maxWidth?: number }>;
+  };
   trackList?: Array<{
     title: string;
     subtitle?: string;
@@ -50,16 +55,26 @@ function artistsFromEntity(entity: SpotifyEmbedEntity): string[] {
   return [];
 }
 
-export async function fetchSpotifyCatalog(
+function artworkFromEntity(entity: SpotifyEmbedEntity): string | undefined {
+  const images = entity.visualIdentity?.image ?? [];
+  if (images.length === 0) return undefined;
+  const best = [...images].sort(
+    (a, b) => (b.maxWidth ?? 0) - (a.maxWidth ?? 0),
+  )[0];
+  return best?.url || undefined;
+}
+
+async function fetchSpotifyEmbedEntity(
   url: string,
-): Promise<SpotifyCatalog | null> {
+  signal?: AbortSignal,
+): Promise<{ parsed: { type: string; id: string }; entity: SpotifyEmbedEntity } | null> {
   const parsed = parseEmbedUrl(url);
   if (!parsed) return null;
   if (!["track", "album", "playlist"].includes(parsed.type)) return null;
 
   const res = await fetch(
     `https://open.spotify.com/embed/${parsed.type}/${parsed.id}?utm_source=oembed`,
-    { headers: { "User-Agent": SPOTIFY_EMBED_UA } },
+    { headers: { "User-Agent": SPOTIFY_EMBED_UA }, signal },
   );
   if (!res.ok) return null;
   const html = await res.text();
@@ -71,9 +86,29 @@ export async function fetchSpotifyCatalog(
   const entity = JSON.parse(nextData)?.props?.pageProps?.state?.data
     ?.entity as SpotifyEmbedEntity | undefined;
   if (!entity) return null;
+  return { parsed, entity };
+}
+
+export async function fetchSpotifyTrackArtworkUrl(
+  url: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const hit = await fetchSpotifyEmbedEntity(url, signal);
+  if (!hit) return null;
+  return artworkFromEntity(hit.entity) ?? null;
+}
+
+export async function fetchSpotifyCatalog(
+  url: string,
+  signal?: AbortSignal,
+): Promise<SpotifyCatalog | null> {
+  const hit = await fetchSpotifyEmbedEntity(url, signal);
+  if (!hit) return null;
+  const { parsed, entity } = hit;
 
   const title = String(entity.name ?? entity.title ?? "Spotify");
   const type = parsed.type as SpotifyCatalog["type"];
+  const artworkUrl = artworkFromEntity(entity);
 
   if (type === "track") {
     const durationMs =
@@ -86,12 +121,14 @@ export async function fetchSpotifyCatalog(
       type,
       id: parsed.id,
       title,
+      artworkUrl,
       tracks: [
         {
           title,
           artists: artistsFromEntity(entity),
           durationMs,
           spotifyUrl: `https://open.spotify.com/track/${parsed.id}`,
+          artworkUrl,
         },
       ],
     };
@@ -107,10 +144,11 @@ export async function fetchSpotifyCatalog(
         .filter(Boolean),
       durationMs: typeof t.duration === "number" ? t.duration : undefined,
       spotifyUrl: id ? `https://open.spotify.com/track/${id}` : undefined,
+      artworkUrl,
     };
   });
 
-  return { type, id: parsed.id, title, tracks };
+  return { type, id: parsed.id, title, artworkUrl, tracks };
 }
 
 export function buildYoutubeSearchQuery(track: SpotifyTrackMeta): string {

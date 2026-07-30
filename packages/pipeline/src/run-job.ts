@@ -13,13 +13,23 @@ import {
 } from "@thumper/shared";
 import { convertAudio } from "./convert";
 import { materializeCookieFile } from "./cookies";
-import { downloadMedia, dumpJson } from "./download";
+import {
+  downloadMedia,
+  dumpJson,
+  isSoundCloudPreviewError,
+  SoundCloudPreviewError,
+} from "./download";
 import { uploadToDrive } from "./drive";
-import { matchSpotifyTrackToMirror, mirrorSpotifyTracks } from "./match";
+import {
+  matchSpotifyTrackToMirror,
+  matchTrackToYoutube,
+  mirrorSpotifyTracks,
+} from "./match";
+import { downloadArtworkFile, resolveTrackTags } from "./metadata";
 import { assertPathInside, userRoot } from "./paths";
 import { expandPlaylistEntries, type PlaylistEntry } from "./playlist";
 import { ProcessCancelledError } from "./process";
-import { fetchSpotifyCatalog } from "./spotify";
+import { fetchSpotifyCatalog, type SpotifyTrackMeta } from "./spotify";
 
 export type ProgressUpdater = (patch: {
   status?: "running" | "cancelling" | "cancelled" | "completed" | "failed";
@@ -92,9 +102,14 @@ async function processTrack(params: {
   outDir: string;
   matchedUrl?: string;
   matchScore?: number;
+  /** Spotify / SoundCloud URL used for tags + artwork (never YouTube). */
+  catalogUrl?: string | null;
+  /** Prevent infinite SC→YT→… loops. */
+  allowYoutubeFallback?: boolean;
 }): Promise<void> {
-  const { deps, soundcloud, cookieTmp, workDir, outDir } = params;
+  const { deps, soundcloud, workDir, outDir } = params;
   const { db, payload, signal, update } = deps;
+  const cookieTmp = params.cookieTmp;
 
   await update({
     title: params.titleHint,
@@ -105,35 +120,75 @@ async function processTrack(params: {
   });
   await ensureNotCancelled(signal, db, payload.jobId);
 
-  const downloaded = await downloadMedia({
-    url: params.trackUrl,
-    workDir,
+  let downloaded;
+  try {
+    downloaded = await downloadMedia({
+      url: params.trackUrl,
+      workDir,
+      cookiePath: cookieTmp,
+      soundcloud,
+      signal,
+    });
+
+    if (soundcloud) {
+      try {
+        const info = await dumpJson(params.trackUrl, cookieTmp, signal);
+        const duration = Number(info.duration ?? 0);
+        if (duration > 0 && duration <= 35) {
+          await fs.unlink(downloaded.filePath).catch(() => undefined);
+          throw new SoundCloudPreviewError(
+            "SoundCloud track appears to be preview-only (≤35s). Falling back to YouTube when possible.",
+          );
+        }
+      } catch (err) {
+        if (err instanceof ProcessCancelledError) throw err;
+        if (isSoundCloudPreviewError(err)) throw err;
+      }
+    }
+  } catch (err) {
+    if (
+      soundcloud &&
+      params.allowYoutubeFallback !== false &&
+      isSoundCloudPreviewError(err)
+    ) {
+      await fallbackSoundCloudToYoutube({
+        deps,
+        trackUrl: params.trackUrl,
+        titleHint: params.titleHint,
+        artistHint: params.artistHint,
+        scCookieTmp: cookieTmp,
+        workDir,
+        outDir,
+        matchScore: params.matchScore,
+        catalogUrl: params.catalogUrl ?? params.trackUrl,
+      });
+      return;
+    }
+    throw err;
+  }
+
+  const tags = await resolveTrackTags({
+    catalogUrl: params.catalogUrl,
+    downloadUrl: soundcloud ? params.trackUrl : null,
+    titleHint: params.titleHint ?? downloaded.title,
+    artistHint: params.artistHint,
     cookiePath: cookieTmp,
-    soundcloud,
     signal,
   });
 
-  if (soundcloud) {
-    try {
-      const info = await dumpJson(params.trackUrl, cookieTmp, signal);
-      const duration = Number(info.duration ?? 0);
-      if (duration > 0 && duration <= 35) {
-        throw new Error(
-          "SoundCloud track appears to be preview-only (≤35s). Upload a full-access cookie or pick another source.",
-        );
-      }
-    } catch (err) {
-      if (err instanceof ProcessCancelledError) throw err;
-      if (err instanceof Error && err.message.includes("preview-only")) {
-        throw err;
-      }
-    }
-  }
-
-  const title = params.titleHint ?? downloaded.title ?? "track";
-  const artist = params.artistHint;
+  const title = tags.title ?? params.titleHint ?? downloaded.title ?? "track";
+  const artist = tags.artist ?? params.artistHint;
   await update({ title, artist, stage: "converting", progress: 55 });
   await ensureNotCancelled(signal, db, payload.jobId);
+
+  let artworkPath: string | null = null;
+  if (tags.artworkUrl) {
+    artworkPath = await downloadArtworkFile({
+      artworkUrl: tags.artworkUrl,
+      workDir,
+      signal,
+    });
+  }
 
   const filename = `${sanitizeFilename(
     artist ? `${artist} - ${title}` : title,
@@ -146,6 +201,10 @@ async function processTrack(params: {
     target: payload.audioFormat,
     title,
     artist,
+    album: tags.album,
+    genre: tags.genre,
+    date: tags.date,
+    artworkPath,
     signal,
   });
 
@@ -177,7 +236,7 @@ async function processTrack(params: {
     const token = await deps.getGoogleAccessToken?.(payload.userId);
     if (!token) {
       throw new Error(
-        "Google Drive selected but no Google token with drive.file — reconnect Google in account settings",
+        "Google Drive selected but no Google token with drive.file — open your account menu and reconnect Google",
       );
     }
     const uploaded = await uploadToDrive({
@@ -210,6 +269,107 @@ async function processTrack(params: {
       matchScore: params.matchScore,
     },
   });
+}
+
+async function resolveSoundCloudMeta(params: {
+  trackUrl: string;
+  titleHint?: string;
+  artistHint?: string;
+  cookieTmp: string | null;
+  signal: AbortSignal;
+}): Promise<SpotifyTrackMeta> {
+  let title = params.titleHint?.trim() || "";
+  let artist = params.artistHint?.trim() || "";
+  let durationMs: number | undefined;
+
+  try {
+    const info = await dumpJson(params.trackUrl, params.cookieTmp, params.signal);
+    if (!title) title = String(info.title ?? info.track ?? "").trim();
+    if (!artist) {
+      artist = String(
+        info.uploader ?? info.artist ?? info.creator ?? "",
+      ).trim();
+    }
+    const durationSec = Number(info.duration ?? 0);
+    if (Number.isFinite(durationSec) && durationSec > 35) {
+      durationMs = Math.round(durationSec * 1000);
+    }
+  } catch {
+    /* best-effort metadata for YouTube search */
+  }
+
+  if (!title) title = "track";
+  const artists = artist
+    ? artist.split(/,|&/).map((s) => s.trim()).filter(Boolean)
+    : [];
+
+  return { title, artists, durationMs };
+}
+
+async function fallbackSoundCloudToYoutube(params: {
+  deps: RunJobDeps;
+  trackUrl: string;
+  titleHint?: string;
+  artistHint?: string;
+  scCookieTmp: string | null;
+  workDir: string;
+  outDir: string;
+  matchScore?: number;
+  catalogUrl?: string | null;
+}): Promise<void> {
+  const { deps, workDir, outDir } = params;
+  const { payload, signal, update } = deps;
+
+  await update({
+    stage: "resolving",
+    progress: 25,
+  });
+  await ensureNotCancelled(signal, deps.db, payload.jobId);
+
+  const meta = await resolveSoundCloudMeta({
+    trackUrl: params.trackUrl,
+    titleHint: params.titleHint,
+    artistHint: params.artistHint,
+    cookieTmp: params.scCookieTmp,
+    signal,
+  });
+
+  const mirror = await matchTrackToYoutube(meta, { signal });
+  if (!mirror) {
+    throw new Error(
+      `SoundCloud was preview-only and no confident YouTube mirror found for “${meta.artists[0] ?? "?"} – ${meta.title}”`,
+    );
+  }
+
+  const ytCookieTmp = await materializeCookieFile(payload.userId, "youtube");
+  try {
+    await update({
+      title: meta.title,
+      artist: meta.artists.join(", ") || undefined,
+      matchedUrl: mirror.url,
+      stage: "downloading",
+      progress: 30,
+    });
+
+    await processTrack({
+      deps,
+      trackUrl: mirror.url,
+      titleHint: meta.title,
+      artistHint: meta.artists.join(", ") || undefined,
+      soundcloud: false,
+      cookieTmp: ytCookieTmp,
+      workDir,
+      outDir,
+      matchedUrl: mirror.url,
+      matchScore: mirror.matchScore,
+      catalogUrl: params.catalogUrl ?? params.trackUrl,
+      allowYoutubeFallback: false,
+    });
+  } finally {
+    if (ytCookieTmp) {
+      await fs.unlink(ytCookieTmp).catch(() => undefined);
+    }
+  }
 }
 
 export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
@@ -300,6 +460,7 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
         outDir,
         matchedUrl: mirror.url,
         matchScore: mirror.matchScore,
+        catalogUrl: track.spotifyUrl ?? payload.url,
       });
       return;
     }
@@ -358,6 +519,9 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
       workDir,
       outDir,
       matchedUrl: payload.spotifyUrl ? trackUrl : undefined,
+      catalogUrl:
+        payload.spotifyUrl ??
+        (kind === "soundcloud" ? payload.url : null),
     });
   } catch (err) {
     if (err instanceof ProcessCancelledError) {

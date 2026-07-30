@@ -90,8 +90,9 @@ export async function downloadMedia(params: {
 
   // Fail closed: if SoundCloud still looks like a preview-only fetch, bail.
   if (params.soundcloud && /preview/i.test(path.basename(markers.filepath))) {
-    throw new Error(
-      "SoundCloud returned a preview-only stream. Connect a full-access account cookie or use another source.",
+    await fs.unlink(markers.filepath).catch(() => undefined);
+    throw new SoundCloudPreviewError(
+      "SoundCloud returned a preview-only stream. Falling back to YouTube when possible.",
     );
   }
 
@@ -103,6 +104,18 @@ export async function downloadMedia(params: {
     title,
     abr: markers.abr,
   };
+}
+
+export class SoundCloudPreviewError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SoundCloudPreviewError";
+  }
+}
+
+export function isSoundCloudPreviewError(err: unknown): boolean {
+  if (err instanceof SoundCloudPreviewError) return true;
+  return err instanceof Error && /preview-only/i.test(err.message);
 }
 
 export async function dumpJson(

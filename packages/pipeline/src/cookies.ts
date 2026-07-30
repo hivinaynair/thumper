@@ -61,6 +61,35 @@ export async function deleteCookies(
   }
 }
 
+export type CookieProviderStatus = {
+  present: boolean;
+  updatedAt: string | null;
+};
+
+export type CookieStatusMap = Record<
+  "youtube" | "soundcloud",
+  CookieProviderStatus
+>;
+
+export async function getCookieStatus(
+  userId: string,
+): Promise<CookieStatusMap> {
+  const providers = ["youtube", "soundcloud"] as const;
+  const out = {} as CookieStatusMap;
+  for (const provider of providers) {
+    try {
+      const stat = await fs.stat(cookieFilePath(userId, provider));
+      out[provider] = {
+        present: stat.isFile() && stat.size > 0,
+        updatedAt: stat.mtime.toISOString(),
+      };
+    } catch {
+      out[provider] = { present: false, updatedAt: null };
+    }
+  }
+  return out;
+}
+
 /** Decrypt to a temp plaintext Netscape file for yt-dlp; caller should unlink. */
 export async function materializeCookieFile(
   userId: string,

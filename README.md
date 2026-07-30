@@ -22,11 +22,16 @@ bun install
 cp apps/web/.env.example apps/web/.env.local
 cp apps/worker/.env.example apps/worker/.env
 
-# Clerk: enable invite-only; add Google OAuth with drive.file for Drive delivery
+# Local worker needs yt-dlp + ffmpeg on PATH (Homebrew on macOS)
+brew install yt-dlp ffmpeg
+
+# Clerk: enable invite-only; Google OAuth with custom credentials +
+# https://www.googleapis.com/auth/drive.file scope for Drive delivery.
+# After changing scopes, reconnect Google from the account menu.
 bun run dev
 ```
 
-- Web: http://localhost:3000  
+- Web: http://localhost:3004  
 - Worker: started via `bun run dev` (turbo filter)  
 - Extension: `bun run --filter extension build` → Chrome → Load unpacked → `apps/extension/dist`
 

@@ -54,7 +54,7 @@ export const jobs = pgTable("jobs", {
   matchedUrl: text("matched_url"),
   title: text("title"),
   artist: text("artist"),
-  audioFormat: audioFormatEnum("audio_format").notNull().default("flac"),
+  audioFormat: audioFormatEnum("audio_format").notNull().default("alac"),
   destination: destinationEnum("destination").notNull().default("browser"),
   error: text("error"),
   pgBossId: text("pg_boss_id"),
@@ -94,7 +94,7 @@ export const files = pgTable("files", {
 
 export const userSettings = pgTable("user_settings", {
   userId: text("user_id").primaryKey(),
-  defaultFormat: audioFormatEnum("default_format").notNull().default("flac"),
+  defaultFormat: audioFormatEnum("default_format").notNull().default("alac"),
   defaultDestination: destinationEnum("default_destination")
     .notNull()
     .default("browser"),

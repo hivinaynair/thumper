@@ -2,9 +2,9 @@
 # For local HTTP-only testing, use the :80 block without TLS.
 
 thumper.example.com {
-  reverse_proxy web:3000
+  reverse_proxy web:3004
 }
 
 :80 {
-  reverse_proxy web:3000
+  reverse_proxy web:3004
 }

@@ -1,6 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import {
   deleteCookies,
+  getCookieStatus,
   looksLikeNetscapeCookies,
   saveEncryptedCookies,
 } from "@thumper/pipeline";
@@ -8,6 +9,13 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 const ProviderSchema = z.enum(["youtube", "soundcloud"]);
+
+export async function GET() {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const cookies = await getCookieStatus(userId);
+  return NextResponse.json({ cookies });
+}
 
 export async function PUT(req: Request) {
   const { userId } = await auth();

@@ -6,6 +6,23 @@ export type AudioFormat = z.infer<typeof AudioFormatSchema>;
 export const DeliveryDestinationSchema = z.enum(["browser", "drive", "both"]);
 export type DeliveryDestination = z.infer<typeof DeliveryDestinationSchema>;
 
+/** Google OAuth scope required for Drive delivery (`drive.file`). */
+export const GOOGLE_DRIVE_FILE_SCOPE =
+  "https://www.googleapis.com/auth/drive.file";
+
+export const GOOGLE_DRIVE_TOKEN_ERROR =
+  "Google Drive selected but no Google token with drive.file — open your account menu and reconnect Google";
+
+export function oauthScopesIncludeDrive(scopes: readonly string[]): boolean {
+  return scopes.some(
+    (scope) =>
+      scope === GOOGLE_DRIVE_FILE_SCOPE ||
+      scope.includes("drive.file") ||
+      scope === "https://www.googleapis.com/auth/drive" ||
+      /(^|\/)drive$/.test(scope),
+  );
+}
+
 export const SourceKindSchema = z.enum([
   "youtube",
   "soundcloud",
@@ -46,7 +63,7 @@ export type JobStage = z.infer<typeof JobStageSchema>;
 
 export const CreateJobInputSchema = z.object({
   url: z.string().url(),
-  audioFormat: AudioFormatSchema.default("flac"),
+  audioFormat: AudioFormatSchema.default("alac"),
   destination: DeliveryDestinationSchema.default("browser"),
   titleHint: z.string().optional(),
   artistHint: z.string().optional(),

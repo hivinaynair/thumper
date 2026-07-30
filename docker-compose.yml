@@ -37,7 +37,7 @@ services:
       postgres:
         condition: service_healthy
     expose:
-      - "3000"
+      - "3004"
 
   worker:
     build:

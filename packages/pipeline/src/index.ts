@@ -4,6 +4,7 @@ export * from "./cookies";
 export * from "./download";
 export * from "./drive";
 export * from "./match";
+export * from "./metadata";
 export * from "./paths";
 export * from "./playlist";
 export * from "./process";

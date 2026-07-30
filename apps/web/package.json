@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "next dev --port 3000",
+    "dev": "next dev --port 3004",
     "build": "next build",
     "start": "next start",
     "lint": "eslint --max-warnings 0",
@@ -13,6 +13,9 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^7.6.3",
+    "@clerk/themes": "^2.4.57",
+    "@splinetool/react-spline": "^4.1.0",
+    "@splinetool/runtime": "^1.12.98",
     "@thumper/db": "workspace:*",
     "@thumper/pipeline": "workspace:*",
     "@thumper/shared": "workspace:*",

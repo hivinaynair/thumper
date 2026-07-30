@@ -8,6 +8,7 @@ rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 cpSync(join(root, "manifest.json"), join(out, "manifest.json"));
 cpSync(join(root, "src", "background.js"), join(out, "background.js"));
+cpSync(join(root, "src", "content.js"), join(out, "content.js"));
 cpSync(join(root, "src", "popup.html"), join(out, "popup.html"));
 cpSync(join(root, "src", "popup.js"), join(out, "popup.js"));
 console.log("Built extension to apps/extension/dist (Load unpacked)");

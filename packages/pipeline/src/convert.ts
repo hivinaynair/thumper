@@ -12,6 +12,16 @@ export type AudioProbe = {
   bitRate: string;
 };
 
+export type ConvertMetadata = {
+  title?: string;
+  artist?: string;
+  album?: string;
+  genre?: string;
+  date?: string;
+  /** Local image path for embedded cover art (FLAC / ALAC). */
+  artworkPath?: string | null;
+};
+
 export async function probeAudio(
   filePath: string,
   options: SpawnOptions = {},
@@ -44,12 +54,26 @@ export async function probeAudio(
   }
 }
 
+function buildMetadataArgs(meta: ConvertMetadata): string[] {
+  const out: string[] = [];
+  if (meta.title) out.push("-metadata", `title=${meta.title}`);
+  if (meta.artist) out.push("-metadata", `artist=${meta.artist}`);
+  if (meta.album) out.push("-metadata", `album=${meta.album}`);
+  if (meta.genre) out.push("-metadata", `genre=${meta.genre}`);
+  if (meta.date) out.push("-metadata", `date=${meta.date}`);
+  return out;
+}
+
 export async function convertAudio(params: {
   inputPath: string;
   outputPath: string;
   target: AudioTargetFormat;
   title?: string;
   artist?: string;
+  album?: string;
+  genre?: string;
+  date?: string;
+  artworkPath?: string | null;
   signal?: AbortSignal;
 }): Promise<{ qualityLabel: string }> {
   const info = await probeAudio(params.inputPath, { signal: params.signal });
@@ -61,13 +85,15 @@ export async function convertAudio(params: {
     params.inputPath,
   );
 
-  const meta: string[] = [];
-  if (params.title) meta.push("-metadata", `title=${params.title}`);
-  if (params.artist) meta.push("-metadata", `artist=${params.artist}`);
+  const meta = buildMetadataArgs(params);
+  const canEmbedArt =
+    Boolean(params.artworkPath) &&
+    (params.target === "flac" || params.target === "alac");
 
   let args: string[];
 
   if (params.target === "wav") {
+    // WAV keeps text tags; cover art is unreliable in DJ tools — skip artwork.
     if (isPcmSource(info.codec, params.inputPath)) {
       args = ["-y", "-i", params.inputPath, "-vn", "-c:a", "copy", ...meta, params.outputPath];
     } else {
@@ -89,39 +115,87 @@ export async function convertAudio(params: {
   } else if (params.target === "flac") {
     const alreadyFlac =
       info.codec === "flac" || params.inputPath.toLowerCase().endsWith(".flac");
-    args = alreadyFlac
-      ? ["-y", "-i", params.inputPath, "-vn", "-c:a", "copy", ...meta, params.outputPath]
-      : [
-          "-y",
-          "-i",
-          params.inputPath,
-          "-vn",
-          "-c:a",
-          "flac",
-          "-compression_level",
-          "8",
-          "-ar",
-          String(sampleRate),
-          "-ac",
-          String(channels),
-          ...meta,
-          params.outputPath,
-        ];
+    if (canEmbedArt) {
+      args = [
+        "-y",
+        "-i",
+        params.inputPath,
+        "-i",
+        params.artworkPath!,
+        "-map",
+        "0:a:0",
+        "-map",
+        "1:0",
+        ...(alreadyFlac ? ["-c:a", "copy"] : ["-c:a", "flac", "-compression_level", "8", "-ar", String(sampleRate), "-ac", String(channels)]),
+        "-c:v",
+        "mjpeg",
+        "-disposition:v:0",
+        "attached_pic",
+        ...meta,
+        params.outputPath,
+      ];
+    } else if (alreadyFlac) {
+      args = ["-y", "-i", params.inputPath, "-vn", "-c:a", "copy", ...meta, params.outputPath];
+    } else {
+      args = [
+        "-y",
+        "-i",
+        params.inputPath,
+        "-vn",
+        "-c:a",
+        "flac",
+        "-compression_level",
+        "8",
+        "-ar",
+        String(sampleRate),
+        "-ac",
+        String(channels),
+        ...meta,
+        params.outputPath,
+      ];
+    }
   } else {
-    args = [
-      "-y",
-      "-i",
-      params.inputPath,
-      "-vn",
-      "-c:a",
-      "alac",
-      "-ar",
-      String(sampleRate),
-      "-ac",
-      String(channels),
-      ...meta,
-      params.outputPath,
-    ];
+    // ALAC / m4a
+    if (canEmbedArt) {
+      args = [
+        "-y",
+        "-i",
+        params.inputPath,
+        "-i",
+        params.artworkPath!,
+        "-map",
+        "0:a:0",
+        "-map",
+        "1:0",
+        "-c:a",
+        "alac",
+        "-ar",
+        String(sampleRate),
+        "-ac",
+        String(channels),
+        "-c:v",
+        "mjpeg",
+        "-disposition:v:0",
+        "attached_pic",
+        ...meta,
+        params.outputPath,
+      ];
+    } else {
+      args = [
+        "-y",
+        "-i",
+        params.inputPath,
+        "-vn",
+        "-c:a",
+        "alac",
+        "-ar",
+        String(sampleRate),
+        "-ac",
+        String(channels),
+        ...meta,
+        params.outputPath,
+      ];
+    }
   }
 
   await runCommandOk("ffmpeg", args, { signal: params.signal });

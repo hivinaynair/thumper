@@ -4,6 +4,7 @@ import { runDownloadJob, type PlaylistEntry } from "@thumper/pipeline";
 import {
   detectSourceKind,
   DownloadJobPayloadSchema,
+  oauthScopesIncludeDrive,
   QUEUE_NAME_DOWNLOAD,
   type DownloadJobPayload,
 } from "@thumper/shared";
@@ -35,12 +36,13 @@ async function getGoogleAccessToken(userId: string): Promise<string | null> {
   try {
     const res = await clerk.users.getUserOauthAccessToken(userId, "google");
     const entry = res.data[0];
-    if (!entry?.token) return null;
-    const scopes = new Set(entry.scopes ?? []);
-    if (
-      scopes.size > 0 &&
-      ![...scopes].some((s) => s.includes("drive.file") || s.includes("drive"))
-    ) {
+    if (!entry?.token) {
+      log.warn({ userId }, "No Google OAuth token for user");
+      return null;
+    }
+    const scopes = entry.scopes ?? [];
+    if (scopes.length > 0 && !oauthScopesIncludeDrive(scopes)) {
+      log.warn({ userId, scopes }, "Google token missing drive.file scope");
       return null;
     }
     return entry.token;

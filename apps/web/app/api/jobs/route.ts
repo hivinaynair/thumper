@@ -1,15 +1,20 @@
 import { auth } from "@clerk/nextjs/server";
 import { jobs } from "@thumper/db";
+import { getCookieStatus } from "@thumper/pipeline";
 import {
   CreateJobInputSchema,
   detectSourceKind,
+  GOOGLE_DRIVE_TOKEN_ERROR,
   isSupportedSource,
   QUEUE_NAME_DOWNLOAD,
 } from "@thumper/shared";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getBoss } from "../../../lib/boss";
 import { getDb } from "../../../lib/db";
+import { userHasGoogleDriveAccess } from "../../../lib/google-drive";
+
+const TERMINAL_STATUSES = ["completed", "failed", "cancelled"] as const;
 
 export async function GET() {
   const { userId } = await auth();
@@ -24,6 +29,22 @@ export async function GET() {
     .limit(100);
 
   return NextResponse.json({ jobs: rows });
+}
+
+/** Delete finished jobs (completed / failed / cancelled). Active jobs are kept. */
+export async function DELETE() {
+  const { userId } = await auth();
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const db = getDb();
+
+  const removed = await db
+    .delete(jobs)
+    .where(
+      and(eq(jobs.userId, userId), inArray(jobs.status, [...TERMINAL_STATUSES])),
+    )
+    .returning({ id: jobs.id });
+
+  return NextResponse.json({ ok: true, deleted: removed.length });
 }
 
 export async function POST(req: Request) {
@@ -58,6 +79,43 @@ export async function POST(req: Request) {
     sourceKind !== "spotify"
   ) {
     return NextResponse.json({ error: "Unsupported URL" }, { status: 400 });
+  }
+
+  const cookieStatus = await getCookieStatus(userId);
+  if (sourceKind === "youtube" && !cookieStatus.youtube.present) {
+    return NextResponse.json(
+      { error: "Sync YouTube cookies before queuing YouTube downloads" },
+      { status: 400 },
+    );
+  }
+  if (sourceKind === "soundcloud" && !cookieStatus.soundcloud.present) {
+    return NextResponse.json(
+      { error: "Sync SoundCloud cookies before queuing SoundCloud downloads" },
+      { status: 400 },
+    );
+  }
+  if (
+    sourceKind === "spotify" &&
+    !cookieStatus.youtube.present &&
+    !cookieStatus.soundcloud.present
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Sync YouTube or SoundCloud cookies before queuing Spotify mirrors",
+      },
+      { status: 400 },
+    );
+  }
+
+  if (input.destination === "drive" || input.destination === "both") {
+    const hasDrive = await userHasGoogleDriveAccess(userId);
+    if (!hasDrive) {
+      return NextResponse.json(
+        { error: GOOGLE_DRIVE_TOKEN_ERROR },
+        { status: 400 },
+      );
+    }
   }
 
   const recent = await db

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { detectSourceKind } from "@thumper/shared";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Job = {
   id: string;
@@ -25,31 +26,202 @@ type Job = {
   } | null;
 };
 
+type CookieProviderStatus = {
+  present: boolean;
+  updatedAt: string | null;
+};
+
+type CookieStatus = {
+  youtube: CookieProviderStatus;
+  soundcloud: CookieProviderStatus;
+};
+
+type SyncResult = {
+  ok?: boolean;
+  error?: string;
+  message?: string;
+  results?: {
+    youtube?: { status: string; reason?: string };
+    soundcloud?: { status: string; reason?: string };
+  };
+};
+
+function formatSyncedAt(iso: string | null): string {
+  if (!iso) return "";
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date(iso));
+  } catch {
+    return iso;
+  }
+}
+
+function cookiesReadyForUrl(
+  url: string,
+  cookies: CookieStatus | null,
+): { ready: boolean; reason: string | null } {
+  if (!cookies) {
+    return { ready: false, reason: "Checking cookie sync…" };
+  }
+  const kind = url.trim() ? detectSourceKind(url.trim()) : null;
+  if (
+    !kind ||
+    (kind !== "youtube" && kind !== "soundcloud" && kind !== "spotify")
+  ) {
+    if (!cookies.youtube.present && !cookies.soundcloud.present) {
+      return {
+        ready: false,
+        reason: "Sync cookies with the Chrome extension before queuing",
+      };
+    }
+    return { ready: true, reason: null };
+  }
+  if (kind === "youtube" && !cookies.youtube.present) {
+    return {
+      ready: false,
+      reason: "Sync YouTube cookies before queuing YouTube downloads",
+    };
+  }
+  if (kind === "soundcloud" && !cookies.soundcloud.present) {
+    return {
+      ready: false,
+      reason: "Sync SoundCloud cookies before queuing SoundCloud downloads",
+    };
+  }
+  if (
+    kind === "spotify" &&
+    !cookies.youtube.present &&
+    !cookies.soundcloud.present
+  ) {
+    return {
+      ready: false,
+      reason: "Sync YouTube or SoundCloud cookies before queuing Spotify mirrors",
+    };
+  }
+  return { ready: true, reason: null };
+}
+
+function requestExtensionSync(timeoutMs = 20000): Promise<SyncResult> {
+  return new Promise((resolve) => {
+    const requestId = crypto.randomUUID();
+    const timer = window.setTimeout(() => {
+      window.removeEventListener("message", onMessage);
+      resolve({
+        ok: false,
+        error:
+          "No response from the Thumper extension. Install/reload it, then try again.",
+      });
+    }, timeoutMs);
+
+    function onMessage(event: MessageEvent) {
+      if (event.source !== window) return;
+      const data = event.data as SyncResult & {
+        source?: string;
+        type?: string;
+        requestId?: string;
+      };
+      if (
+        data?.source !== "thumper-extension" ||
+        data.type !== "sync-cookies-result" ||
+        data.requestId !== requestId
+      ) {
+        return;
+      }
+      window.clearTimeout(timer);
+      window.removeEventListener("message", onMessage);
+      resolve(data);
+    }
+
+    window.addEventListener("message", onMessage);
+    window.postMessage(
+      { source: "thumper-page", type: "sync-cookies", requestId },
+      window.location.origin,
+    );
+  });
+}
+
 export default function DownloaderPage() {
   const [url, setUrl] = useState("");
-  const [audioFormat, setAudioFormat] = useState("flac");
+  const [audioFormat, setAudioFormat] = useState("alac");
   const [destination, setDestination] = useState("browser");
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [cookies, setCookies] = useState<CookieStatus | null>(null);
   const [busy, setBusy] = useState(false);
-  const [cookieProvider, setCookieProvider] = useState("youtube");
-  const [cookieText, setCookieText] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [messageTone, setMessageTone] = useState<"ok" | "error">("ok");
+  const [extensionReady, setExtensionReady] = useState(false);
+  const extensionReadyRef = useRef(false);
 
-  const refresh = useCallback(async () => {
+  useEffect(() => {
+    extensionReadyRef.current = extensionReady;
+  }, [extensionReady]);
+
+  const refreshJobs = useCallback(async () => {
     const res = await fetch("/api/jobs");
     if (!res.ok) return;
     const data = await res.json();
     setJobs(data.jobs ?? []);
   }, []);
 
+  const refreshCookies = useCallback(async () => {
+    const res = await fetch("/api/cookies");
+    if (!res.ok) return;
+    const data = await res.json();
+    setCookies(data.cookies ?? null);
+  }, []);
+
   useEffect(() => {
-    void refresh();
-    const t = setInterval(() => void refresh(), 1500);
-    return () => clearInterval(t);
-  }, [refresh]);
+    void refreshJobs();
+    void refreshCookies();
+    const jobsTimer = setInterval(() => void refreshJobs(), 1500);
+    const cookiesTimer = setInterval(() => void refreshCookies(), 3000);
+    const onFocus = () => void refreshCookies();
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== window) return;
+      const data = event.data as { source?: string; type?: string };
+      if (data?.source === "thumper-extension" && data.type === "extension-ready") {
+        setExtensionReady(true);
+      }
+    };
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("message", onMessage);
+
+    const ping = () => {
+      if (extensionReadyRef.current) return;
+      window.postMessage(
+        { source: "thumper-page", type: "ping" },
+        window.location.origin,
+      );
+    };
+    ping();
+    const pingTimer = window.setInterval(ping, 2000);
+    return () => {
+      clearInterval(jobsTimer);
+      clearInterval(cookiesTimer);
+      clearInterval(pingTimer);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("message", onMessage);
+    };
+  }, [refreshJobs, refreshCookies]);
+
+  const gate = useMemo(
+    () => cookiesReadyForUrl(url, cookies),
+    [url, cookies],
+  );
+  const canQueue = !busy && gate.ready;
+  const finishedCount = jobs.filter((job) =>
+    job.status === "completed" ||
+    job.status === "failed" ||
+    job.status === "cancelled",
+  ).length;
 
   async function createJob(e: React.FormEvent) {
     e.preventDefault();
+    if (!canQueue) return;
     setBusy(true);
     setMessage(null);
     try {
@@ -61,8 +233,9 @@ export default function DownloaderPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed");
       setUrl("");
-      await refresh();
+      await refreshJobs();
     } catch (err) {
+      setMessageTone("error");
       setMessage(err instanceof Error ? err.message : "Failed");
     } finally {
       setBusy(false);
@@ -71,180 +244,247 @@ export default function DownloaderPage() {
 
   async function cancelJob(id: string) {
     await fetch(`/api/jobs/${id}`, { method: "DELETE" });
-    await refresh();
+    await refreshJobs();
   }
 
-  async function saveCookies(e: React.FormEvent) {
-    e.preventDefault();
-    setMessage(null);
-    const res = await fetch("/api/cookies", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ provider: cookieProvider, cookies: cookieText }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setMessage(data.error ?? "Cookie upload failed");
-      return;
+  async function clearFinishedJobs() {
+    setClearing(true);
+    try {
+      const res = await fetch("/api/jobs", { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Failed to clear jobs");
+      await refreshJobs();
+    } catch (err) {
+      setMessageTone("error");
+      setMessage(err instanceof Error ? err.message : "Failed to clear jobs");
+    } finally {
+      setClearing(false);
     }
-    setCookieText("");
-    setMessage("Cookies saved (encrypted at rest)");
+  }
+
+  async function syncCookies() {
+    setSyncing(true);
+    setMessage(null);
+    try {
+      const result = await requestExtensionSync();
+      if (!result.ok) {
+        setMessageTone("error");
+        setMessage(result.error || result.message || "Cookie sync failed");
+        return;
+      }
+      setMessageTone("ok");
+      setMessage(result.message || "Cookies synced");
+      await refreshCookies();
+    } finally {
+      setSyncing(false);
+    }
   }
 
   return (
-    <div style={{ display: "grid", gap: "1.25rem" }}>
-      <div>
-        <h1 style={{ margin: "0 0 0.35rem" }}>Downloader</h1>
-        <p className="muted" style={{ margin: 0 }}>
-          Jobs run on the worker (concurrency 1). Spotify links are mirrored to
-          YouTube/SoundCloud with a confidence score — audio is never taken from
-          Spotify.
-        </p>
-      </div>
-
-      <form className="panel" onSubmit={createJob}>
-        <h2>New job</h2>
-        <label>
-          URL (YouTube / SoundCloud / Spotify playlist or track)
-          <input
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://"
-            required
-          />
-        </label>
-        <div className="row">
-          <label>
-            Format
-            <select
-              value={audioFormat}
-              onChange={(e) => setAudioFormat(e.target.value)}
-            >
-              <option value="flac">FLAC (default)</option>
-              <option value="wav">WAV</option>
-              <option value="alac">ALAC</option>
-            </select>
-          </label>
-          <label>
-            Destination
-            <select
-              value={destination}
-              onChange={(e) => setDestination(e.target.value)}
-            >
-              <option value="browser">Browser</option>
-              <option value="drive">Google Drive</option>
-              <option value="both">Both</option>
-            </select>
-          </label>
-        </div>
-        <button className="btn" type="submit" disabled={busy}>
-          {busy ? "Queuing…" : "Queue download"}
-        </button>
-        {message ? <p className="muted">{message}</p> : null}
-      </form>
-
-      <form className="panel" onSubmit={saveCookies}>
-        <h2>Cookies</h2>
-        <p className="muted" style={{ margin: 0 }}>
-          Netscape format. Encrypted at rest. Or use the Thumper Chrome
-          extension.
-        </p>
-        <label>
-          Provider
-          <select
-            value={cookieProvider}
-            onChange={(e) => setCookieProvider(e.target.value)}
+    <main>
+      <div className="stack">
+        <header className="page-head">
+          <div className="page-head-main">
+            <h1>Downloader</h1>
+            <p>
+              Jobs run one at a time on the worker. Spotify links are mirrored
+              to YouTube or SoundCloud with a confidence score — audio is never
+              taken from Spotify.
+            </p>
+          </div>
+          <aside
+            className="cookie-sync"
+            title="Uses the Thumper Chrome extension. Queueing stays locked until cookies for that source are on the server."
           >
-            <option value="youtube">YouTube</option>
-            <option value="soundcloud">SoundCloud</option>
-          </select>
-        </label>
-        <label>
-          Cookie file contents
-          <textarea
-            rows={5}
-            value={cookieText}
-            onChange={(e) => setCookieText(e.target.value)}
-            placeholder="# Netscape HTTP Cookie File"
-            required
-          />
-        </label>
-        <button className="btn secondary" type="submit">
-          Save encrypted cookies
-        </button>
-      </form>
+            <div className="cookie-sync-top">
+              <span className="cookie-sync-label">Cookies</span>
+              <ul className="cookie-sync-list">
+                {(
+                  [
+                    ["youtube", "YT"],
+                    ["soundcloud", "SC"],
+                  ] as const
+                ).map(([key, label]) => {
+                  const status = cookies?.[key];
+                  const present = status?.present ?? false;
+                  return (
+                    <li
+                      key={key}
+                      className={`cookie-sync-chip${present ? " is-synced" : " is-missing"}`}
+                      title={
+                        present
+                          ? `Updated ${formatSyncedAt(status?.updatedAt ?? null)}`
+                          : "Not synced yet"
+                      }
+                    >
+                      <span className="cookie-sync-dot" aria-hidden="true" />
+                      {label}
+                    </li>
+                  );
+                })}
+              </ul>
+              <button
+                type="button"
+                className="cookie-sync-btn"
+                onClick={() => void syncCookies()}
+                disabled={syncing}
+              >
+                {syncing ? "…" : "Sync"}
+              </button>
+            </div>
+            {!extensionReady ? (
+              <p className="cookie-sync-hint">
+                Extension not detected — load{" "}
+                <code>apps/extension/dist</code>
+              </p>
+            ) : null}
+          </aside>
+        </header>
 
-      <section className="panel">
-        <h2>Jobs</h2>
-        <div className="jobs">
-          {jobs.length === 0 ? (
-            <p className="muted">No jobs yet.</p>
-          ) : (
-            jobs.map((job) => (
-              <article key={job.id} className="job">
-                <header>
-                  <strong>
-                    {job.artist ? `${job.artist} — ` : ""}
-                    {job.title ?? job.sourceUrl}
-                  </strong>
-                  <span className={`status-${job.status}`}>{job.status}</span>
-                </header>
-                <div className="muted">
-                  {job.stage} · {job.audioFormat} · {job.destination}
-                  {job.result?.playlist
-                    ? ` · playlist (${job.result.trackCount ?? "?"} tracks${
-                        job.result.unmatchedCount
-                          ? `, ${job.result.unmatchedCount} unmatched`
-                          : ""
-                      })`
-                    : ""}
-                  {job.result?.matchScore
-                    ? ` · match ${job.result.matchScore}`
-                    : ""}
-                  {job.result?.qualityLabel
-                    ? ` · ${job.result.qualityLabel}`
-                    : ""}
-                </div>
-                {job.matchedUrl ? (
-                  <div className="muted">Mirror: {job.matchedUrl}</div>
-                ) : null}
-                <div className="bar">
-                  <span style={{ width: `${job.progress}%` }} />
-                </div>
-                {job.error ? (
-                  <div className="status-failed">{job.error}</div>
-                ) : null}
-                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                  {job.status === "queued" || job.status === "running" ? (
-                    <button
-                      type="button"
-                      className="btn secondary"
-                      onClick={() => void cancelJob(job.id)}
-                    >
-                      Cancel
-                    </button>
+        <form className="panel" onSubmit={createJob}>
+          <h2>New job</h2>
+          <label>
+            URL
+            <input
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="YouTube, SoundCloud, or Spotify"
+              required
+            />
+          </label>
+          <div className="row">
+            <label>
+              Format
+              <select
+                value={audioFormat}
+                onChange={(e) => setAudioFormat(e.target.value)}
+              >
+                <option value="alac">ALAC</option>
+                <option value="flac">FLAC</option>
+                <option value="wav">WAV (Rekordbox)</option>
+              </select>
+            </label>
+            <label>
+              Destination
+              <select
+                value={destination}
+                onChange={(e) => setDestination(e.target.value)}
+              >
+                <option value="browser">Browser</option>
+                <option value="drive">Google Drive</option>
+                <option value="both">Both</option>
+              </select>
+            </label>
+          </div>
+          {(destination === "drive" || destination === "both") ? (
+            <p className="panel-note">
+              Drive needs Google connected with{" "}
+              <code>drive.file</code> — open your account menu, reconnect
+              Google, then queue again.
+            </p>
+          ) : null}
+          <div>
+            <button className="btn" type="submit" disabled={!canQueue}>
+              {busy ? "Queuing…" : "Queue download"}
+            </button>
+          </div>
+          {!gate.ready && gate.reason ? (
+            <p className="flash error">{gate.reason}</p>
+          ) : null}
+          {message ? (
+            <p className={`flash${messageTone === "error" ? " error" : ""}`}>
+              {message}
+            </p>
+          ) : null}
+        </form>
+
+        <section className="panel">
+          <div className="panel-head">
+            <h2>Jobs</h2>
+            {finishedCount > 0 ? (
+              <button
+                type="button"
+                className="btn ghost"
+                disabled={clearing}
+                onClick={() => void clearFinishedJobs()}
+              >
+                {clearing ? "Clearing…" : "Clear finished"}
+              </button>
+            ) : null}
+          </div>
+          <div className="jobs">
+            {jobs.length === 0 ? (
+              <p className="muted">No jobs yet.</p>
+            ) : (
+              jobs.map((job) => (
+                <article key={job.id} className="job">
+                  <div className="job-head">
+                    <div className="job-title">
+                      {job.artist ? `${job.artist} — ` : ""}
+                      {job.title ?? job.sourceUrl}
+                    </div>
+                    <span className={`badge status-${job.status}`}>
+                      {job.status}
+                    </span>
+                  </div>
+                  <div className="job-meta">
+                    {job.stage} · {job.audioFormat} · {job.destination}
+                    {job.result?.playlist
+                      ? ` · playlist (${job.result.trackCount ?? "?"} tracks${
+                          job.result.unmatchedCount
+                            ? `, ${job.result.unmatchedCount} unmatched`
+                            : ""
+                        })`
+                      : ""}
+                    {job.result?.matchScore
+                      ? ` · match ${job.result.matchScore}`
+                      : ""}
+                    {job.result?.qualityLabel
+                      ? ` · ${job.result.qualityLabel}`
+                      : ""}
+                    {job.matchedUrl ? ` · mirror ${job.matchedUrl}` : ""}
+                  </div>
+                  <div className="bar">
+                    <span style={{ width: `${job.progress}%` }} />
+                  </div>
+                  {job.error ? (
+                    <div className="job-error">{job.error}</div>
                   ) : null}
-                  {job.result?.fileId ? (
-                    <a className="btn" href={`/api/files/${job.result.fileId}`}>
-                      Download
-                    </a>
-                  ) : null}
-                  {job.result?.driveUrl ? (
-                    <a
-                      className="btn secondary"
-                      href={job.result.driveUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Open in Drive
-                    </a>
-                  ) : null}
-                </div>
-              </article>
-            ))
-          )}
-        </div>
-      </section>
-    </div>
+                  <div className="job-actions">
+                    {job.status === "queued" || job.status === "running" ? (
+                      <button
+                        type="button"
+                        className="btn ghost"
+                        onClick={() => void cancelJob(job.id)}
+                      >
+                        Cancel
+                      </button>
+                    ) : null}
+                    {job.result?.fileId ? (
+                      <a
+                        className="btn"
+                        href={`/api/files/${job.result.fileId}`}
+                      >
+                        Download
+                      </a>
+                    ) : null}
+                    {job.result?.driveUrl ? (
+                      <a
+                        className="btn secondary"
+                        href={job.result.driveUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open in Drive
+                      </a>
+                    ) : null}
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+    </main>
   );
 }
