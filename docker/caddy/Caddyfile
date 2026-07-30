@@ -1,0 +1,10 @@
+# Replace thumper.example.com with your domain for production TLS.
+# For local HTTP-only testing, use the :80 block without TLS.
+
+thumper.example.com {
+  reverse_proxy web:3000
+}
+
+:80 {
+  reverse_proxy web:3000
+}

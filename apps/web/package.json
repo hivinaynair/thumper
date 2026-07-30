@@ -1,0 +1,37 @@
+{
+  "name": "web",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint --max-warnings 0",
+    "check-types": "next typegen && tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@clerk/nextjs": "^7.6.3",
+    "@thumper/db": "workspace:*",
+    "@thumper/pipeline": "workspace:*",
+    "@thumper/shared": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "next": "^16.2.12",
+    "pg-boss": "^12.26.3",
+    "pino": "^10.3.1",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@thumper/eslint-config": "workspace:*",
+    "@thumper/typescript-config": "workspace:*",
+    "@types/node": "^22.15.3",
+    "@types/react": "^19.2.13",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.1",
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.10"
+  }
+}

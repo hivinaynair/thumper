@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Thumper Cookie Sync",
+  "version": "0.1.0",
+  "description": "Sync YouTube, SoundCloud, and Patreon cookies to your private Thumper instance.",
+  "permissions": ["cookies", "storage", "activeTab"],
+  "host_permissions": [
+    "https://*.youtube.com/*",
+    "https://*.soundcloud.com/*",
+    "https://*.patreon.com/*",
+    "http://localhost:3000/*",
+    "https://*/*"
+  ],
+  "action": {
+    "default_title": "Thumper",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}

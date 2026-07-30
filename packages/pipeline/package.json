@@ -1,0 +1,27 @@
+{
+  "name": "@thumper/pipeline",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@thumper/db": "workspace:*",
+    "@thumper/shared": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "googleapis": "^173.0.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@thumper/typescript-config": "workspace:*",
+    "@types/node": "^22.15.3",
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.10"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=.env src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "tsx src/index.ts",
+    "check-types": "tsc --noEmit",
+    "lint": "echo ok"
+  },
+  "dependencies": {
+    "@clerk/backend": "^3.14.0",
+    "@thumper/db": "workspace:*",
+    "@thumper/pipeline": "workspace:*",
+    "@thumper/shared": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "pg-boss": "^12.26.3",
+    "pino": "^10.3.1",
+    "tsx": "^4.20.5",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@thumper/typescript-config": "workspace:*",
+    "@types/node": "^22.15.3",
+    "typescript": "^5.9.2"
+  }
+}
