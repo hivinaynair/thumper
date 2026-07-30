@@ -211,9 +211,6 @@ export default function DownloaderPage() {
                 <div className="bar">
                   <span style={{ width: `${job.progress}%` }} />
                 </div>
-                {job.matchedUrl ? (
-                  <div className="muted">Matched: {job.matchedUrl}</div>
-                ) : null}
                 {job.error ? (
                   <div className="status-failed">{job.error}</div>
                 ) : null}
