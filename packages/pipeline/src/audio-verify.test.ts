@@ -1,0 +1,177 @@
+import { describe, expect, it } from "bun:test";
+import {
+  classifyForDj,
+  impliedBitrateKbps,
+  isLosslessCodec,
+  type AudioAnalysis,
+} from "./audio-verify";
+import { averageSpectrumDb, estimateCutoff, SPECTRUM_FFT_SIZE } from "./spectrum";
+
+const SR = 44100;
+
+function analysis(over: Partial<AudioAnalysis> = {}): AudioAnalysis {
+  return {
+    codec: "flac",
+    sampleRate: SR,
+    channels: 2,
+    bitrateKbps: 900,
+    cutoffHz: 21000,
+    cutoffRatio: 21000 / (SR / 2),
+    peakDb: -1.2,
+    losslessContainer: true,
+    ...over,
+  };
+}
+
+/** Deterministic PRNG so the fixture is reproducible across runs. */
+function lcg(seed: number) {
+  let s = seed >>> 0;
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s / 0x100000000 - 0.5;
+  };
+}
+
+/**
+ * Dense content up to `cutoffHz` and nothing but a dither-level floor above it —
+ * the shape a lossy encoder leaves behind.
+ *
+ * The floor matters: estimateCutoff calibrates against the noise in the top of
+ * the band, and real audio always has one (dither, room noise, decoder noise).
+ * A mathematically silent tail is the one case that never occurs in practice.
+ */
+function syntheticLowpassed(cutoffHz: number, seconds = 4): Float32Array {
+  const n = SPECTRUM_FFT_SIZE * Math.ceil((seconds * SR) / SPECTRUM_FFT_SIZE);
+  const out = new Float32Array(n);
+
+  const partials = 240;
+  for (let p = 1; p <= partials; p++) {
+    const freq = (cutoffHz * p) / partials;
+    const phase = (p * 1.37) % (2 * Math.PI);
+    const w = (2 * Math.PI * freq) / SR;
+    const amp = 0.4 / Math.sqrt(partials);
+    for (let i = 0; i < n; i++) out[i]! += amp * Math.cos(w * i + phase);
+  }
+
+  // Broadband floor ~70 dB below the content, i.e. a 16-bit dither floor.
+  const rand = lcg(0x5eed);
+  for (let i = 0; i < n; i++) out[i]! += rand() * 3e-4;
+
+  return out;
+}
+
+describe("estimateCutoff", () => {
+  it("finds a brickwall where a lossy encoder would put one", () => {
+    const spectrum = averageSpectrumDb(syntheticLowpassed(16000));
+    const { cutoffHz } = estimateCutoff(spectrum, SR);
+    expect(cutoffHz).toBeGreaterThan(15000);
+    expect(cutoffHz).toBeLessThan(17000);
+  });
+
+  it("reports Nyquist for full-band content", () => {
+    const spectrum = averageSpectrumDb(syntheticLowpassed(21800));
+    const { cutoffHz, ratio } = estimateCutoff(spectrum, SR);
+    expect(ratio).toBeGreaterThan(0.95);
+    expect(cutoffHz).toBeGreaterThan(20500);
+  });
+
+  it("separates a 128k-style cutoff from a 256k-style one", () => {
+    const low = estimateCutoff(averageSpectrumDb(syntheticLowpassed(16000)), SR);
+    const high = estimateCutoff(averageSpectrumDb(syntheticLowpassed(19500)), SR);
+    expect(high.cutoffHz - low.cutoffHz).toBeGreaterThan(2500);
+  });
+
+  it("does not crash on silence", () => {
+    const spectrum = averageSpectrumDb(new Float32Array(SPECTRUM_FFT_SIZE * 4));
+    expect(() => estimateCutoff(spectrum, SR)).not.toThrow();
+  });
+});
+
+describe("isLosslessCodec", () => {
+  it("recognises the lossless family", () => {
+    for (const c of ["flac", "alac", "pcm_s16le", "pcm_s24le", "LPCM"]) {
+      expect(isLosslessCodec(c)).toBe(true);
+    }
+  });
+
+  it("rejects lossy codecs", () => {
+    for (const c of ["aac", "mp3", "opus", "vorbis"]) {
+      expect(isLosslessCodec(c)).toBe(false);
+    }
+  });
+});
+
+describe("classifyForDj", () => {
+  it("passes a real master", () => {
+    const v = classifyForDj(analysis());
+    expect(v.tier).toBe("master");
+    expect(v.warnings).toEqual([]);
+  });
+
+  it("catches a lossy stream rewrapped as ALAC", () => {
+    // The GLOSS file: ALAC container, 24-bit, larger than the WAV, 16.1 kHz.
+    const v = classifyForDj(
+      analysis({
+        codec: "alac",
+        cutoffHz: 16134,
+        cutoffRatio: 16134 / (SR / 2),
+        bitrateKbps: 1765,
+        peakDb: 0,
+      }),
+    );
+    expect(v.tier).toBe("unsuitable");
+    expect(v.warnings.join(" ")).toContain("not a master");
+    expect(v.warnings.join(" ")).toContain("128 kbps");
+    expect(v.headline).toContain("Not suitable");
+  });
+
+  it("flags zero headroom separately from the codec problem", () => {
+    const v = classifyForDj(
+      analysis({ codec: "aac", losslessContainer: false, peakDb: 0 }),
+    );
+    expect(v.warnings.some((w) => w.includes("headroom"))).toBe(true);
+  });
+
+  it("accepts a good lossy stream as club-ready", () => {
+    const v = classifyForDj(
+      analysis({
+        codec: "aac",
+        losslessContainer: false,
+        cutoffHz: 19800,
+        cutoffRatio: 19800 / (SR / 2),
+        bitrateKbps: 256,
+      }),
+    );
+    expect(v.tier).toBe("club");
+  });
+
+  it("calls a 17-19 kHz source marginal", () => {
+    const v = classifyForDj(
+      analysis({
+        codec: "opus",
+        losslessContainer: false,
+        cutoffHz: 18000,
+        cutoffRatio: 18000 / 24000,
+        sampleRate: 48000,
+      }),
+    );
+    expect(v.tier).toBe("marginal");
+  });
+
+  it("does not penalise a lossless file for a benign 20 kHz roll-off", () => {
+    // 20 kHz of 22.05 is ratio 0.907 — above the laundering threshold, so a
+    // gently filtered but genuine master still reads as a master.
+    const v = classifyForDj(
+      analysis({ cutoffHz: 20100, cutoffRatio: 20100 / (SR / 2) }),
+    );
+    expect(v.tier).toBe("master");
+  });
+});
+
+describe("impliedBitrateKbps", () => {
+  it("maps cutoffs onto the bitrates that produce them", () => {
+    expect(impliedBitrateKbps(16134)).toBe(128);
+    expect(impliedBitrateKbps(19500)).toBe(256);
+    expect(impliedBitrateKbps(21000)).toBeNull();
+  });
+});

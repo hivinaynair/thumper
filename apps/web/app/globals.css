@@ -781,6 +781,34 @@ textarea {
 	font-size: 0.85rem;
 }
 
+.quality-badge {
+	font-size: 0.85rem;
+	border-radius: 6px;
+	padding: 0.4rem 0.6rem;
+	margin-top: 0.4rem;
+	border: 1px solid currentColor;
+}
+
+.quality-badge.unsuitable {
+	color: var(--danger);
+}
+
+.quality-badge.marginal {
+	color: #d08a1e;
+}
+
+.quality-badge.club {
+	color: var(--muted);
+}
+
+.job-warnings {
+	margin: 0.4rem 0 0;
+	padding-left: 1.1rem;
+	font-size: 0.8rem;
+	color: var(--muted);
+	line-height: 1.45;
+}
+
 .muted {
 	color: var(--muted);
 	font-size: 0.85rem;

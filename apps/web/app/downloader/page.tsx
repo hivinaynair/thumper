@@ -23,6 +23,10 @@ type Job = {
 		trackCount?: number;
 		unmatchedCount?: number;
 		matchScore?: number;
+		djTier?: "master" | "club" | "marginal" | "unsuitable";
+		djHeadline?: string;
+		warnings?: string[];
+		cutoffHz?: number;
 	} | null;
 };
 
@@ -456,6 +460,25 @@ export default function DownloaderPage() {
 									<div className="bar">
 										<span style={{ width: `${job.progress}%` }} />
 									</div>
+									{job.result?.djTier && job.result.djTier !== "master" ? (
+										<div className={`quality-badge ${job.result.djTier}`}>
+											<strong>
+												{job.result.djTier === "unsuitable"
+													? "Not for club playback"
+													: job.result.djTier === "marginal"
+														? "Marginal quality"
+														: "Club-ready"}
+											</strong>
+											{job.result.djHeadline ? ` — ${job.result.djHeadline}` : ""}
+										</div>
+									) : null}
+									{job.result?.warnings?.length ? (
+										<ul className="job-warnings">
+											{job.result.warnings.map((w) => (
+												<li key={w}>{w}</li>
+											))}
+										</ul>
+									) : null}
 									{job.error ? (
 										<div className="job-error">{job.error}</div>
 									) : null}

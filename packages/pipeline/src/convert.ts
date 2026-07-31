@@ -1,9 +1,29 @@
 import { runCommandOk, type SpawnOptions } from "./process";
 import {
   audioQualityLabel,
+  isLosslessSource,
   isPcmSource,
   type AudioTargetFormat,
 } from "./audio-quality";
+import { measurePeakDb } from "./audio-verify";
+
+/** Leave this much room below full scale when re-encoding to an integer format. */
+const TARGET_PEAK_DBFS = -0.3;
+
+/**
+ * Lossy decoders routinely produce samples above ±1.0 — the reconstruction
+ * overshoots even when the original master didn't clip. Writing that straight
+ * into 16- or 24-bit PCM clamps every one of those samples flat, which is how a
+ * 128 kbps stream ends up with ten thousand clipped samples after being
+ * "losslessly" rewrapped.
+ *
+ * Returns the attenuation to apply, or null when the signal already fits.
+ */
+export function headroomGainDb(peakDb: number): number | null {
+  if (!Number.isFinite(peakDb)) return null;
+  if (peakDb <= TARGET_PEAK_DBFS) return null;
+  return Number((TARGET_PEAK_DBFS - peakDb).toFixed(3));
+}
 
 export type AudioProbe = {
   codec: string;
@@ -74,8 +94,10 @@ export async function convertAudio(params: {
   genre?: string;
   date?: string;
   artworkPath?: string | null;
+  /** Measured spectral cutoff of the source, used for an honest quality label. */
+  cutoffHz?: number;
   signal?: AbortSignal;
-}): Promise<{ qualityLabel: string }> {
+}): Promise<{ qualityLabel: string; headroomGainDb: number | null }> {
   const info = await probeAudio(params.inputPath, { signal: params.signal });
   const sampleRate = Number.parseInt(info.sampleRate) || 44100;
   const channels = info.channels || 2;
@@ -83,7 +105,18 @@ export async function convertAudio(params: {
     params.target,
     info.codec,
     params.inputPath,
+    params.cutoffHz,
   );
+
+  // Only lossy sources overshoot; a lossless source is already integer-bounded,
+  // and touching its gain would make the "lossless" claim untrue.
+  let gainDb: number | null = null;
+  if (!isLosslessSource(info.codec, params.inputPath)) {
+    gainDb = headroomGainDb(
+      await measurePeakDb(params.inputPath, { signal: params.signal }),
+    );
+  }
+  const gain = gainDb === null ? [] : ["-af", `volume=${gainDb}dB`];
 
   const meta = buildMetadataArgs(params);
   const canEmbedArt =
@@ -102,6 +135,7 @@ export async function convertAudio(params: {
         "-i",
         params.inputPath,
         "-vn",
+        ...gain,
         "-ar",
         String(sampleRate),
         "-acodec",
@@ -126,7 +160,9 @@ export async function convertAudio(params: {
         "0:a:0",
         "-map",
         "1:0",
-        ...(alreadyFlac ? ["-c:a", "copy"] : ["-c:a", "flac", "-compression_level", "8", "-ar", String(sampleRate), "-ac", String(channels)]),
+        ...(alreadyFlac
+          ? ["-c:a", "copy"]
+          : [...gain, "-c:a", "flac", "-compression_level", "8", "-ar", String(sampleRate), "-ac", String(channels)]),
         "-c:v",
         "mjpeg",
         "-disposition:v:0",
@@ -142,6 +178,7 @@ export async function convertAudio(params: {
         "-i",
         params.inputPath,
         "-vn",
+        ...gain,
         "-c:a",
         "flac",
         "-compression_level",
@@ -167,6 +204,7 @@ export async function convertAudio(params: {
         "0:a:0",
         "-map",
         "1:0",
+        ...gain,
         "-c:a",
         "alac",
         "-ar",
@@ -186,6 +224,7 @@ export async function convertAudio(params: {
         "-i",
         params.inputPath,
         "-vn",
+        ...gain,
         "-c:a",
         "alac",
         "-ar",
@@ -199,5 +238,5 @@ export async function convertAudio(params: {
   }
 
   await runCommandOk("ffmpeg", args, { signal: params.signal });
-  return { qualityLabel };
+  return { qualityLabel, headroomGainDb: gainDb };
 }

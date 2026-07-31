@@ -64,6 +64,13 @@ export const jobs = pgTable("jobs", {
     driveFileId?: string;
     driveUrl?: string;
     qualityLabel?: string;
+    /** Measured DJ suitability of the *source* stream, not the container. */
+    djTier?: "master" | "club" | "marginal" | "unsuitable";
+    djHeadline?: string;
+    warnings?: string[];
+    sourceCodec?: string;
+    sourceBitrateKbps?: number | null;
+    cutoffHz?: number;
   }>(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()

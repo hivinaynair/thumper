@@ -63,6 +63,13 @@ export type JobStage = z.infer<typeof JobStageSchema>;
 
 export const CreateJobInputSchema = z.object({
   url: z.string().url(),
+  // ALAC by default: bit-identical to FLAC in quality, embeds artwork reliably,
+  // and is the one lossless container that Apple Music / iOS treat as a first
+  // class citizen. WAV is the odd one out here — DJ software reads its tags
+  // inconsistently, so convert.ts deliberately skips artwork for it.
+  //
+  // Caveat worth knowing: ALAC and FLAC both need CDJ-2000NXS2 or newer. On
+  // older club gear only WAV/AIFF/MP3/AAC will load.
   audioFormat: AudioFormatSchema.default("alac"),
   destination: DeliveryDestinationSchema.default("browser"),
   titleHint: z.string().optional(),

@@ -5,6 +5,7 @@ import {
   AUDIO_FORMAT_SELECTOR,
   AUDIO_FORMAT_SORT,
   withoutPreview,
+  youtubeExtractorArgs,
 } from "./audio-quality";
 import { getYtDlpPath } from "./paths";
 import { runCommandOk, type SpawnOptions } from "./process";
@@ -16,17 +17,33 @@ export type DownloadMediaResult = {
   filePath: string;
   title?: string;
   abr?: number;
+  /** yt-dlp format id actually served, e.g. "140", "251", "download". */
+  formatId?: string;
+  acodec?: string;
+  /**
+   * True when we had to fall back to an unauthenticated fetch. On YouTube that
+   * caps quality at 128 kbps AAC regardless of the user's Premium status, so
+   * the caller should say so rather than presenting the result as best-effort.
+   */
+  anonymousFallback?: boolean;
 };
 
+function marker(output: string, name: string): string {
+  return (
+    output.match(new RegExp(`(?:^|\\n)\\s*__${name}__=([^\\n]+)`))?.[1]?.trim() ??
+    ""
+  );
+}
+
 function parsePrintMarkers(output: string) {
-  const filepath =
-    output.match(/(?:^|\n)\s*__filepath__=([^\n]+)/)?.[1]?.trim() ?? "";
-  const abrRaw =
-    output.match(/(?:^|\n)\s*__abr__=([^\n]+)/)?.[1]?.trim() ?? "";
-  const abr = Number.parseFloat(abrRaw);
+  const abr = Number.parseFloat(marker(output, "abr"));
+  const formatId = marker(output, "format_id");
+  const acodec = marker(output, "acodec");
   return {
-    filepath,
+    filepath: marker(output, "filepath"),
     abr: Number.isFinite(abr) && abr > 0 ? Math.round(abr) : undefined,
+    formatId: formatId && formatId !== "NA" ? formatId : undefined,
+    acodec: acodec && acodec !== "NA" ? acodec : undefined,
   };
 }
 
@@ -49,8 +66,6 @@ export async function downloadMedia(params: {
     selector,
     "-S",
     AUDIO_FORMAT_SORT,
-    "--audio-quality",
-    "0",
     "--no-check-certificate",
     "--no-playlist",
     "--force-ipv4",
@@ -65,10 +80,17 @@ export async function downloadMedia(params: {
     "after_move:__abr__=%(abr)s",
     "--print",
     "after_move:__title__=%(title)s",
+    "--print",
+    "after_move:__format_id__=%(format_id)s",
+    "--print",
+    "after_move:__acodec__=%(acodec)s",
   ];
 
   if (params.soundcloud) {
     args.push("--add-header", "Referer:https://soundcloud.com/");
+  } else {
+    // Premium itags (141 / 774) are only listed for certain player clients.
+    args.push("--extractor-args", youtubeExtractorArgs());
   }
   if (params.cookiePath) {
     args.push("--cookies", params.cookiePath);
@@ -81,28 +103,53 @@ export async function downloadMedia(params: {
     onStderr: params.onProgress,
   };
 
-  let stdout: string;
-  let stderr: string;
+  let stdout = "";
+  let stderr = "";
+  let anonymousFallback = false;
+
   try {
     ({ stdout, stderr } = await runCommandOk(getYtDlpPath(), args, spawnOpts));
   } catch (err) {
-    // With cookies attached, yt-dlp restricts itself to web player clients,
-    // which now need a PO token — YouTube answers with zero formats and
-    // yt-dlp reports "Requested format is not available". Cookie-less clients
-    // still serve public tracks, so retry once without them. Age-restricted
-    // videos legitimately need the cookies and will fail again.
-    if (!params.soundcloud && params.cookiePath && isFormatUnavailable(err)) {
+    if (params.soundcloud || !params.cookiePath || !isFormatUnavailable(err)) {
+      throw err;
+    }
+
+    // Some player clients need a PO token and answer authenticated requests
+    // with zero formats. Retry on a different client first — *keeping* the
+    // cookies, because dropping them is what caps a Premium account at 128 kbps
+    // AAC. Only give up authentication as a last resort, and flag it when we do
+    // so the caller can explain the downgrade instead of shipping a quietly
+    // worse file.
+    const withClients = (clients: string) =>
+      args.map((arg, i) =>
+        args[i - 1] === "--extractor-args" ? `youtube:player_client=${clients}` : arg,
+      );
+
+    let recovered = false;
+    for (const clients of ["tv", "web_safari,mweb", "android_vr"]) {
+      try {
+        ({ stdout, stderr } = await runCommandOk(
+          getYtDlpPath(),
+          withClients(clients),
+          spawnOpts,
+        ));
+        recovered = true;
+        break;
+      } catch (retryErr) {
+        if (!isFormatUnavailable(retryErr)) throw retryErr;
+      }
+    }
+
+    if (!recovered) {
       const retryArgs = args.filter(
-        (arg, i) =>
-          arg !== "--cookies" && args[i - 1] !== "--cookies",
+        (arg, i) => arg !== "--cookies" && args[i - 1] !== "--cookies",
       );
       ({ stdout, stderr } = await runCommandOk(
         getYtDlpPath(),
         retryArgs,
         spawnOpts,
       ));
-    } else {
-      throw err;
+      anonymousFallback = true;
     }
   }
   const combined = `${stdout}\n${stderr}`;
@@ -126,6 +173,9 @@ export async function downloadMedia(params: {
     filePath: markers.filepath,
     title,
     abr: markers.abr,
+    formatId: markers.formatId,
+    acodec: markers.acodec,
+    anonymousFallback,
   };
 }
 

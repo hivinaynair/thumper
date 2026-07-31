@@ -1,10 +1,58 @@
 export type AudioTargetFormat = "wav" | "flac" | "alac";
 
-export const AUDIO_FORMAT_SELECTOR =
-  "bestaudio[ext=wav]/bestaudio[acodec^=pcm]/bestaudio[acodec=lpcm]/bestaudio[acodec^=flac]/bestaudio[acodec^=alac]/bestaudio/best";
+/**
+ * Format preference chain, tried left to right. yt-dlp picks the first group
+ * that matches anything, then applies AUDIO_FORMAT_SORT within that group — so
+ * ordering here is a hard preference, not a tiebreak.
+ *
+ * `format_id=download` comes first because it is the only entry that can ever
+ * yield an actual master: when a SoundCloud artist enables the Download button,
+ * yt-dlp can fetch the original uploaded file (frequently WAV or AIFF). Every
+ * other entry is a transcode.
+ */
+export const AUDIO_FORMAT_SELECTOR = [
+  "bestaudio[format_id=download]",
+  "bestaudio[acodec^=flac]",
+  "bestaudio[acodec^=alac]",
+  "bestaudio[acodec^=pcm]",
+  "bestaudio[acodec=lpcm]",
+  "bestaudio[ext=wav]",
+  "bestaudio[ext=aiff]",
+  "bestaudio[ext=flac]",
+  "bestaudio",
+  "best",
+].join("/");
 
-export const AUDIO_FORMAT_SORT =
-  "abr:desc,asr:desc,channels:desc,acodec:opus:aac:mp3";
+/**
+ * yt-dlp `-S` sorting.
+ *
+ * Every field sorts descending by default; `+` reverses it. There is no `:desc`
+ * modifier — a `:` suffix introduces a *preferred value* (numeric for numeric
+ * fields), so the previous `abr:desc,asr:desc,channels:desc,acodec:opus:aac:mp3`
+ * was invalid on every term and yt-dlp fell back to its default ordering. That
+ * default is resolution-oriented and happily returned YouTube's 128 kbps AAC.
+ *
+ * `acodec` last is the tiebreak between equal-bitrate streams; yt-dlp's built-in
+ * order already puts lossless above opus above aac.
+ */
+export const AUDIO_FORMAT_SORT = "abr,asr,channels,acodec";
+
+/**
+ * YouTube only exposes Premium audio (itag 141 @ 256 kbps AAC, itag 774 @
+ * 256 kbps Opus) to certain player clients, and only when authenticated. The
+ * plain `web` client additionally needs a PO token now, which is what made the
+ * old cookie-stripping retry look like a fix — it "worked" by silently
+ * downgrading a paying account to anonymous 128 kbps.
+ *
+ * Overridable because YouTube changes which clients work every few months.
+ */
+export const DEFAULT_YOUTUBE_PLAYER_CLIENTS = "default,tv,web_music";
+
+export function youtubeExtractorArgs(): string {
+  const clients =
+    process.env.YT_PLAYER_CLIENTS?.trim() || DEFAULT_YOUTUBE_PLAYER_CLIENTS;
+  return `youtube:player_client=${clients}`;
+}
 
 /** Fail-closed: exclude SoundCloud preview formats from the selector. */
 export const withoutPreview = (selector: string) => {
@@ -28,44 +76,60 @@ export const isPcmSource = (codec: string, filePath = "") => {
   );
 };
 
-const isLosslessSource = (codec: string, filePath = "") => {
+export const isLosslessSource = (codec: string, filePath = "") => {
   const lowerCodec = codec.toLowerCase();
   const lowerPath = filePath.toLowerCase();
   return (
     isPcmSource(codec, filePath) ||
     lowerCodec === "flac" ||
     lowerCodec === "alac" ||
-    lowerPath.endsWith(".flac")
+    lowerPath.endsWith(".flac") ||
+    lowerPath.endsWith(".aiff")
   );
 };
 
+/**
+ * Human-readable quality summary.
+ *
+ * Takes the measured spectral cutoff when one is available, because the codec
+ * name alone cannot distinguish a real ALAC master from a 128 kbps stream
+ * rewrapped as ALAC — the situation this whole module exists to catch.
+ */
 export const audioQualityLabel = (
   target: AudioTargetFormat,
   codec: string,
   filePath = "",
+  cutoffHz?: number,
 ) => {
   const lowerCodec = codec.toLowerCase();
-  const lowerPath = filePath.toLowerCase();
+  const label = target === "alac" ? "ALAC" : target.toUpperCase();
+  const lossless = isLosslessSource(codec, filePath);
 
-  if (target === "wav" && isPcmSource(codec, filePath)) {
-    return "Highest Available (Original WAV/PCM)";
-  }
-  if (
-    target === "flac" &&
-    (lowerCodec === "flac" || lowerPath.endsWith(".flac"))
-  ) {
-    return "Lossless (Original FLAC)";
-  }
-  if (target === "alac" && lowerCodec === "alac") {
-    return "Lossless (Original ALAC)";
+  // A lossless-looking source that stops short of ~19 kHz was lossy upstream.
+  const launderedLossy =
+    lossless && typeof cutoffHz === "number" && cutoffHz > 0 && cutoffHz < 19000;
+
+  if (launderedLossy) {
+    return `${label} — lossy source rewrapped (content stops at ${(
+      cutoffHz / 1000
+    ).toFixed(1)} kHz)`;
   }
 
-  if (isLosslessSource(codec, filePath)) {
-    const label = target === "alac" ? "ALAC" : target.toUpperCase();
-    return `${label} from lossless source`;
+  if (lossless) {
+    const sameFormat =
+      (target === "wav" && isPcmSource(codec, filePath)) ||
+      (target === "flac" && lowerCodec === "flac") ||
+      (target === "alac" && lowerCodec === "alac");
+    return sameFormat
+      ? `Lossless (original ${lowerCodec.toUpperCase() || "PCM"})`
+      : `${label} from lossless source`;
   }
 
-  const label =
-    target === "wav" ? "WAV/PCM" : target === "flac" ? "FLAC" : "ALAC";
-  return `${label} converted from ${lowerCodec || "unknown"} source (no quality gain)`;
+  const cutoffNote =
+    typeof cutoffHz === "number" && cutoffHz > 0
+      ? `, content to ${(cutoffHz / 1000).toFixed(1)} kHz`
+      : "";
+  return `${label} converted from ${
+    lowerCodec || "unknown"
+  } source (no quality gain${cutoffNote})`;
 };

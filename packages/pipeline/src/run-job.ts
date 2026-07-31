@@ -13,6 +13,7 @@ import {
   type DeliveryDestination,
   type DownloadJobPayload,
 } from "@thumper/shared";
+import { verifyForDj, type DjVerdict } from "./audio-verify";
 import { FILE_TTL_MS } from "./cleanup";
 import { convertAudio } from "./convert";
 import { materializeCookieFile } from "./cookies";
@@ -67,6 +68,12 @@ export type ProgressUpdater = (patch: {
     childJobIds?: string[];
     unmatchedCount?: number;
     matchScore?: number;
+    djTier?: "master" | "club" | "marginal" | "unsuitable";
+    djHeadline?: string;
+    warnings?: string[];
+    sourceCodec?: string;
+    sourceBitrateKbps?: number | null;
+    cutoffHz?: number;
   };
 }) => Promise<void>;
 
@@ -192,6 +199,24 @@ async function processTrack(params: {
   await update({ title, artist, stage: "converting", progress: 55 });
   await ensureNotCancelled(signal, db, payload.jobId);
 
+  // Verify the *downloaded source*, before conversion. Once it has been
+  // rewrapped as ALAC/FLAC every container-level check says "lossless", so this
+  // is the last moment the truth is visible.
+  let verdict: DjVerdict | null = null;
+  try {
+    verdict = await verifyForDj(downloaded.filePath, { signal });
+  } catch (err) {
+    if (err instanceof ProcessCancelledError) throw err;
+    // Verification is advisory — never fail a job because analysis broke.
+  }
+
+  const warnings = [...(verdict?.warnings ?? [])];
+  if (downloaded.anonymousFallback) {
+    warnings.unshift(
+      "Downloaded without your account — YouTube capped this at 128 kbps AAC. Re-sync your cookies to get Premium quality.",
+    );
+  }
+
   let artworkPath: string | null = null;
   if (tags.artworkUrl) {
     artworkPath = await downloadArtworkFile({
@@ -216,6 +241,7 @@ async function processTrack(params: {
     genre: tags.genre,
     date: tags.date,
     artworkPath,
+    cutoffHz: verdict?.analysis.cutoffHz,
     signal,
   });
 
@@ -304,6 +330,12 @@ async function processTrack(params: {
       driveUrl,
       qualityLabel,
       matchScore: params.matchScore,
+      djTier: verdict?.tier,
+      djHeadline: verdict?.headline,
+      warnings: warnings.length ? warnings : undefined,
+      sourceCodec: verdict?.analysis.codec ?? downloaded.acodec,
+      sourceBitrateKbps: verdict?.analysis.bitrateKbps ?? downloaded.abr ?? null,
+      cutoffHz: verdict?.analysis.cutoffHz,
     },
   });
 }
