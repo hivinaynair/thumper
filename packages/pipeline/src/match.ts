@@ -244,8 +244,8 @@ export async function matchTrackToYoutube(
 ): Promise<(PlaylistEntry & { matchScore: number; mirrorSource: "youtube" }) | null> {
   const ytQuery = buildYoutubeSearchQuery(track);
   const ytCandidates = await searchCandidates(ytQuery, "youtube", options);
-  // Second query without "official audio" if first pool is thin
-  if (ytCandidates.length < 3) {
+
+  const addAltCandidates = async () => {
     const artist = track.artists[0] ?? "";
     const alt = await searchCandidates(
       `ytsearch8:${artist} ${track.title}`.trim(),
@@ -256,9 +256,18 @@ export async function matchTrackToYoutube(
     for (const c of alt) {
       if (!seen.has(c.url)) ytCandidates.push(c);
     }
-  }
+  };
 
-  const bestYt = pickBest(track, ytCandidates);
+  // The primary query appends "official audio", which pulls YouTube's results
+  // toward unrelated tracks that happen to have an official upload. A full
+  // pool of wrong answers is as useless as an empty one, so retry on a bare
+  // "artist title" query whenever nothing clears the threshold — not just when
+  // the pool is thin.
+  let bestYt = pickBest(track, ytCandidates);
+  if (!bestYt) {
+    await addAltCandidates();
+    bestYt = pickBest(track, ytCandidates);
+  }
   if (!bestYt) return null;
   return {
     url: bestYt.url,

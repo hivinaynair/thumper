@@ -29,7 +29,11 @@ import {
   matchTrackToYoutube,
   mirrorSpotifyTracks,
 } from "./match";
-import { downloadArtworkFile, resolveTrackTags } from "./metadata";
+import {
+  downloadArtworkFile,
+  fetchSoundCloudTags,
+  resolveTrackTags,
+} from "./metadata";
 import { assertPathInside, userRoot } from "./paths";
 import { expandPlaylistEntries, type PlaylistEntry } from "./playlist";
 import { ProcessCancelledError } from "./process";
@@ -314,6 +318,22 @@ async function resolveSoundCloudMeta(params: {
   let title = params.titleHint?.trim() || "";
   let artist = params.artistHint?.trim() || "";
   let durationMs: number | undefined;
+
+  // oEmbed answers for DRM-protected and geo-blocked tracks, where the yt-dlp
+  // dump below fails outright — without it the mirror search runs on "track"
+  // and never matches anything.
+  if (!title || !artist) {
+    try {
+      const tags = await fetchSoundCloudTags(params.trackUrl, {
+        cookiePath: params.cookieTmp,
+        signal: params.signal,
+      });
+      if (!title) title = tags?.title?.trim() ?? "";
+      if (!artist) artist = tags?.artist?.trim() ?? "";
+    } catch {
+      /* best-effort metadata for YouTube search */
+    }
+  }
 
   try {
     const info = await dumpJson(
