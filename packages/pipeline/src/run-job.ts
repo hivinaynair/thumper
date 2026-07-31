@@ -31,9 +31,11 @@ import {
   mirrorSpotifyTracks,
 } from "./match";
 import {
+  artistNamesFromInfo,
   downloadArtworkFile,
   fetchSoundCloudTags,
   resolveTrackTags,
+  splitArtistNames,
 } from "./metadata";
 import { assertPathInside, userRoot } from "./paths";
 import { expandPlaylistEntries, type PlaylistEntry } from "./playlist";
@@ -376,12 +378,10 @@ async function resolveSoundCloudMeta(params: {
       params.signal,
     );
     if (!title) title = String(info.title ?? info.track ?? "").trim();
-    if (!artist) {
-      artist = String(
-        info.uploader ?? info.artist ?? info.creator ?? "",
-      ).trim();
-    }
+    if (!artist) artist = artistNamesFromInfo(info).join(", ");
     const durationSec = Number(info.duration ?? 0);
+    // A 30s "duration" is SoundCloud's snippet, not the track. Passing it on
+    // would make every full-length mirror look like the wrong song.
     if (Number.isFinite(durationSec) && durationSec > 35) {
       durationMs = Math.round(durationSec * 1000);
     }
@@ -390,14 +390,8 @@ async function resolveSoundCloudMeta(params: {
   }
 
   if (!title) title = "track";
-  const artists = artist
-    ? artist
-        .split(/,|&/)
-        .map((s) => s.trim())
-        .filter(Boolean)
-    : [];
 
-  return { title, artists, durationMs };
+  return { title, artists: splitArtistNames(artist), durationMs };
 }
 
 async function fallbackSoundCloudToYoutube(params: {

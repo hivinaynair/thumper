@@ -64,6 +64,13 @@ export const jobs = pgTable("jobs", {
     driveFileId?: string;
     driveUrl?: string;
     qualityLabel?: string;
+    /** Set on the parent job of an expanded playlist; the tracks are children. */
+    playlist?: boolean;
+    trackCount?: number;
+    childJobIds?: string[];
+    /** Spotify tracks with no confident YT/SC mirror — never became children. */
+    unmatchedCount?: number;
+    matchScore?: number;
     /** Measured DJ suitability of the *source* stream, not the container. */
     djTier?: "master" | "club" | "marginal" | "unsuitable";
     djHeadline?: string;

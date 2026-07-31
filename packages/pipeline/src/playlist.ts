@@ -1,4 +1,5 @@
 import { MAX_PLAYLIST_TRACKS } from "@thumper/shared";
+import { fetchSoundCloudOEmbed } from "./metadata";
 import { getYtDlpPath } from "./paths";
 import { runCommandOk, type SpawnOptions } from "./process";
 
@@ -56,5 +57,67 @@ export async function expandPlaylistEntries(
     return true;
   });
 
-  return { title: playlistTitle, entries: unique };
+  return {
+    title: playlistTitle,
+    entries: await nameSoundCloudEntries(unique, { signal: options.signal }),
+  };
+}
+
+/** Cap on concurrent oEmbed lookups — polite, and fast enough for 100 tracks. */
+const NAME_LOOKUP_CONCURRENCY = 6;
+
+/**
+ * Flat expansion of a SoundCloud set names nothing: every entry comes back with
+ * `NA` for title and uploader, and everything past the first handful is a bare
+ * `api-v2.soundcloud.com/tracks/<id>` URL. So the per-track job has nothing to
+ * search YouTube with when SoundCloud refuses the audio, and nothing to show
+ * the user but a raw API URL. oEmbed answers for these even when extraction is
+ * geo-blocked, so name them here — best effort, never fatal to the playlist.
+ */
+export async function nameSoundCloudEntries(
+  entries: PlaylistEntry[],
+  options: {
+    signal?: AbortSignal;
+    lookup?: (
+      url: string,
+    ) => Promise<{ title?: string; artist?: string } | null>;
+  } = {},
+): Promise<PlaylistEntry[]> {
+  const lookup =
+    options.lookup ??
+    ((url: string) => fetchSoundCloudOEmbed(url, { signal: options.signal }));
+
+  const pending = entries
+    .map((entry, index) => ({ entry, index }))
+    .filter(
+      ({ entry }) =>
+        !entry.title && /^https?:\/\/[^/]*soundcloud\.com\//i.test(entry.url),
+    );
+  if (pending.length === 0) return entries;
+
+  const named = [...entries];
+  let cursor = 0;
+  const workers = Array.from(
+    { length: Math.min(NAME_LOOKUP_CONCURRENCY, pending.length) },
+    async () => {
+      while (cursor < pending.length) {
+        const next = pending[cursor++];
+        if (!next || options.signal?.aborted) return;
+        try {
+          const meta = await lookup(next.entry.url);
+          if (!meta?.title) continue;
+          named[next.index] = {
+            ...next.entry,
+            title: meta.title,
+            artist: next.entry.artist ?? meta.artist,
+          };
+        } catch {
+          /* an unnamed entry is still downloadable — keep the playlist */
+        }
+      }
+    },
+  );
+  await Promise.all(workers);
+
+  return named;
 }
