@@ -23,4 +23,10 @@ describe("headroomGainDb", () => {
     expect(headroomGainDb(-Infinity)).toBeNull();
     expect(headroomGainDb(Number.NaN)).toBeNull();
   });
+
+  it("leaves an unmeasured file alone rather than guessing", () => {
+    // null means the peak could not be read. Treating that as 0 dBFS would
+    // attenuate every file whose analysis happened to fail.
+    expect(headroomGainDb(null)).toBeNull();
+  });
 });

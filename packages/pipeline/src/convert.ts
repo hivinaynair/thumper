@@ -17,10 +17,12 @@ const TARGET_PEAK_DBFS = -0.3;
  * 128 kbps stream ends up with ten thousand clipped samples after being
  * "losslessly" rewrapped.
  *
- * Returns the attenuation to apply, or null when the signal already fits.
+ * Returns the attenuation to apply, or null when the signal already fits or the
+ * peak could not be measured — an unmeasured file is left alone rather than
+ * quietly attenuated on a guess.
  */
-export function headroomGainDb(peakDb: number): number | null {
-  if (!Number.isFinite(peakDb)) return null;
+export function headroomGainDb(peakDb: number | null): number | null {
+  if (peakDb === null || !Number.isFinite(peakDb)) return null;
   if (peakDb <= TARGET_PEAK_DBFS) return null;
   return Number((TARGET_PEAK_DBFS - peakDb).toFixed(3));
 }
@@ -96,6 +98,12 @@ export async function convertAudio(params: {
   artworkPath?: string | null;
   /** Measured spectral cutoff of the source, used for an honest quality label. */
   cutoffHz?: number;
+  /**
+   * Peak already measured by the verifier for this same file. Pass it to skip a
+   * second full decode; `null` means "measured and unavailable", `undefined`
+   * means "not measured yet".
+   */
+  peakDb?: number | null;
   signal?: AbortSignal;
 }): Promise<{ qualityLabel: string; headroomGainDb: number | null }> {
   const info = await probeAudio(params.inputPath, { signal: params.signal });
@@ -112,9 +120,11 @@ export async function convertAudio(params: {
   // and touching its gain would make the "lossless" claim untrue.
   let gainDb: number | null = null;
   if (!isLosslessSource(info.codec, params.inputPath)) {
-    gainDb = headroomGainDb(
-      await measurePeakDb(params.inputPath, { signal: params.signal }),
-    );
+    const peakDb =
+      params.peakDb !== undefined
+        ? params.peakDb
+        : await measurePeakDb(params.inputPath, { signal: params.signal });
+    gainDb = headroomGainDb(peakDb);
   }
   const gain = gainDb === null ? [] : ["-af", `volume=${gainDb}dB`];
 

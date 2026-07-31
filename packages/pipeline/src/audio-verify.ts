@@ -1,4 +1,9 @@
-import { runCommandBuffer, runCommandOk, type SpawnOptions } from "./process";
+import {
+  ProcessCancelledError,
+  runCommandBuffer,
+  runCommandOk,
+  type SpawnOptions,
+} from "./process";
 import { averageSpectrumDb, estimateCutoff } from "./spectrum";
 
 /**
@@ -20,8 +25,11 @@ export type AudioAnalysis = {
   cutoffHz: number;
   /** cutoffHz relative to Nyquist. ~1.0 means no artificial lowpass. */
   cutoffRatio: number;
-  /** Peak level of the decoded float signal; may exceed 0 for lossy overshoot. */
-  peakDb: number;
+  /**
+   * Peak level of the decoded float signal; may exceed 0 for lossy overshoot.
+   * Null when the measurement could not be taken — distinct from 0 dBFS.
+   */
+  peakDb: number | null;
   /** True when the codec itself stores PCM or losslessly-compressed PCM. */
   losslessContainer: boolean;
 };
@@ -104,15 +112,20 @@ async function probe(
   };
 }
 
-/** Decoded float peak. Exceeds 0 dB when a lossy decode overshoots full scale. */
+/**
+ * Decoded float peak. Exceeds 0 dB when a lossy decode overshoots full scale.
+ *
+ * Null means "could not measure", which is deliberately not the same as 0 dBFS:
+ * a failed measurement must not be read as a hot file and trigger attenuation.
+ */
 export async function measurePeakDb(
   filePath: string,
   options: SpawnOptions,
-): Promise<number> {
+): Promise<number | null> {
   try {
     // astats sees the float samples; volumedetect would clamp them to 0 dB and
     // hide exactly the overshoot we're looking for.
-    const { stderr } = await runCommandBuffer(
+    const { stderr, code } = await runCommandBuffer(
       "ffmpeg",
       [
         "-hide_banner",
@@ -128,12 +141,15 @@ export async function measurePeakDb(
       ],
       options,
     );
+    if (code !== 0) return null;
     const match = stderr.match(/Peak level dB:\s*(-?[\d.]+|-?inf)/i);
-    if (!match?.[1]) return 0;
+    if (!match?.[1]) return null;
     const value = Number.parseFloat(match[1]);
+    // -inf is a real answer: digital silence.
     return Number.isFinite(value) ? value : -Infinity;
-  } catch {
-    return 0;
+  } catch (err) {
+    if (err instanceof ProcessCancelledError) throw err;
+    return null;
   }
 }
 
@@ -148,7 +164,7 @@ export async function analyzeAudioFile(
   const start =
     info.durationSec > ANALYSIS_SECONDS ? Math.floor(info.durationSec * 0.2) : 0;
 
-  const { stdout } = await runCommandBuffer(
+  const { stdout, stderr, code } = await runCommandBuffer(
     "ffmpeg",
     [
       "-v",
@@ -171,10 +187,15 @@ export async function analyzeAudioFile(
     options,
   );
 
+  // Throwing on any failed decode keeps the caller's "verification unavailable"
+  // path distinct from "verified and it's bad". A partial decode is not safe to
+  // judge either: the samples we did get may be the tail of a truncated file.
+  if (code !== 0) {
+    throw new Error(
+      `Audio analysis decode failed (${code}): ${stderr.trim().slice(0, 200)}`,
+    );
+  }
   if (stdout.byteLength < 4) {
-    // ffmpeg produced nothing. Throwing keeps the caller's "verification
-    // unavailable" path distinct from "verified and it's bad" — silently
-    // returning a 0 Hz cutoff would condemn every file.
     throw new Error(`Could not decode audio for analysis: ${filePath}`);
   }
 
@@ -189,7 +210,12 @@ export async function analyzeAudioFile(
     Math.floor(aligned.byteLength / 4),
   );
   const spectrum = averageSpectrumDb(samples);
-  const { cutoffHz, ratio } = estimateCutoff(spectrum, info.sampleRate);
+  const { cutoffHz, ratio, detected } = estimateCutoff(spectrum, info.sampleRate);
+  if (!detected) {
+    // Nothing rose clear of the noise floor — a flat spectrum we cannot read,
+    // not a file without highs. Same treatment as a failed decode.
+    throw new Error(`No measurable spectrum for analysis: ${filePath}`);
+  }
   const peakDb = await measurePeakDb(filePath, options);
 
   return {
@@ -220,21 +246,48 @@ export function impliedBitrateKbps(cutoffHz: number): number | null {
 
 const kHz = (hz: number) => `${(hz / 1000).toFixed(1)} kHz`;
 
+/**
+ * Content reaching this high was never through a lossy encoder: no consumer
+ * codec passes 19.5 kHz at any bitrate a download service ships.
+ */
+const FULL_BAND_HZ = 19500;
+
+/** Above this the source carries everything a club system can reproduce. */
+const CLUB_HZ = 19000;
+const MARGINAL_HZ = 17000;
+
+/**
+ * Nyquist-relative fallback, applied at 48 kHz and below only. Judging bandwidth
+ * as a fraction of Nyquist is right at 44.1 kHz — real masters run to ~20 kHz of
+ * 22.05 — and nonsense above it: no music has content near 48 kHz, so a genuine
+ * 96 kHz master stopping at 24 kHz scores 0.5 and would be called a fake.
+ */
+const NYQUIST_FULL_BAND_RATIO = 0.88;
+const NYQUIST_RATIO_MAX_RATE = 48000;
+
 export function classifyForDj(analysis: AudioAnalysis): DjVerdict {
   const warnings: string[] = [];
-  const { cutoffHz, cutoffRatio, losslessContainer, peakDb } = analysis;
+  const { cutoffHz, cutoffRatio, losslessContainer, peakDb, sampleRate } =
+    analysis;
 
-  // A lossless container whose content stops well short of Nyquist is a
-  // laundered lossy file. This is the case that used to slip through as
-  // "Lossless" and end up in a set.
-  const launderedLossy = losslessContainer && cutoffRatio < 0.88;
+  const fullBand =
+    cutoffHz >= FULL_BAND_HZ ||
+    (sampleRate <= NYQUIST_RATIO_MAX_RATE &&
+      cutoffRatio >= NYQUIST_FULL_BAND_RATIO);
 
+  // A lossless container that isn't carrying a full band is a laundered lossy
+  // file. This is the case that used to slip through as "Lossless" and end up
+  // in a set.
+  const launderedLossy = losslessContainer && !fullBand;
+
+  // Note "master" also requires CLUB_HZ: a 32 kHz PCM file is full band for its
+  // own rate without being a file you want on a big system.
   let tier: DjTier;
-  if (losslessContainer && !launderedLossy) {
+  if (losslessContainer && fullBand && cutoffHz >= CLUB_HZ) {
     tier = "master";
-  } else if (cutoffHz >= 19000) {
+  } else if (cutoffHz >= CLUB_HZ) {
     tier = "club";
-  } else if (cutoffHz >= 17000) {
+  } else if (cutoffHz >= MARGINAL_HZ) {
     tier = "marginal";
   } else {
     tier = "unsuitable";
@@ -265,7 +318,7 @@ export function classifyForDj(analysis: AudioAnalysis): DjVerdict {
     );
   }
 
-  if (peakDb > -0.1) {
+  if (peakDb !== null && peakDb > -0.1) {
     warnings.push(
       `Peaks at ${peakDb.toFixed(
         2,
@@ -273,16 +326,21 @@ export function classifyForDj(analysis: AudioAnalysis): DjVerdict {
     );
   }
 
+  // Don't call a genuinely lossless file a lossy source just because it is
+  // narrow — a 32 kHz master is band-limited, not laundered.
+  const provenance =
+    losslessContainer && !launderedLossy ? "lossless source" : "lossy source";
+
   const headline =
     tier === "master"
       ? `Master quality — ${analysis.codec.toUpperCase()} ${
-          analysis.sampleRate / 1000
+          sampleRate / 1000
         } kHz, full band to ${kHz(cutoffHz)}`
       : tier === "club"
-        ? `Club-ready — lossy source, clean to ${kHz(cutoffHz)}`
+        ? `Club-ready — ${provenance}, clean to ${kHz(cutoffHz)}`
         : tier === "marginal"
-          ? `Marginal — lossy source, rolls off at ${kHz(cutoffHz)}`
-          : `Not suitable for performance — lossy source cut at ${kHz(cutoffHz)}`;
+          ? `Marginal — ${provenance}, rolls off at ${kHz(cutoffHz)}`
+          : `Not suitable for performance — ${provenance} cut at ${kHz(cutoffHz)}`;
 
   return { tier, headline, warnings, analysis };
 }

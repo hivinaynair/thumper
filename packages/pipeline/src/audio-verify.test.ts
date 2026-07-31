@@ -81,9 +81,25 @@ describe("estimateCutoff", () => {
     expect(high.cutoffHz - low.cutoffHz).toBeGreaterThan(2500);
   });
 
-  it("does not crash on silence", () => {
+  it("does not crash on silence, and reports it as unmeasurable", () => {
     const spectrum = averageSpectrumDb(new Float32Array(SPECTRUM_FFT_SIZE * 4));
     expect(() => estimateCutoff(spectrum, SR)).not.toThrow();
+    // Not "content stops at 0 Hz" — we simply could not measure this file.
+    expect(estimateCutoff(spectrum, SR).detected).toBe(false);
+  });
+
+  it("ignores an isolated spur above the brickwall", () => {
+    // A single ultrasonic bin — a stray tone or encoder artefact — used to set
+    // the cutoff on its own and promote a 16 kHz file to full-band.
+    const bins = SPECTRUM_FFT_SIZE / 2 + 1;
+    const binHz = SR / 2 / (bins - 1);
+    const spectrum = new Float64Array(bins).fill(-90);
+    for (let i = 0; i * binHz < 16000; i++) spectrum[i] = 0;
+    spectrum[Math.round(21000 / binHz)] = -40;
+
+    const { cutoffHz, detected } = estimateCutoff(spectrum, SR);
+    expect(detected).toBe(true);
+    expect(cutoffHz).toBeLessThan(16100);
   });
 });
 
@@ -165,6 +181,59 @@ describe("classifyForDj", () => {
       analysis({ cutoffHz: 20100, cutoffRatio: 20100 / (SR / 2) }),
     );
     expect(v.tier).toBe("master");
+  });
+
+  it("passes a 48 kHz master whose content ends at 20 kHz", () => {
+    // Ratio 0.833 — below the 44.1 kHz laundering threshold, but nothing is
+    // wrong with this file. Judged on absolute bandwidth it is plainly a master.
+    const v = classifyForDj(
+      analysis({
+        codec: "pcm_s24le",
+        sampleRate: 48000,
+        cutoffHz: 20000,
+        cutoffRatio: 20000 / 24000,
+      }),
+    );
+    expect(v.tier).toBe("master");
+    expect(v.warnings).toEqual([]);
+  });
+
+  it("passes a 96 kHz hi-res master", () => {
+    // The case the ratio test got badly wrong: no music has content near
+    // 48 kHz, so every hi-res file scored ~0.5 and was called laundered lossy.
+    const v = classifyForDj(
+      analysis({
+        codec: "pcm_s24le",
+        sampleRate: 96000,
+        cutoffHz: 24352,
+        cutoffRatio: 24352 / 48000,
+        bitrateKbps: 4608,
+      }),
+    );
+    expect(v.tier).toBe("master");
+    expect(v.warnings.join(" ")).not.toContain("not a master");
+  });
+
+  it("calls a band-limited lossless file narrow without calling it fake", () => {
+    // 32 kHz PCM: full band for its own rate, but genuinely missing highs.
+    const v = classifyForDj(
+      analysis({
+        codec: "pcm_s16le",
+        sampleRate: 32000,
+        cutoffHz: 15500,
+        cutoffRatio: 15500 / 16000,
+      }),
+    );
+    expect(v.tier).toBe("unsuitable");
+    expect(v.warnings.join(" ")).not.toContain("not a master");
+    expect(v.headline).toContain("lossless source");
+  });
+
+  it("says nothing about headroom when the peak could not be measured", () => {
+    const v = classifyForDj(
+      analysis({ codec: "aac", losslessContainer: false, peakDb: null }),
+    );
+    expect(v.warnings.some((w) => w.includes("headroom"))).toBe(false);
   });
 });
 

@@ -120,21 +120,34 @@ export function averageSpectrumDb(samples: Float32Array): Float64Array {
 }
 
 export type CutoffEstimate = {
-  /** Highest frequency still carrying real signal, Hz. */
+  /** Highest frequency still carrying real signal, Hz. Meaningless if !detected. */
   cutoffHz: number;
   /** cutoffHz as a fraction of Nyquist. ~1.0 means no artificial lowpass. */
   ratio: number;
   /** Estimated noise floor in the top of the band, dB below peak. */
   floorDb: number;
+  /**
+   * False when no band rose clear of the floor — a flat spectrum (noise, or an
+   * FFT over silence) rather than a file with no highs. Callers must treat this
+   * as "could not measure", never as a cutoff of 0 Hz.
+   */
+  detected: boolean;
 };
+
+/**
+ * Consecutive bins required above the threshold before a band counts as
+ * content. A lone bin is a stray tone, an encoder artefact or leakage; real
+ * content is broadband and occupies a run of them.
+ */
+const MIN_RUN_BINS = 4;
 
 /**
  * Find where content stops.
  *
  * Self-calibrating rather than a fixed dB threshold: a 16-bit dithered master
  * and a 24-bit one have wildly different noise floors, so we measure the floor
- * from the top few percent of the band and look for the first bin that rises
- * meaningfully above it, scanning downward from Nyquist.
+ * from the top few percent of the band and look for the highest *run* of bins
+ * that rises meaningfully above it, scanning downward from Nyquist.
  */
 export function estimateCutoff(
   spectrumDb: Float64Array,
@@ -156,18 +169,32 @@ export function estimateCutoff(
   const threshold = floorDb + 12;
 
   let cutoffHz = 0;
+  let detected = false;
+  let run = 0;
   for (let i = n - 1; i >= 0; i--) {
     if (spectrumDb[i]! > threshold) {
-      cutoffHz = i * binHz;
-      break;
+      run++;
+      if (run >= MIN_RUN_BINS) {
+        // Top of the run, not the bin that completed it.
+        cutoffHz = (i + MIN_RUN_BINS - 1) * binHz;
+        detected = true;
+        break;
+      }
+    } else {
+      run = 0;
     }
   }
 
   // Content running to the very top means there is no lowpass to find; report
   // Nyquist rather than an arbitrary bin a hair below it.
-  if (cutoffHz >= 0.97 * nyquist) cutoffHz = nyquist;
+  if (detected && cutoffHz >= 0.97 * nyquist) cutoffHz = nyquist;
 
-  return { cutoffHz, ratio: nyquist > 0 ? cutoffHz / nyquist : 0, floorDb };
+  return {
+    cutoffHz,
+    ratio: nyquist > 0 ? cutoffHz / nyquist : 0,
+    floorDb,
+    detected,
+  };
 }
 
 export const SPECTRUM_FFT_SIZE = FFT_SIZE;
