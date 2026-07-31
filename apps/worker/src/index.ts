@@ -110,44 +110,61 @@ async function main() {
       const kind = detectSourceKind(track.url) ?? detectSourceKind(parent.url);
       if (kind !== "youtube" && kind !== "soundcloud") continue;
 
-      const [child] = await db
-        .insert(jobs)
-        .values({
-          userId: parent.userId,
-          sourceUrl: track.spotifyUrl ?? track.url,
-          matchedUrl: track.url,
-          sourceKind: kind,
-          audioFormat: parent.audioFormat,
-          destination: parent.destination,
-          title: track.title,
-          artist: track.artist,
-          status: "queued",
-          stage: "queued",
-          progress: 0,
-        })
-        .returning();
-      if (!child) continue;
-
-      const bossId = await boss.send(QUEUE_NAME_DOWNLOAD, {
-        jobId: child.id,
-        userId: parent.userId,
-        url: track.url,
-        audioFormat: parent.audioFormat,
-        destination: parent.destination,
-        titleHint: track.title,
-        artistHint: track.artist,
-        parentJobId: parent.jobId,
-        spotifyUrl: track.spotifyUrl,
-      } satisfies DownloadJobPayload);
-
-      await db
-        .update(jobs)
-        .set({ pgBossId: bossId ?? null, updatedAt: new Date() })
-        .where(eq(jobs.id, child.id));
-
-      childIds.push(child.id);
+      try {
+        childIds.push(await enqueueChildTrack(parent, track, kind));
+      } catch (err) {
+        // A track we can't even queue shouldn't cost the user the rest of the
+        // playlist; it surfaces in the parent's rollup as a missing child.
+        log.warn(
+          { err, url: track.url, parentJobId: parent.jobId },
+          "Failed to queue playlist track — continuing",
+        );
+      }
     }
     return childIds;
+  }
+
+  async function enqueueChildTrack(
+    parent: DownloadJobPayload,
+    track: PlaylistEntry,
+    kind: "youtube" | "soundcloud",
+  ): Promise<string> {
+    const [child] = await db
+      .insert(jobs)
+      .values({
+        userId: parent.userId,
+        sourceUrl: track.spotifyUrl ?? track.url,
+        matchedUrl: track.url,
+        sourceKind: kind,
+        audioFormat: parent.audioFormat,
+        destination: parent.destination,
+        title: track.title,
+        artist: track.artist,
+        status: "queued",
+        stage: "queued",
+        progress: 0,
+      })
+      .returning();
+    if (!child) throw new Error("Could not create job row for playlist track");
+
+    const bossId = await boss.send(QUEUE_NAME_DOWNLOAD, {
+      jobId: child.id,
+      userId: parent.userId,
+      url: track.url,
+      audioFormat: parent.audioFormat,
+      destination: parent.destination,
+      titleHint: track.title,
+      artistHint: track.artist,
+      parentJobId: parent.jobId,
+      spotifyUrl: track.spotifyUrl,
+    } satisfies DownloadJobPayload);
+
+    await db
+      .update(jobs)
+      .set({ pgBossId: bossId ?? null, updatedAt: new Date() })
+      .where(eq(jobs.id, child.id));
+
+    return child.id;
   }
 
   await boss.work(

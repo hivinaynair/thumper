@@ -182,6 +182,15 @@ export function scoreMirrorCandidate(
   const penalties = fillerPenalty(track, candidate);
   const bonuses = matchBonus(candidate);
 
+  // Duration is only evidence when both sides report one. SoundCloud withholds
+  // it for exactly the tracks that need a mirror — geo-blocked ones extract
+  // nothing, preview-only ones report 30s — and averaging in the neutral 55
+  // placeholder capped even a perfect match at 77.5, just under the confidence
+  // gate. When time is unknown, score on artist + name alone.
+  const timeKnown = Boolean(
+    track.durationMs && track.durationMs > 0 && candidate.durationSec > 0,
+  );
+
   // Soften name when fillers present in candidate but not song
   if (penalties > 0) name = Math.max(0, name - Math.min(15, penalties / 2));
 
@@ -193,7 +202,7 @@ export function scoreMirrorCandidate(
       breakdown: { artist, name, time, penalties, bonuses },
     };
   }
-  if (time < 25 && track.durationMs) {
+  if (timeKnown && time < 25) {
     return {
       ...candidate,
       score: 0,
@@ -202,7 +211,7 @@ export function scoreMirrorCandidate(
   }
 
   const average = (artist + name) / 2;
-  if (time < 50 && average < 75 && track.durationMs) {
+  if (timeKnown && time < 50 && average < 75) {
     return {
       ...candidate,
       score: Math.min(average, 60),
@@ -210,7 +219,7 @@ export function scoreMirrorCandidate(
     };
   }
 
-  let score = (average + time) / 2;
+  let score = timeKnown ? (average + time) / 2 : average;
   score = score - penalties + bonuses;
   score = Math.max(0, Math.min(100, score));
 

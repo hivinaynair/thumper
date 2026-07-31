@@ -159,7 +159,12 @@ export async function downloadMedia(params: {
   }
 
   // Fail closed: if SoundCloud still looks like a preview-only fetch, bail.
-  if (params.soundcloud && /preview/i.test(path.basename(markers.filepath))) {
+  // yt-dlp tags snipped streams in the *format id* — the output template is
+  // `dl_<uuid>.<ext>`, so the filename alone never carries that evidence.
+  if (
+    params.soundcloud &&
+    /preview/i.test(`${markers.formatId ?? ""} ${path.basename(markers.filepath)}`)
+  ) {
     await fs.unlink(markers.filepath).catch(() => undefined);
     throw new SoundCloudPreviewError(
       "SoundCloud returned a preview-only stream. Falling back to YouTube when possible.",
@@ -231,6 +236,10 @@ export async function dumpJson(
     "--dump-json",
     "--no-playlist",
     "--no-warnings",
+    // DRM and geo-blocked tracks still carry title/artist/duration; without
+    // this yt-dlp throws them away along with the formats it can't serve, which
+    // is precisely when we need them to go find a mirror.
+    "--ignore-no-formats-error",
     "--user-agent",
     UA,
   ];

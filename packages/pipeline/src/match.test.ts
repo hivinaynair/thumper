@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { scoreMirrorCandidate, type MirrorCandidate } from "./match";
+import {
+  MIN_MATCH_SCORE,
+  scoreMirrorCandidate,
+  type MirrorCandidate,
+} from "./match";
+import { splitArtistNames } from "./metadata";
 import { ratio, slugify } from "./similarity";
 import type { SpotifyTrackMeta } from "./spotify";
 
@@ -43,5 +48,103 @@ describe("scoreMirrorCandidate", () => {
     };
     const scored = scoreMirrorCandidate(track, candidate);
     expect(scored.score).toBeLessThan(78);
+  });
+});
+
+// SoundCloud never gives us a usable duration for the tracks that need a mirror
+// most: geo-blocked ones extract no metadata at all, and preview-only ones
+// report 30s. Blending a neutral time score into those capped every candidate
+// at 77.5 — permanently under the confidence gate — so a perfect match was
+// rejected just as readily as a karaoke cover.
+describe("scoreMirrorCandidate without a known duration", () => {
+  const track: SpotifyTrackMeta = {
+    title: "Take Me Under",
+    artists: ["Daniel Allan", "Liv Grace Blue"],
+  };
+
+  it("accepts an exact artist + title match", () => {
+    const scored = scoreMirrorCandidate(track, {
+      url: "https://www.youtube.com/watch?v=exact",
+      title: "Take Me Under",
+      uploader: "Daniel Allan",
+      durationSec: 0,
+      views: 11_800,
+      source: "youtube",
+    });
+    expect(scored.score).toBeGreaterThanOrEqual(MIN_MATCH_SCORE);
+  });
+
+  it("still rejects a different song by the same artist", () => {
+    const scored = scoreMirrorCandidate(track, {
+      url: "https://www.youtube.com/watch?v=other",
+      title: "Daniel Allan - I Just Need (with Lyrah)",
+      uploader: "Daniel Allan",
+      durationSec: 0,
+      views: 900_000,
+      source: "youtube",
+    });
+    expect(scored.score).toBeLessThan(MIN_MATCH_SCORE);
+  });
+
+  it("still rejects a remix of the right song", () => {
+    const scored = scoreMirrorCandidate(track, {
+      url: "https://www.youtube.com/watch?v=remix",
+      title: "Daniel Allan - Take Me Under (Showboats Remix)",
+      uploader: "Onda Sonora Músicas",
+      durationSec: 0,
+      views: 4_000,
+      source: "youtube",
+    });
+    expect(scored.score).toBeLessThan(MIN_MATCH_SCORE);
+  });
+
+  it("matches a collaboration once the credit is split into artists", () => {
+    const collab: SpotifyTrackMeta = {
+      title: "Gravity",
+      artists: splitArtistNames("Oppidan and Hans Glader"),
+    };
+    const scored = scoreMirrorCandidate(collab, {
+      url: "https://www.youtube.com/watch?v=gravity",
+      title: "Gravity",
+      uploader: "Oppidan",
+      durationSec: 0,
+      views: 48_000,
+      source: "youtube",
+    });
+    expect(scored.score).toBeGreaterThanOrEqual(MIN_MATCH_SCORE);
+  });
+});
+
+describe("splitArtistNames", () => {
+  it("splits the separators SoundCloud credits actually use", () => {
+    expect(splitArtistNames("Oppidan and Hans Glader")).toEqual([
+      "Oppidan",
+      "Hans Glader",
+    ]);
+    expect(splitArtistNames("Daniel Allan, Liv Grace Blue")).toEqual([
+      "Daniel Allan",
+      "Liv Grace Blue",
+    ]);
+    // yt-dlp escapes commas as U+FF0C when it flattens its `artists` list.
+    expect(splitArtistNames("Daniel Allan， Liv Grace Blue")).toEqual([
+      "Daniel Allan",
+      "Liv Grace Blue",
+    ]);
+    expect(splitArtistNames("Oppidan feat. Strategy")).toEqual([
+      "Oppidan",
+      "Strategy",
+    ]);
+    expect(splitArtistNames("Hans Glader & Isenberg")).toEqual([
+      "Hans Glader",
+      "Isenberg",
+    ]);
+  });
+
+  it("keeps band names that merely contain a separator word", () => {
+    expect(splitArtistNames("Florence and the Machine")).toEqual([
+      "Florence and the Machine",
+    ]);
+    expect(splitArtistNames("AC/DC")).toEqual(["AC/DC"]);
+    expect(splitArtistNames("")).toEqual([]);
   });
 });

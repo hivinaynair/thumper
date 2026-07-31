@@ -92,7 +92,9 @@ export async function processJobById(jobId: string): Promise<void> {
         getGoogleAccessToken,
         enqueueChildTracks: async (tracks) => {
           const childIds: string[] = [];
+          let failed = 0;
           for (const track of tracks) {
+            if (ac.signal.aborted) break;
             const kind = detectSourceKind(track.url) ?? detectSourceKind(p.url);
             if (kind !== "youtube" && kind !== "soundcloud") continue;
 
@@ -115,17 +117,34 @@ export async function processJobById(jobId: string): Promise<void> {
             if (!child) continue;
             childIds.push(child.id);
 
-            await runOne({
-              jobId: child.id,
-              userId: p.userId,
-              url: track.url,
-              audioFormat: p.audioFormat,
-              destination: p.destination,
-              titleHint: track.title,
-              artistHint: track.artist,
-              parentJobId: p.jobId,
-              spotifyUrl: track.spotifyUrl,
-            });
+            // One track a source refuses to hand over — DRM, geo-block, a dead
+            // upload — must not take the rest of the playlist with it. The
+            // child's own row already records why it failed.
+            try {
+              await runOne({
+                jobId: child.id,
+                userId: p.userId,
+                url: track.url,
+                audioFormat: p.audioFormat,
+                destination: p.destination,
+                titleHint: track.title,
+                artistHint: track.artist,
+                parentJobId: p.jobId,
+                spotifyUrl: track.spotifyUrl,
+              });
+            } catch (err) {
+              failed += 1;
+              log.warn(
+                { err, jobId: child.id, url: track.url },
+                "Playlist track failed — continuing with the rest",
+              );
+            }
+          }
+          if (failed) {
+            log.info(
+              { jobId: p.jobId, failed, total: childIds.length },
+              "Playlist finished with failures",
+            );
           }
           return childIds;
         },

@@ -21,6 +21,7 @@ type Job = {
 		qualityLabel?: string;
 		playlist?: boolean;
 		trackCount?: number;
+		childJobIds?: string[];
 		unmatchedCount?: number;
 		matchScore?: number;
 		djTier?: "master" | "club" | "marginal" | "unsuitable";
@@ -49,6 +50,50 @@ type SyncResult = {
 		soundcloud?: { status: string; reason?: string };
 	};
 };
+
+type PlaylistRollup = {
+	total: number;
+	done: number;
+	failed: number;
+	pending: number;
+	failedTracks: Job[];
+};
+
+function jobLabel(job: Job): string {
+	if (job.title) return job.artist ? `${job.artist} — ${job.title}` : job.title;
+	return job.sourceUrl;
+}
+
+/**
+ * A playlist parent finishes as soon as its tracks are queued, so the only
+ * honest progress report is the live state of its children.
+ */
+function playlistRollup(job: Job, byId: Map<string, Job>): PlaylistRollup | null {
+	if (!job.result?.playlist) return null;
+	const children = (job.result.childJobIds ?? [])
+		.map((id) => byId.get(id))
+		.filter((child): child is Job => Boolean(child));
+	if (children.length === 0) return null;
+
+	const failedTracks = children.filter(
+		(child) => child.status === "failed" || child.status === "cancelled",
+	);
+	const done = children.filter((child) => child.status === "completed").length;
+	return {
+		total: children.length,
+		done,
+		failed: failedTracks.length,
+		pending: children.length - done - failedTracks.length,
+		failedTracks,
+	};
+}
+
+function rollupSummary(rollup: PlaylistRollup): string {
+	const parts = [`${rollup.done}/${rollup.total} downloaded`];
+	if (rollup.failed) parts.push(`${rollup.failed} failed`);
+	if (rollup.pending) parts.push(`${rollup.pending} in progress`);
+	return parts.join(" · ");
+}
 
 function formatSyncedAt(iso: string | null): string {
 	if (!iso) return "";
@@ -216,6 +261,14 @@ export default function DownloaderPage() {
 		};
 	}, [refreshJobs, refreshCookies]);
 
+	const rollups = useMemo(() => {
+		const byId = new Map(jobs.map((job) => [job.id, job]));
+		const entries = jobs.flatMap((job) => {
+			const rollup = playlistRollup(job, byId);
+			return rollup ? [[job.id, rollup] as const] : [];
+		});
+		return new Map(entries);
+	}, [jobs]);
 	const gate = useMemo(() => cookiesReadyForUrl(url, cookies), [url, cookies]);
 	const canQueue = !busy && gate.ready;
 	const finishedCount = jobs.filter(
@@ -432,10 +485,7 @@ export default function DownloaderPage() {
 							jobs.map((job) => (
 								<article key={job.id} className="job">
 									<div className="job-head">
-										<div className="job-title">
-											{job.artist ? `${job.artist} — ` : ""}
-											{job.title ?? job.sourceUrl}
-										</div>
+										<div className="job-title">{jobLabel(job)}</div>
 										<span className={`badge status-${job.status}`}>
 											{job.status}
 										</span>
@@ -448,6 +498,9 @@ export default function DownloaderPage() {
 														? `, ${job.result.unmatchedCount} unmatched`
 														: ""
 												})`
+											: ""}
+										{rollups.has(job.id)
+											? ` · ${rollupSummary(rollups.get(job.id)!)}`
 											: ""}
 										{job.result?.matchScore
 											? ` · match ${job.result.matchScore}`
@@ -478,6 +531,20 @@ export default function DownloaderPage() {
 												<li key={w}>{w}</li>
 											))}
 										</ul>
+									) : null}
+									{rollups.get(job.id)?.failedTracks.length ? (
+										<div className="job-error">
+											{rollups.get(job.id)!.failed} of{" "}
+											{rollups.get(job.id)!.total} tracks failed:
+											<ul className="job-warnings">
+												{rollups.get(job.id)!.failedTracks.map((track) => (
+													<li key={track.id}>
+														{jobLabel(track)}
+														{track.error ? ` — ${track.error}` : ""}
+													</li>
+												))}
+											</ul>
+										</div>
 									) : null}
 									{job.error ? (
 										<div className="job-error">{job.error}</div>

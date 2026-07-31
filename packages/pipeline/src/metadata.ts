@@ -28,6 +28,97 @@ type SoundCloudOEmbed = {
   description?: string;
 };
 
+// Slashes need spaces around them (AC/DC is one band) and " and " must not be
+// followed by an article ("Florence and the Machine"). U+FF0C is what yt-dlp
+// substitutes for commas when it flattens its `artists` list.
+const ARTIST_SEPARATOR =
+  /\s*[,，、;]\s*|\s*&\s*|\s+\/\s+|\s+(?:x|vs\.?|feat\.?|ft\.?|featuring|with)\s+|\s+and\s+(?!the\s)/i;
+
+/**
+ * Artist credits arrive as one string ("Oppidan and Hans Glader"), but the
+ * mirror matcher scores each artist separately — an unsplit credit compares
+ * badly against a channel named after just one of them, which is what sank the
+ * YouTube fallback for collaborations.
+ */
+export function splitArtistNames(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(ARTIST_SEPARATOR)
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Artist names out of a yt-dlp info dict. Prefers the real credit (`artists`)
+ * over the channel that uploaded it, since a label or aggregator account says
+ * nothing useful about who made the track.
+ */
+export function artistNamesFromInfo(info: Record<string, unknown>): string[] {
+  const credited = Array.isArray(info.artists)
+    ? info.artists.flatMap((a) =>
+        typeof a === "string" ? splitArtistNames(a) : [],
+      )
+    : [];
+  if (credited.length) return credited;
+
+  const fallback = [info.artist, info.uploader, info.creator].find(
+    (v): v is string => typeof v === "string" && v.trim().length > 0,
+  );
+  return splitArtistNames(fallback);
+}
+
+/**
+ * The oEmbed endpoint 404s on the `api-v2.soundcloud.com/tracks/<id>` URLs
+ * yt-dlp emits for unhydrated playlist entries, but answers for the `api.`
+ * form. That matters most for DRM/geo-blocked tracks: oEmbed is then the only
+ * metadata source left, since extraction itself is refused.
+ */
+export function soundCloudOEmbedTarget(url: string): string {
+  return url.replace(
+    /^https?:\/\/api-v2\.soundcloud\.com\/tracks\/(\d+).*$/i,
+    "https://api.soundcloud.com/tracks/$1",
+  );
+}
+
+/** Title / artist / artwork from SoundCloud's public oEmbed endpoint. */
+export async function fetchSoundCloudOEmbed(
+  url: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<{
+  title?: string;
+  artist?: string;
+  artworkUrl?: string;
+} | null> {
+  const oembedUrl = new URL("https://soundcloud.com/oembed");
+  oembedUrl.searchParams.set("format", "json");
+  oembedUrl.searchParams.set("url", soundCloudOEmbedTarget(url));
+
+  const res = await fetch(oembedUrl, {
+    headers: { "User-Agent": UA },
+    signal: options.signal,
+  });
+  if (!res.ok) return null;
+
+  const data = (await res.json()) as SoundCloudOEmbed;
+  const rawTitle = String(data.title ?? "").trim();
+  const artist = data.author_name?.trim() || undefined;
+
+  // oEmbed titles read "Track by Uploader". Strip that suffix using the
+  // uploader we were given rather than the first " by " in the string, so
+  // "Taken by the Tide by Oppidan" survives.
+  let title = rawTitle || undefined;
+  if (title && artist && title.toLowerCase().endsWith(` by ${artist.toLowerCase()}`)) {
+    title = title.slice(0, -(artist.length + 4)).trim() || undefined;
+  }
+
+  const artworkUrl = data.thumbnail_url
+    ? data.thumbnail_url.replace(/^http:\/\//i, "https://")
+    : undefined;
+
+  if (!title && !artist && !artworkUrl) return null;
+  return { title, artist, artworkUrl };
+}
+
 export async function fetchSoundCloudTags(
   url: string,
   options: { cookiePath?: string | null; signal?: AbortSignal } = {},
@@ -40,29 +131,10 @@ export async function fetchSoundCloudTags(
   let date: string | undefined;
 
   try {
-    const oembedUrl = new URL("https://soundcloud.com/oembed");
-    oembedUrl.searchParams.set("format", "json");
-    oembedUrl.searchParams.set("url", url);
-    const res = await fetch(oembedUrl, {
-      headers: { "User-Agent": UA },
-      signal: options.signal,
-    });
-    if (res.ok) {
-      const data = (await res.json()) as SoundCloudOEmbed;
-      const rawTitle = String(data.title ?? "").trim();
-      // oEmbed titles are often "Track by Artist"
-      const byMatch = rawTitle.match(/^(.*?)\s+by\s+(.+)$/i);
-      if (byMatch?.[1] && byMatch[2]) {
-        title = byMatch[1].trim();
-        artist = byMatch[2].trim();
-      } else if (rawTitle) {
-        title = rawTitle;
-      }
-      if (!artist && data.author_name) artist = data.author_name.trim();
-      if (data.thumbnail_url) {
-        artworkUrl = data.thumbnail_url.replace(/^http:\/\//i, "https://");
-      }
-    }
+    const embed = await fetchSoundCloudOEmbed(url, { signal: options.signal });
+    title = embed?.title;
+    artist = embed?.artist;
+    artworkUrl = embed?.artworkUrl;
   } catch {
     /* fall through to yt-dlp dump */
   }
@@ -70,11 +142,7 @@ export async function fetchSoundCloudTags(
   try {
     const info = await dumpJson(url, options.cookiePath ?? null, options.signal);
     if (!title) title = String(info.title ?? info.track ?? "").trim() || undefined;
-    if (!artist) {
-      artist =
-        String(info.artist ?? info.uploader ?? info.creator ?? "").trim() ||
-        undefined;
-    }
+    if (!artist) artist = artistNamesFromInfo(info).join(", ") || undefined;
     if (!artworkUrl) {
       const thumb =
         (typeof info.thumbnail === "string" && info.thumbnail) ||
@@ -87,9 +155,12 @@ export async function fetchSoundCloudTags(
         artworkUrl = thumb.replace(/^http:\/\//i, "https://");
       }
     }
-    if (typeof info.genre === "string" && info.genre.trim()) {
-      genre = info.genre.trim();
-    }
+    const rawGenre =
+      (typeof info.genre === "string" && info.genre) ||
+      (Array.isArray(info.genres) &&
+        info.genres.find((g): g is string => typeof g === "string")) ||
+      "";
+    if (rawGenre.trim()) genre = rawGenre.trim();
     if (typeof info.album === "string" && info.album.trim()) {
       album = info.album.trim();
     }
