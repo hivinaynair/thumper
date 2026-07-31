@@ -6,6 +6,7 @@ import { files, jobs } from "@thumper/db";
 import {
   detectSourceKind,
   GOOGLE_DRIVE_TOKEN_ERROR,
+  isPlaylistUrl,
   MAX_PLAYLIST_TRACKS,
   sanitizeFilename,
   type AudioFormat,
@@ -529,10 +530,22 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
     let artistHint = payload.artistHint;
 
     if (!payload.parentJobId && deps.enqueueChildTracks) {
-      const expanded = await expandPlaylistEntries(payload.url, {
-        signal,
-        cookiePath: cookieTmp,
-      });
+      // yt-dlp raises SoundCloud's DRM / geo errors during extraction, so they
+      // land here rather than in processTrack's catch. Swallow those and carry
+      // on: processTrack will hit the same error inside its own try, where the
+      // YouTube fallback can pick it up.
+      let expanded: { title?: string; entries: PlaylistEntry[] } = {
+        entries: [],
+      };
+      try {
+        expanded = await expandPlaylistEntries(payload.url, {
+          signal,
+          cookiePath: cookieTmp,
+        });
+      } catch (err) {
+        if (err instanceof ProcessCancelledError) throw err;
+        if (!isSoundCloudUnavailableError(err)) throw err;
+      }
 
       if (expanded.entries.length > 1) {
         await update({
@@ -552,6 +565,16 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
           },
         });
         return;
+      }
+
+      // A playlist URL that expands to one entry means the expansion was
+      // throttled or blocked, not that the playlist has a single track.
+      // Downloading it anyway silently delivers only the first video, so fail
+      // loudly instead.
+      if (isPlaylistUrl(payload.url) && expanded.entries.length <= 1) {
+        throw new Error(
+          "Could not read this playlist — YouTube returned no track list. Try again in a minute, or queue the tracks individually.",
+        );
       }
 
       if (expanded.entries[0]) {

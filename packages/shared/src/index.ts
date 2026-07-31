@@ -101,6 +101,29 @@ export function detectSourceKind(url: string): SourceKind | null {
   }
 }
 
+/** A URL that names a collection rather than a single track. */
+export function isPlaylistUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
+    if (host.includes("youtube.com")) {
+      return (
+        parsed.pathname.startsWith("/playlist") ||
+        parsed.searchParams.has("list")
+      );
+    }
+    if (host.includes("soundcloud.com")) {
+      return /\/sets\//.test(parsed.pathname);
+    }
+    if (host.includes("spotify.com")) {
+      return /\/(playlist|album)\//.test(parsed.pathname);
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export function isSupportedSource(url: string): boolean {
   const kind = detectSourceKind(url);
   return kind === "youtube" || kind === "soundcloud" || kind === "spotify";

@@ -81,7 +81,30 @@ export async function downloadMedia(params: {
     onStderr: params.onProgress,
   };
 
-  const { stdout, stderr } = await runCommandOk(getYtDlpPath(), args, spawnOpts);
+  let stdout: string;
+  let stderr: string;
+  try {
+    ({ stdout, stderr } = await runCommandOk(getYtDlpPath(), args, spawnOpts));
+  } catch (err) {
+    // With cookies attached, yt-dlp restricts itself to web player clients,
+    // which now need a PO token — YouTube answers with zero formats and
+    // yt-dlp reports "Requested format is not available". Cookie-less clients
+    // still serve public tracks, so retry once without them. Age-restricted
+    // videos legitimately need the cookies and will fail again.
+    if (!params.soundcloud && params.cookiePath && isFormatUnavailable(err)) {
+      const retryArgs = args.filter(
+        (arg, i) =>
+          arg !== "--cookies" && args[i - 1] !== "--cookies",
+      );
+      ({ stdout, stderr } = await runCommandOk(
+        getYtDlpPath(),
+        retryArgs,
+        spawnOpts,
+      ));
+    } else {
+      throw err;
+    }
+  }
   const combined = `${stdout}\n${stderr}`;
   const markers = parsePrintMarkers(combined);
   if (!markers.filepath) {
@@ -133,6 +156,19 @@ export function isSoundCloudUnavailableError(err: unknown): boolean {
   // "The uploader has not made this video available in your country".
   return /DRM protected|available in your country|not available from your location|geo[\s-]?restricted|blocked it in your country/i.test(
     err.message,
+  );
+}
+
+/**
+ * yt-dlp saw no usable formats — not a selector problem (the selector ends in
+ * `bestaudio/best`), but YouTube declining to serve any.
+ */
+export function isFormatUnavailable(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    /Requested format is not available|No video formats found/i.test(
+      err.message,
+    )
   );
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  isFormatUnavailable,
   isSoundCloudPreviewError,
   isSoundCloudUnavailableError,
   SoundCloudPreviewError,
@@ -43,5 +44,24 @@ describe("isSoundCloudUnavailableError", () => {
     expect(isSoundCloudPreviewError(new Error("This video is DRM protected"))).toBe(
       false,
     );
+  });
+});
+
+describe("isFormatUnavailable", () => {
+  it("matches YouTube serving no formats", () => {
+    expect(
+      isFormatUnavailable(
+        new Error(
+          "/opt/venv/bin/yt-dlp failed (1): ERROR: [youtube] 62i7zHtmsTA: Requested format is not available. Use --list-formats for a list of available formats",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("ignores unrelated failures", () => {
+    expect(isFormatUnavailable(new Error("HTTP Error 403: Forbidden"))).toBe(
+      false,
+    );
+    expect(isFormatUnavailable(new Error("Video unavailable"))).toBe(false);
   });
 });
