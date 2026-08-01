@@ -23,6 +23,10 @@ import modal
 
 APP_NAME = "thumper-worker"
 
+# Same Deno pin as the root Dockerfile — yt-dlp needs an external JS runtime
+# (plus yt-dlp-ejs from the [default] extra) to solve YouTube challenges.
+DENO_VERSION = "2.6.10"
+
 # Local checkout for image build; Modal runtime mounts the module under /root/.
 _here = Path(__file__).resolve()
 try:
@@ -34,14 +38,25 @@ except IndexError:
 
 worker_image = (
     modal.Image.from_registry("oven/bun:1.3-debian", add_python="3.12")
-    .apt_install("ffmpeg", "ca-certificates", "python3-venv")
+    .apt_install(
+        "ffmpeg",
+        "ca-certificates",
+        "python3-venv",
+        "curl",
+        "unzip",
+    )
     .run_commands(
+        # Deno must be on PATH so yt-dlp can run YouTube EJS challenge solvers.
+        f'curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s "v{DENO_VERSION}"',
+        "deno --version",
         "python3 -m venv /opt/venv",
-        "/opt/venv/bin/pip install --no-cache-dir -U pip yt-dlp mutagen 'fastapi[standard]'",
+        # [default] pulls yt-dlp-ejs; plain yt-dlp alone cannot solve YT challenges.
+        '/opt/venv/bin/pip install --no-cache-dir -U pip "yt-dlp[default]" mutagen \'fastapi[standard]\'',
     )
     .pip_install("fastapi[standard]")
     .env(
         {
+            "DENO_INSTALL": "/usr/local",
             "PATH": "/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "YT_DLP_PATH": "/opt/venv/bin/yt-dlp",
             "DATA_DIR": "/tmp/thumper-data",
