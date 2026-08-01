@@ -1,12 +1,12 @@
 import { createClerkClient } from "@clerk/backend";
 import { createDb, jobs } from "@thumper/db";
-import { runDownloadJob } from "@thumper/pipeline";
+import { ProcessCancelledError, runDownloadJob } from "@thumper/pipeline";
 import {
   detectSourceKind,
   oauthScopesIncludeDrive,
   type DownloadJobPayload,
 } from "@thumper/shared";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import pino from "pino";
 
 const log = pino({ level: process.env.LOG_LEVEL ?? "info" });
@@ -79,7 +79,44 @@ export async function processJobById(jobId: string): Promise<void> {
     artistHint: row.artist ?? undefined,
   };
 
+  // One controller for the parent + every inline child. The cancel API flips
+  // the parent to "cancelling"; this poll turns that into an abort so the
+  // current yt-dlp/ffmpeg child dies and the playlist loop stops.
   const ac = new AbortController();
+  const cancelPoll = setInterval(() => {
+    void (async () => {
+      try {
+        const [current] = await db
+          .select({ status: jobs.status })
+          .from(jobs)
+          .where(eq(jobs.id, jobId))
+          .limit(1);
+        if (
+          current?.status === "cancelling" ||
+          current?.status === "cancelled"
+        ) {
+          ac.abort();
+        }
+      } catch (err) {
+        log.warn({ err, jobId }, "cancel poll failed");
+      }
+    })();
+  }, 1000);
+
+  async function markJobsCancelled(ids: string[]): Promise<void> {
+    const unique = [...new Set(ids.filter(Boolean))];
+    if (unique.length === 0) return;
+    await db
+      .update(jobs)
+      .set({
+        status: "cancelled",
+        stage: "error",
+        error: "Cancelled",
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(inArray(jobs.id, unique));
+  }
 
   async function runOne(p: DownloadJobPayload): Promise<void> {
     log.info({ jobId: p.jobId }, "Job started");
@@ -98,7 +135,9 @@ export async function processJobById(jobId: string): Promise<void> {
           // playlist alive without much wall-clock cost.
           const TRACK_GAP_MS = 2_000;
           for (const [index, track] of tracks.entries()) {
-            if (ac.signal.aborted) break;
+            if (ac.signal.aborted) {
+              throw new ProcessCancelledError();
+            }
             const kind = detectSourceKind(track.url) ?? detectSourceKind(p.url);
             if (kind !== "youtube" && kind !== "soundcloud") continue;
 
@@ -107,15 +146,14 @@ export async function processJobById(jobId: string): Promise<void> {
                 const timer = setTimeout(resolve, TRACK_GAP_MS);
                 const onAbort = () => {
                   clearTimeout(timer);
-                  reject(new Error("Cancelled"));
+                  reject(new ProcessCancelledError());
                 };
                 if (ac.signal.aborted) {
                   onAbort();
                   return;
                 }
                 ac.signal.addEventListener("abort", onAbort, { once: true });
-              }).catch(() => undefined);
-              if (ac.signal.aborted) break;
+              });
             }
 
             const [child] = await db
@@ -137,9 +175,19 @@ export async function processJobById(jobId: string): Promise<void> {
             if (!child) continue;
             childIds.push(child.id);
 
+            // Publish child ids as we go so a mid-playlist Cancel can cascade
+            // via the API even before the parent finishes.
+            await updateJob(p.jobId, {
+              result: {
+                playlist: true,
+                trackCount: tracks.length,
+                childJobIds: [...childIds],
+              },
+            });
+
             // One track a source refuses to hand over — DRM, geo-block, a dead
-            // upload — must not take the rest of the playlist with it. The
-            // child's own row already records why it failed.
+            // upload — must not take the rest of the playlist with it. Cancel
+            // is different: stop the whole set.
             try {
               await runOne({
                 jobId: child.id,
@@ -154,6 +202,15 @@ export async function processJobById(jobId: string): Promise<void> {
                 driveFolderId: context?.driveFolderId,
               });
             } catch (err) {
+              if (
+                err instanceof ProcessCancelledError ||
+                ac.signal.aborted
+              ) {
+                await markJobsCancelled([child.id]);
+                throw err instanceof ProcessCancelledError
+                  ? err
+                  : new ProcessCancelledError();
+              }
               failed += 1;
               log.warn(
                 { err, jobId: child.id, url: track.url },
@@ -175,5 +232,9 @@ export async function processJobById(jobId: string): Promise<void> {
     }
   }
 
-  await runOne(payload);
+  try {
+    await runOne(payload);
+  } finally {
+    clearInterval(cancelPoll);
+  }
 }

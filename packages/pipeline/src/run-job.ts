@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import type { Db } from "@thumper/db";
 import { files, jobs } from "@thumper/db";
 import {
@@ -106,14 +106,22 @@ function mimeFor(format: AudioFormat): string {
   return "audio/mp4";
 }
 
-async function ensureNotCancelled(signal: AbortSignal, db: Db, jobId: string) {
+async function ensureNotCancelled(
+  signal: AbortSignal,
+  db: Db,
+  jobId: string,
+  parentJobId?: string,
+) {
   if (signal.aborted) throw new ProcessCancelledError();
-  const [row] = await db
+  const ids = parentJobId ? [jobId, parentJobId] : [jobId];
+  const rows = await db
     .select({ status: jobs.status })
     .from(jobs)
-    .where(eq(jobs.id, jobId))
-    .limit(1);
-  if (row?.status === "cancelling" || row?.status === "cancelled") {
+    .where(inArray(jobs.id, ids));
+  // Cancelling the playlist parent must stop every child mid-download.
+  if (
+    rows.some((row) => row.status === "cancelling" || row.status === "cancelled")
+  ) {
     throw new ProcessCancelledError();
   }
 }
@@ -145,7 +153,7 @@ async function processTrack(params: {
     stage: "downloading",
     progress: 20,
   });
-  await ensureNotCancelled(signal, db, payload.jobId);
+  await ensureNotCancelled(signal, db, payload.jobId, payload.parentJobId);
 
   let downloaded;
   try {
@@ -207,7 +215,7 @@ async function processTrack(params: {
   const title = tags.title ?? params.titleHint ?? downloaded.title ?? "track";
   const artist = tags.artist ?? params.artistHint;
   await update({ title, artist, stage: "converting", progress: 55 });
-  await ensureNotCancelled(signal, db, payload.jobId);
+  await ensureNotCancelled(signal, db, payload.jobId, payload.parentJobId);
 
   // Verify the *downloaded source*, before conversion. Once it has been
   // rewrapped as ALAC/FLAC every container-level check says "lossless", so this
@@ -258,7 +266,7 @@ async function processTrack(params: {
   });
 
   await update({ stage: "delivering", progress: 80 });
-  await ensureNotCancelled(signal, db, payload.jobId);
+  await ensureNotCancelled(signal, db, payload.jobId, payload.parentJobId);
 
   const stat = await fs.stat(outPath);
   let relativePath = path.relative(userRoot(payload.userId), outPath);
@@ -423,7 +431,12 @@ async function fallbackSoundCloudToYoutube(params: {
     stage: "resolving",
     progress: 25,
   });
-  await ensureNotCancelled(signal, deps.db, payload.jobId);
+  await ensureNotCancelled(
+    signal,
+    deps.db,
+    payload.jobId,
+    payload.parentJobId,
+  );
 
   const meta = await resolveSoundCloudMeta({
     trackUrl: params.trackUrl,
@@ -525,7 +538,7 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
 
     // ——— Spotify catalog → mirror to YT/SC ———
     if (kind === "spotify") {
-      await ensureNotCancelled(signal, db, payload.jobId);
+      await ensureNotCancelled(signal, db, payload.jobId, payload.parentJobId);
       const catalog = await fetchSpotifyCatalog(payload.url);
       if (!catalog || catalog.tracks.length === 0) {
         throw new Error("Could not read Spotify catalog metadata");
@@ -558,6 +571,12 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
         const childJobIds = await deps.enqueueChildTracks(matched, {
           driveFolderId,
         });
+        await ensureNotCancelled(
+          signal,
+          db,
+          payload.jobId,
+          payload.parentJobId,
+        );
         await update({
           status: "completed",
           stage: "done",
@@ -609,7 +628,7 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
       payload.userId,
       kind === "soundcloud" ? "soundcloud" : "youtube",
     );
-    await ensureNotCancelled(signal, db, payload.jobId);
+    await ensureNotCancelled(signal, db, payload.jobId, payload.parentJobId);
 
     let trackUrl = payload.url;
     let titleHint = payload.titleHint;
@@ -647,6 +666,12 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
         const childJobIds = await deps.enqueueChildTracks(expanded.entries, {
           driveFolderId,
         });
+        await ensureNotCancelled(
+          signal,
+          db,
+          payload.jobId,
+          payload.parentJobId,
+        );
         await update({
           status: "completed",
           stage: "done",
