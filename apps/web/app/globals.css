@@ -823,6 +823,10 @@ textarea {
 	color: var(--muted);
 }
 
+.quality-badge.original {
+	color: #6a9b6a;
+}
+
 .job-warnings {
 	margin: 0.4rem 0 0;
 	padding-left: 1.1rem;

@@ -76,6 +76,13 @@ export type ProgressUpdater = (patch: {
     sourceCodec?: string;
     sourceBitrateKbps?: number | null;
     cutoffHz?: number;
+    /** yt-dlp format id actually fetched, e.g. "251", "download". */
+    sourceFormatId?: string;
+    /**
+     * True when SoundCloud served the artist free-download / original upload
+     * (`format_id=download`), not a streamed AAC/Opus transcode.
+     */
+    soundcloudOriginal?: boolean;
   };
 }) => Promise<void>;
 
@@ -369,6 +376,12 @@ async function processTrack(params: {
   if (blobMode) {
     await fs.unlink(outPath).catch(() => undefined);
   }
+  const sourceFormatId = downloaded.formatId;
+  const soundcloudOriginal =
+    soundcloud &&
+    typeof sourceFormatId === "string" &&
+    sourceFormatId.toLowerCase() === "download";
+
   await update({
     status: "completed",
     stage: "done",
@@ -386,6 +399,8 @@ async function processTrack(params: {
       sourceCodec: verdict?.analysis.codec ?? downloaded.acodec,
       sourceBitrateKbps: verdict?.analysis.bitrateKbps ?? downloaded.abr ?? null,
       cutoffHz: verdict?.analysis.cutoffHz,
+      sourceFormatId,
+      soundcloudOriginal: soundcloudOriginal || undefined,
     },
   });
 }

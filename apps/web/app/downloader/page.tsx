@@ -30,6 +30,9 @@ type Job = {
 		djHeadline?: string;
 		warnings?: string[];
 		cutoffHz?: number;
+		sourceFormatId?: string;
+		/** SoundCloud free-download / original upload (`format_id=download`). */
+		soundcloudOriginal?: boolean;
 	} | null;
 };
 
@@ -619,6 +622,12 @@ export default function DownloaderPage() {
 									<div className="bar">
 										<span style={{ width: `${job.progress}%` }} />
 									</div>
+									{job.result?.soundcloudOriginal ? (
+										<div className="quality-badge original">
+											<strong>SoundCloud original</strong>
+											{" — free download (artist upload, not a stream)"}
+										</div>
+									) : null}
 									{job.result?.djTier && job.result.djTier !== "master" ? (
 										<QualityBadge
 											tier={job.result.djTier}
