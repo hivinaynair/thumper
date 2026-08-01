@@ -44,9 +44,15 @@ export const AUDIO_FORMAT_SORT = "abr,asr,channels,acodec";
  * old cookie-stripping retry look like a fix — it "worked" by silently
  * downgrading a paying account to anonymous 128 kbps.
  *
+ * `android_vr` leads: it still serves itag 251 without a PO token, and keeps
+ * working when cookies have rotated. Bare `tv` is intentionally absent — a
+ * YouTube experiment currently DRM-locks every tv https format, which made
+ * "Requested format is not available" the only answer for SC→YT mirrors.
+ *
  * Overridable because YouTube changes which clients work every few months.
  */
-export const DEFAULT_YOUTUBE_PLAYER_CLIENTS = "default,tv,web_music";
+export const DEFAULT_YOUTUBE_PLAYER_CLIENTS =
+  "android_vr,default,mweb,web_music";
 
 export function youtubeExtractorArgs(): string {
   const clients =

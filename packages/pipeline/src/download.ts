@@ -17,8 +17,17 @@ import {
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
-/** Alternate YouTube clients tried when the default set hits a bot wall. */
-const YOUTUBE_BOT_CLIENTS = ["tv", "web_safari", "mweb", "android_vr"] as const;
+/**
+ * Alternate YouTube clients tried when the default set returns no formats /
+ * a bot wall. Order matters: android_vr is the most reliable without a PO
+ * token; bare `tv` / `web_safari` currently DRM-lock or image-only.
+ */
+const YOUTUBE_FALLBACK_CLIENTS = [
+  "android_vr",
+  "android",
+  "mweb",
+  "tv",
+] as const;
 
 const RATE_LIMIT_ATTEMPTS = 4;
 const RATE_LIMIT_BASE_MS = 2_500;
@@ -200,6 +209,13 @@ export async function downloadMedia(params: {
               : "YouTube blocked this download (bot check). Sync YouTube cookies from a signed-in browser, then retry.",
           );
         }
+        if (isFormatUnavailable(err)) {
+          throw new Error(
+            params.cookiePath
+              ? "YouTube returned no playable formats (cookies may be stale, or this client is DRM-locked). Re-sync YouTube cookies from a signed-in browser and retry."
+              : "YouTube returned no playable formats. Sync YouTube cookies from a signed-in browser and retry.",
+          );
+        }
       }
 
       throw err;
@@ -250,10 +266,9 @@ async function tryYoutubeRecovery(params: {
   stderr: string;
   anonymousFallback: boolean;
 } | null> {
-  // Some player clients need a PO token and answer authenticated requests
-  // with zero formats / bot walls. Retry on a different client first —
-  // *keeping* the cookies, because dropping them caps Premium at 128 kbps AAC.
-  for (const clients of YOUTUBE_BOT_CLIENTS) {
+  // Keep cookies while rotating clients — dropping them caps Premium at
+  // 128 kbps AAC. Stale cookies still often work with android_vr.
+  for (const clients of YOUTUBE_FALLBACK_CLIENTS) {
     try {
       params.onProgress?.(
         `Retrying YouTube with player_client=${clients}\n`,
@@ -275,19 +290,24 @@ async function tryYoutubeRecovery(params: {
     }
   }
 
-  // Last resort: anonymous fetch. Only when the original failure was a
-  // format-unavailable (cookies forcing a broken client), not a hard bot wall
-  // — anonymous from a datacenter IP almost never clears a bot check.
-  if (params.cookiePath && isFormatUnavailable(params.initialErr)) {
-    try {
-      const { stdout, stderr } = await runCommandOk(
-        getYtDlpPath(),
-        withoutCookies(params.args),
-        params.spawnOpts,
-      );
-      return { stdout, stderr, anonymousFallback: true };
-    } catch {
-      /* fall through */
+  // Last resort: anonymous + android_vr. Datacenter IPs often still fail the
+  // bot check, but when cookies are the thing poisoning the session this is
+  // what recovers a public track.
+  if (isFormatUnavailable(params.initialErr) || isYoutubeBotError(params.initialErr)) {
+    for (const clients of ["android_vr", "android"] as const) {
+      try {
+        params.onProgress?.(
+          `Retrying YouTube anonymously with player_client=${clients}\n`,
+        );
+        const { stdout, stderr } = await runCommandOk(
+          getYtDlpPath(),
+          withExtractorClients(withoutCookies(params.args), clients),
+          params.spawnOpts,
+        );
+        return { stdout, stderr, anonymousFallback: true };
+      } catch {
+        /* try next */
+      }
     }
   }
 

@@ -85,6 +85,9 @@ describe("youtubeExtractorArgs", () => {
       `youtube:player_client=${DEFAULT_YOUTUBE_PLAYER_CLIENTS}`,
     );
     expect(DEFAULT_YOUTUBE_PLAYER_CLIENTS).toContain("web_music");
+    // android_vr still serves itag 251 without a PO token; bare tv is DRM-locked.
+    expect(DEFAULT_YOUTUBE_PLAYER_CLIENTS).toContain("android_vr");
+    expect(DEFAULT_YOUTUBE_PLAYER_CLIENTS.split(",")).not.toContain("tv");
   });
 
   it("is overridable when YouTube changes which clients work", () => {
