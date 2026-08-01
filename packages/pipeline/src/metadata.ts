@@ -35,6 +35,19 @@ const ARTIST_SEPARATOR =
   /\s*[,，、;]\s*|\s*&\s*|\s+\/\s+|\s+(?:x|vs\.?|feat\.?|ft\.?|featuring|with)\s+|\s+and\s+(?!the\s)/i;
 
 /**
+ * SoundCloud display names often trail emoji ("MARY DROPPINZ ☔"). Those
+ * characters break ytsearch queries and never appear on YouTube Topic
+ * channels, so a perfect track match scores as a miss.
+ */
+export function stripDecorative(text: string): string {
+  return text
+    .replace(/\p{Extended_Pictographic}/gu, "")
+    .replace(/[\uFE0F\u200D]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
  * Artist credits arrive as one string ("Oppidan and Hans Glader"), but the
  * mirror matcher scores each artist separately — an unsplit credit compares
  * badly against a channel named after just one of them, which is what sank the
@@ -44,7 +57,7 @@ export function splitArtistNames(raw: string | null | undefined): string[] {
   if (!raw) return [];
   return raw
     .split(ARTIST_SEPARATOR)
-    .map((name) => name.trim())
+    .map((name) => stripDecorative(name))
     .filter(Boolean);
 }
 

@@ -184,4 +184,8 @@ describe("splitArtistNames", () => {
     expect(splitArtistNames("AC/DC")).toEqual(["AC/DC"]);
     expect(splitArtistNames("")).toEqual([]);
   });
+
+  it("strips trailing emoji so YouTube search can match Topic channels", () => {
+    expect(splitArtistNames("MARY DROPPINZ ☔")).toEqual(["MARY DROPPINZ"]);
+  });
 });

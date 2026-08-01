@@ -2,12 +2,21 @@ import { MAX_PLAYLIST_TRACKS } from "@thumper/shared";
 import { getYtDlpPath } from "./paths";
 import type { PlaylistEntry } from "./playlist";
 import { runCommandOk, type SpawnOptions } from "./process";
+import { stripDecorative } from "./metadata";
 import { containsSlug, ratio, slugify } from "./similarity";
 import {
   buildSoundCloudSearchQuery,
   buildYoutubeSearchQuery,
   type SpotifyTrackMeta,
 } from "./spotify";
+
+function cleanTrackForMatch(track: SpotifyTrackMeta): SpotifyTrackMeta {
+  return {
+    ...track,
+    title: stripDecorative(track.title),
+    artists: track.artists.map(stripDecorative).filter(Boolean),
+  };
+}
 
 /** Reject mirrors below this spotDL-inspired score (0–100). */
 export const MIN_MATCH_SCORE = 78;
@@ -251,13 +260,16 @@ export async function matchTrackToYoutube(
   track: SpotifyTrackMeta,
   options: SpawnOptions = {},
 ): Promise<(PlaylistEntry & { matchScore: number; mirrorSource: "youtube" }) | null> {
-  const ytQuery = buildYoutubeSearchQuery(track);
+  // Drop emoji / ZWJ junk before search + scoring — SoundCloud loves trailing
+  // umbrella glyphs that YouTube Topic channels never carry.
+  const cleaned = cleanTrackForMatch(track);
+  const ytQuery = buildYoutubeSearchQuery(cleaned);
   const ytCandidates = await searchCandidates(ytQuery, "youtube", options);
 
   const addAltCandidates = async () => {
-    const artist = track.artists[0] ?? "";
+    const artist = cleaned.artists[0] ?? "";
     const alt = await searchCandidates(
-      `ytsearch8:${artist} ${track.title}`.trim(),
+      `ytsearch8:${artist} ${cleaned.title}`.trim(),
       "youtube",
       options,
     );
@@ -272,16 +284,16 @@ export async function matchTrackToYoutube(
   // pool of wrong answers is as useless as an empty one, so retry on a bare
   // "artist title" query whenever nothing clears the threshold — not just when
   // the pool is thin.
-  let bestYt = pickBest(track, ytCandidates);
+  let bestYt = pickBest(cleaned, ytCandidates);
   if (!bestYt) {
     await addAltCandidates();
-    bestYt = pickBest(track, ytCandidates);
+    bestYt = pickBest(cleaned, ytCandidates);
   }
   if (!bestYt) return null;
   return {
     url: bestYt.url,
-    title: track.title,
-    artist: track.artists.join(", ") || undefined,
+    title: cleaned.title || track.title,
+    artist: cleaned.artists.join(", ") || undefined,
     spotifyUrl: track.spotifyUrl,
     matchScore: Math.round(bestYt.score),
     mirrorSource: "youtube",

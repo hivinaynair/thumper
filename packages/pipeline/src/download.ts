@@ -266,48 +266,45 @@ async function tryYoutubeRecovery(params: {
   stderr: string;
   anonymousFallback: boolean;
 } | null> {
-  // Keep cookies while rotating clients — dropping them caps Premium at
-  // 128 kbps AAC. Stale cookies still often work with android_vr.
-  for (const clients of YOUTUBE_FALLBACK_CLIENTS) {
-    try {
-      params.onProgress?.(
-        `Retrying YouTube with player_client=${clients}\n`,
-      );
-      const { stdout, stderr } = await runCommandOk(
-        getYtDlpPath(),
-        withExtractorClients(params.args, clients),
-        params.spawnOpts,
-      );
-      return { stdout, stderr, anonymousFallback: false };
-    } catch (retryErr) {
-      if (
-        !isFormatUnavailable(retryErr) &&
-        !isYoutubeBotError(retryErr) &&
-        !isRateLimitError(retryErr)
-      ) {
-        throw retryErr;
+  const tryOnce = async (
+    args: string[],
+    clients: string,
+    anonymous: boolean,
+  ) => {
+    params.onProgress?.(
+      `Retrying YouTube ${anonymous ? "anonymously " : ""}with player_client=${clients}\n`,
+    );
+    const { stdout, stderr } = await runCommandOk(
+      getYtDlpPath(),
+      withExtractorClients(args, clients),
+      params.spawnOpts,
+    );
+    return { stdout, stderr, anonymousFallback: anonymous };
+  };
+
+  // Stale/rotated cookies on datacenter IPs often zero out formats for every
+  // authenticated client. Anonymous android_vr still serves public tracks —
+  // try that *before* burning time on poisoned cookie sessions.
+  if (
+    isFormatUnavailable(params.initialErr) ||
+    isYoutubeBotError(params.initialErr)
+  ) {
+    for (const clients of ["android_vr", "android"] as const) {
+      try {
+        return await tryOnce(withoutCookies(params.args), clients, true);
+      } catch (retryErr) {
+        if (retryErr instanceof ProcessCancelledError) throw retryErr;
       }
     }
   }
 
-  // Last resort: anonymous + android_vr. Datacenter IPs often still fail the
-  // bot check, but when cookies are the thing poisoning the session this is
-  // what recovers a public track.
-  if (isFormatUnavailable(params.initialErr) || isYoutubeBotError(params.initialErr)) {
-    for (const clients of ["android_vr", "android"] as const) {
-      try {
-        params.onProgress?.(
-          `Retrying YouTube anonymously with player_client=${clients}\n`,
-        );
-        const { stdout, stderr } = await runCommandOk(
-          getYtDlpPath(),
-          withExtractorClients(withoutCookies(params.args), clients),
-          params.spawnOpts,
-        );
-        return { stdout, stderr, anonymousFallback: true };
-      } catch {
-        /* try next */
-      }
+  // Cookie-backed clients next — needed for Premium itags when the session
+  // is healthy.
+  for (const clients of YOUTUBE_FALLBACK_CLIENTS) {
+    try {
+      return await tryOnce(params.args, clients, false);
+    } catch (retryErr) {
+      if (retryErr instanceof ProcessCancelledError) throw retryErr;
     }
   }
 
