@@ -393,3 +393,42 @@ export async function dumpJson(
   const { stdout } = await runCommandOk(getYtDlpPath(), args, { signal });
   return JSON.parse(stdout) as Record<string, unknown>;
 }
+
+/**
+ * True when yt-dlp lists SoundCloud's artist free-download / original upload
+ * (`format_id=download`). That is the only SC entry that can be a real master.
+ */
+export function soundcloudHasFreeDownload(
+  info: Record<string, unknown>,
+): boolean {
+  const isDownloadId = (raw: unknown) => {
+    const id = String(raw ?? "").toLowerCase();
+    return id === "download" || (id.includes("download") && !id.includes("preview"));
+  };
+
+  if (isDownloadId(info.format_id)) return true;
+
+  const formats = info.formats;
+  if (!Array.isArray(formats)) return false;
+  return formats.some(
+    (f) =>
+      f &&
+      typeof f === "object" &&
+      isDownloadId((f as { format_id?: unknown }).format_id),
+  );
+}
+
+/** Best-effort probe — false on DRM/geo/network errors (caller continues). */
+export async function probeSoundCloudFreeDownload(
+  url: string,
+  cookiePath?: string | null,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  try {
+    const info = await dumpJson(url, cookiePath, signal);
+    return soundcloudHasFreeDownload(info);
+  } catch (err) {
+    if (err instanceof ProcessCancelledError) throw err;
+    return false;
+  }
+}

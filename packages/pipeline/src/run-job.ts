@@ -22,6 +22,7 @@ import {
   dumpJson,
   isSoundCloudPreviewError,
   isSoundCloudUnavailableError,
+  probeSoundCloudFreeDownload,
   SoundCloudPreviewError,
 } from "./download";
 import { ensurePlaylistFolder, uploadToDrive } from "./drive";
@@ -152,8 +153,8 @@ async function processTrack(params: {
   /** Spotify / SoundCloud URL used for tags + artwork (never YouTube). */
   catalogUrl?: string | null;
   /**
-   * SoundCloud inputs prefer a confident YouTube mirror first (Premium Opus
-   * usually beats SC AAC). Set false when already on the YouTube path.
+   * SoundCloud source cascade: free-download original → YouTube mirror → SC
+   * stream. Set false when already on the YouTube path.
    */
   preferYoutube?: boolean;
   /** Prevent infinite SC→YT→… loops after a failed / skipped YT prefer. */
@@ -163,22 +164,32 @@ async function processTrack(params: {
   const { db, payload, signal, update } = deps;
   const cookieTmp = params.cookieTmp;
 
-  // SoundCloud playlist/track: YouTube first when a confident mirror exists;
-  // only hit SoundCloud when YT isn't available (remixes, bootlegs, free DLs).
+  // SoundCloud playlist/track priority:
+  // 1) artist free-download / original upload (best possible)
+  // 2) confident YouTube mirror (Premium Opus usually beats SC AAC stream)
+  // 3) SoundCloud stream (remixes/bootlegs with no YT upload)
   let youtubeAlreadyTried = false;
   if (soundcloud && params.preferYoutube !== false) {
-    const ytResult = await trySoundCloudViaYoutubeFirst({
-      deps,
-      trackUrl: params.trackUrl,
-      titleHint: params.titleHint,
-      artistHint: params.artistHint,
-      scCookieTmp: cookieTmp,
-      workDir,
-      outDir,
-      catalogUrl: params.catalogUrl ?? params.trackUrl,
-    });
-    if (ytResult === "downloaded") return;
-    if (ytResult === "youtube_failed") youtubeAlreadyTried = true;
+    await update({ stage: "resolving", progress: 18 });
+    const hasFreeDownload = await probeSoundCloudFreeDownload(
+      params.trackUrl,
+      cookieTmp,
+      signal,
+    );
+    if (!hasFreeDownload) {
+      const ytResult = await trySoundCloudViaYoutubeFirst({
+        deps,
+        trackUrl: params.trackUrl,
+        titleHint: params.titleHint,
+        artistHint: params.artistHint,
+        scCookieTmp: cookieTmp,
+        workDir,
+        outDir,
+        catalogUrl: params.catalogUrl ?? params.trackUrl,
+      });
+      if (ytResult === "downloaded") return;
+      if (ytResult === "youtube_failed") youtubeAlreadyTried = true;
+    }
   }
 
   await update({
@@ -462,8 +473,8 @@ type YoutubePreferResult =
   | "youtube_failed";
 
 /**
- * Prefer YouTube (Premium Opus) for SoundCloud inputs when a confident mirror
- * exists. Tags/artwork still come from the SoundCloud catalog URL.
+ * Prefer YouTube (Premium Opus) when SoundCloud has no free-download master
+ * but a confident YouTube mirror exists. Tags/artwork stay on the SC URL.
  */
 async function trySoundCloudViaYoutubeFirst(params: {
   deps: RunJobDeps;

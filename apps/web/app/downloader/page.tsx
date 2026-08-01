@@ -198,7 +198,7 @@ function cookiesReadyForUrl(
 		return {
 			ready: true,
 			reason:
-				"Tip: sync YouTube cookies too — SoundCloud tracks prefer YouTube when a match exists",
+				"Tip: sync YouTube cookies too — after free downloads, SoundCloud tracks prefer YouTube mirrors",
 		};
 	}
 	if (
