@@ -48,16 +48,16 @@
     </style>
   </head>
   <body>
-    <h1 style="font-size: 16px; margin: 0 0 8px">Thumper sync</h1>
+    <h1 style="font-size: 16px; margin: 0 0 8px">Thumper cookies</h1>
     <p class="hint">
-      Syncs YouTube and SoundCloud when you are signed in. SoundCloud is skipped
-      if you are logged out.
+      Refreshes signed-in YouTube and SoundCloud sessions onto Thumper. Do this
+      again whenever downloads fail with a bot check or “stale cookies”.
     </p>
     <label>
       Thumper origin
       <input id="origin" placeholder="https://thumper.vinaynair.dev" />
     </label>
-    <button id="sync">Sync cookies</button>
+    <button id="sync">Refresh cookies</button>
     <div class="msg" id="msg"></div>
     <script src="popup.js" type="module"></script>
   </body>

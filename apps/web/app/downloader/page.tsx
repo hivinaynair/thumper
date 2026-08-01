@@ -119,6 +119,9 @@ function rollupSummary(rollup: PlaylistRollup): string {
 	return parts.join(" · ");
 }
 
+/** Mark cookies stale after this — Google rotates sessions often. */
+const COOKIE_STALE_MS = 12 * 60 * 60 * 1000;
+
 function formatSyncedAt(iso: string | null): string {
 	if (!iso) return "";
 	try {
@@ -129,6 +132,31 @@ function formatSyncedAt(iso: string | null): string {
 	} catch {
 		return iso;
 	}
+}
+
+function formatSyncedAge(iso: string | null): string {
+	if (!iso) return "";
+	const ms = Date.now() - new Date(iso).getTime();
+	if (!Number.isFinite(ms) || ms < 0) return "";
+	const mins = Math.floor(ms / 60_000);
+	if (mins < 1) return "just now";
+	if (mins < 60) return `${mins}m ago`;
+	const hours = Math.floor(mins / 60);
+	if (hours < 48) return `${hours}h ago`;
+	return `${Math.floor(hours / 24)}d ago`;
+}
+
+function isCookieStale(iso: string | null): boolean {
+	if (!iso) return false;
+	const ms = Date.now() - new Date(iso).getTime();
+	return Number.isFinite(ms) && ms >= COOKIE_STALE_MS;
+}
+
+function cookieNeedsRefresh(error: string | null | undefined): boolean {
+	if (!error) return false;
+	return /bot check|stale cookies|no playable formats|Sign in to confirm|Re-sync|Sync YouTube cookies/i.test(
+		error,
+	);
 }
 
 function cookiesReadyForUrl(
@@ -167,7 +195,7 @@ function cookiesReadyForUrl(
 		return {
 			ready: true,
 			reason:
-				"Tip: sync YouTube cookies too — geo-blocked SoundCloud tracks fall back to YouTube, and Modal’s IP needs them to pass the bot check",
+				"Tip: refresh YouTube cookies too — geo-blocked tracks fall back to YouTube",
 		};
 	}
 	if (
@@ -181,10 +209,21 @@ function cookiesReadyForUrl(
 				"Sync YouTube or SoundCloud cookies before queuing Spotify mirrors",
 		};
 	}
+	if (
+		(kind === "youtube" || kind === "soundcloud" || kind === "spotify") &&
+		cookies.youtube.present &&
+		isCookieStale(cookies.youtube.updatedAt)
+	) {
+		return {
+			ready: true,
+			reason:
+				"YouTube cookies look stale — hit Refresh so Modal isn’t stuck with a rotated session",
+		};
+	}
 	return { ready: true, reason: null };
 }
 
-function requestExtensionSync(timeoutMs = 20000): Promise<SyncResult> {
+function requestExtensionSync(timeoutMs = 45000): Promise<SyncResult> {
 	return new Promise((resolve) => {
 		const requestId = crypto.randomUUID();
 		const timer = window.setTimeout(() => {
@@ -359,16 +398,26 @@ export default function DownloaderPage() {
 			const result = await requestExtensionSync();
 			if (!result.ok) {
 				setMessageTone("error");
-				setMessage(result.error || result.message || "Cookie sync failed");
+				setMessage(result.error || result.message || "Cookie refresh failed");
 				return;
 			}
 			setMessageTone("ok");
-			setMessage(result.message || "Cookies synced");
+			setMessage(result.message || "Cookies refreshed");
 			await refreshCookies();
 		} finally {
 			setSyncing(false);
 		}
 	}
+
+	const anyCookiesPresent = Boolean(
+		cookies?.youtube.present || cookies?.soundcloud.present,
+	);
+	const youtubeStale =
+		Boolean(cookies?.youtube.present) &&
+		isCookieStale(cookies?.youtube.updatedAt ?? null);
+	const failedNeedRefresh = jobs.some(
+		(job) => job.status === "failed" && cookieNeedsRefresh(job.error),
+	);
 
 	return (
 		<main>
@@ -379,7 +428,7 @@ export default function DownloaderPage() {
 					</div>
 					<aside
 						className="cookie-sync"
-						title="Uses the Thumper Chrome extension. Queueing stays locked until cookies for that source are on the server."
+						title="Uses the Thumper Chrome extension. Refresh after browsing YouTube — Google rotates sessions and Modal needs the latest cookies."
 					>
 						<div className="cookie-sync-top">
 							<span className="cookie-sync-label">Cookies</span>
@@ -392,29 +441,38 @@ export default function DownloaderPage() {
 								).map(([key, label]) => {
 									const status = cookies?.[key];
 									const present = status?.present ?? false;
+									const stale = present && isCookieStale(status?.updatedAt ?? null);
+									const age = formatSyncedAge(status?.updatedAt ?? null);
 									return (
 										<li
 											key={key}
-											className={`cookie-sync-chip${present ? " is-synced" : " is-missing"}`}
+											className={`cookie-sync-chip${present ? (stale ? " is-stale" : " is-synced") : " is-missing"}`}
 											title={
 												present
-													? `Updated ${formatSyncedAt(status?.updatedAt ?? null)}`
+													? `${stale ? "Stale — " : ""}Updated ${formatSyncedAt(status?.updatedAt ?? null)}`
 													: "Not synced yet"
 											}
 										>
 											<span className="cookie-sync-dot" aria-hidden="true" />
 											{label}
+											{present && age ? (
+												<span className="cookie-sync-age">{age}</span>
+											) : null}
 										</li>
 									);
 								})}
 							</ul>
 							<button
 								type="button"
-								className="cookie-sync-btn"
+								className={`cookie-sync-btn${youtubeStale || failedNeedRefresh ? " is-urgent" : ""}`}
 								onClick={() => void syncCookies()}
-								disabled={syncing}
+								disabled={syncing || !extensionReady}
 							>
-								{syncing ? "…" : "Sync"}
+								{syncing
+									? "Refreshing…"
+									: anyCookiesPresent
+										? "Refresh"
+										: "Sync"}
 							</button>
 						</div>
 						{!extensionReady ? (
@@ -422,7 +480,7 @@ export default function DownloaderPage() {
 								<p>
 									Extension not detected —{" "}
 									<a href="/thumper-extension.zip" download>
-										download it
+										download v0.3
 									</a>
 								</p>
 								<ol className="install-steps">
@@ -431,9 +489,24 @@ export default function DownloaderPage() {
 										Open <code>chrome://extensions</code>, enable Developer mode
 									</li>
 									<li>
-										Load unpacked → pick the unzipped folder, then reload this page
+										Load unpacked → pick the unzipped folder (or Reload if
+										already installed), then reload this page
 									</li>
 								</ol>
+							</div>
+						) : failedNeedRefresh ? (
+							<div className="cookie-sync-hint">
+								<p>
+									A job failed on stale/blocked YouTube cookies — refresh, then
+									retry those tracks.
+								</p>
+							</div>
+						) : youtubeStale ? (
+							<div className="cookie-sync-hint">
+								<p>
+									YouTube session looks older than 12h. Refresh before the next
+									download.
+								</p>
 							</div>
 						) : null}
 					</aside>

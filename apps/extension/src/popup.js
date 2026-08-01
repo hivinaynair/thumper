@@ -10,7 +10,7 @@ chrome.storage.sync.get(["origin"], (data) => {
 document.getElementById("sync").addEventListener("click", async () => {
   const origin = originInput.value.replace(/\/$/, "");
   await chrome.storage.sync.set({ origin });
-  msg.textContent = "Syncing…";
+  msg.textContent = "Refreshing sessions…";
 
   chrome.runtime.sendMessage(
     { type: "sync-all-cookies", origin },
@@ -20,11 +20,12 @@ document.getElementById("sync").addEventListener("click", async () => {
         return;
       }
       if (!response?.ok) {
-        msg.textContent = response?.error || response?.message || "Sync failed";
+        msg.textContent = response?.error || response?.message || "Refresh failed";
         return;
       }
       msg.textContent =
-        response.message || "Synced. Stay signed in to Thumper in this browser.";
+        response.message ||
+        "Refreshed. Stay signed in to YouTube/SoundCloud in this browser.";
     },
   );
 });

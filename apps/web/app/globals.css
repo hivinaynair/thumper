@@ -382,6 +382,22 @@ main.main-flush {
 	color: var(--muted);
 }
 
+.cookie-sync-chip.is-stale .cookie-sync-dot {
+	background: var(--warn);
+}
+
+.cookie-sync-chip.is-stale {
+	color: var(--ink-soft);
+}
+
+.cookie-sync-age {
+	font-size: 0.62rem;
+	letter-spacing: 0.02em;
+	opacity: 0.7;
+	text-transform: none;
+	font-weight: 500;
+}
+
 .cookie-sync-btn {
 	appearance: none;
 	border: 1px solid transparent;
@@ -405,6 +421,12 @@ main.main-flush {
 	color: var(--ink);
 	border-color: var(--line);
 	background: rgba(237, 230, 220, 0.04);
+}
+
+.cookie-sync-btn.is-urgent {
+	color: var(--ink);
+	border-color: var(--warn);
+	background: color-mix(in srgb, var(--warn) 14%, transparent);
 }
 
 .cookie-sync-btn:disabled {

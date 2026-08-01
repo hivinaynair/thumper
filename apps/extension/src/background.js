@@ -3,6 +3,11 @@ const PROVIDERS = {
   soundcloud: [".soundcloud.com"],
 };
 
+const WARM_URLS = {
+  youtube: "https://www.youtube.com/",
+  soundcloud: "https://soundcloud.com/",
+};
+
 const AUTH_COOKIE_NAMES = {
   youtube: new Set([
     "SID",
@@ -55,9 +60,45 @@ function looksLoggedIn(provider, cookies) {
   return cookies.some((c) => names.has(c.name));
 }
 
-async function exportProvider(provider) {
+/**
+ * Hit the site in a background tab so Chrome refreshes rotated session
+ * cookies before we export. Google especially invalidates older exports
+ * once you've browsed YouTube again.
+ */
+async function warmProvider(provider) {
+  const url = WARM_URLS[provider];
+  if (!url || !chrome.tabs?.create) return;
+
+  let tabId;
+  try {
+    const tab = await chrome.tabs.create({ url, active: false });
+    tabId = tab.id;
+    if (tabId == null) return;
+
+    await new Promise((resolve) => {
+      const done = () => {
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        resolve();
+      };
+      const onUpdated = (id, info) => {
+        if (id === tabId && info.status === "complete") done();
+      };
+      chrome.tabs.onUpdated.addListener(onUpdated);
+      setTimeout(done, 8_000);
+    });
+  } catch {
+    /* best-effort — export whatever is in the jar */
+  } finally {
+    if (tabId != null) {
+      await chrome.tabs.remove(tabId).catch(() => undefined);
+    }
+  }
+}
+
+async function exportProvider(provider, { warm = true } = {}) {
   const domains = PROVIDERS[provider];
   if (!domains) throw new Error("Unknown provider");
+  if (warm) await warmProvider(provider);
   const cookies = await getCookiesForDomains(domains);
   return {
     cookies: toNetscape(cookies),
@@ -123,16 +164,16 @@ async function syncAll(origin) {
 
 function summarize(results) {
   const parts = [];
-  if (results.youtube.status === "synced") parts.push("YouTube synced");
+  if (results.youtube.status === "synced") parts.push("YouTube refreshed");
   if (results.youtube.status === "skipped") parts.push("YouTube skipped");
-  if (results.soundcloud.status === "synced") parts.push("SoundCloud synced");
+  if (results.soundcloud.status === "synced") parts.push("SoundCloud refreshed");
   if (results.soundcloud.status === "skipped") parts.push("SoundCloud skipped");
   return parts.join(" · ");
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "export-cookies") {
-    exportProvider(message.provider)
+    exportProvider(message.provider, { warm: message.warm !== false })
       .then((data) => sendResponse(data))
       .catch((err) =>
         sendResponse({
