@@ -152,8 +152,11 @@ export async function fetchSpotifyCatalog(
 }
 
 export function buildYoutubeSearchQuery(track: SpotifyTrackMeta): string {
-  const artist = track.artists[0] ?? "";
-  return `ytsearch5:${artist} ${track.title} official audio`.trim();
+  // Use up to two credited artists (collabs) + the bare song title. Appending
+  // "official audio" here used to bury label-uploaded remixes/bootlegs under
+  // unrelated official releases; that phrase is only tried as a fallback.
+  const artists = track.artists.slice(0, 2).join(" ");
+  return `ytsearch8:${artists} ${track.title}`.trim();
 }
 
 export function buildSoundCloudSearchQuery(track: SpotifyTrackMeta): string {

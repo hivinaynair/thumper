@@ -1,12 +1,65 @@
 import { describe, expect, it } from "bun:test";
 import {
   MIN_MATCH_SCORE,
+  normalizeTrackForMatch,
+  parseCreditTitle,
   scoreMirrorCandidate,
   type MirrorCandidate,
 } from "./match";
 import { splitArtistNames } from "./metadata";
 import { ratio, slugify } from "./similarity";
-import type { SpotifyTrackMeta } from "./spotify";
+import { buildYoutubeSearchQuery, type SpotifyTrackMeta } from "./spotify";
+
+describe("parseCreditTitle / normalizeTrackForMatch", () => {
+  it("splits label-style titles into artists + song", () => {
+    expect(parseCreditTitle("WINK & borne - Drown")).toEqual({
+      artists: ["WINK", "borne"],
+      title: "Drown",
+    });
+  });
+
+  it("replaces a lone label credit with artists from the title", () => {
+    const normalized = normalizeTrackForMatch({
+      title: "WINK & borne - Drown",
+      artists: ["UKF"],
+      durationMs: 185_189,
+    });
+    expect(normalized).toEqual({
+      title: "Drown",
+      artists: ["WINK", "borne"],
+      durationMs: 185_189,
+    });
+    expect(buildYoutubeSearchQuery(normalized)).toBe(
+      "ytsearch8:WINK borne Drown",
+    );
+  });
+
+  it("keeps multi-artist dumpJson credits when already present", () => {
+    const normalized = normalizeTrackForMatch({
+      title: "WINK & borne - Drown",
+      artists: ["WINK", "borne"],
+    });
+    expect(normalized.title).toBe("Drown");
+    expect(normalized.artists).toEqual(["WINK", "borne"]);
+  });
+
+  it("accepts a ~14s SC/YT duration skew when artist+title are perfect", () => {
+    const track = normalizeTrackForMatch({
+      title: "WINK & borne - Drown",
+      artists: ["UKF"],
+      durationMs: 185_189,
+    });
+    const scored = scoreMirrorCandidate(track, {
+      url: "https://www.youtube.com/watch?v=Vmw5KuP_Q_c",
+      title: "WINK & borne - Drown",
+      uploader: "UKF Dubstep",
+      durationSec: 171,
+      views: 100_000,
+      source: "youtube",
+    });
+    expect(scored.score).toBeGreaterThanOrEqual(MIN_MATCH_SCORE);
+  });
+});
 
 describe("similarity", () => {
   it("slugifies and ratios close titles", () => {

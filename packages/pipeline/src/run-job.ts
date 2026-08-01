@@ -30,6 +30,7 @@ import {
   matchSpotifyTrackToMirror,
   matchTrackToYoutube,
   mirrorSpotifyTracks,
+  normalizeTrackForMatch,
 } from "./match";
 import {
   artistNamesFromInfo,
@@ -427,8 +428,30 @@ async function resolveSoundCloudMeta(params: {
   let artist = params.artistHint?.trim() || "";
   let durationMs: number | undefined;
 
+  // Prefer yt-dlp credits over oEmbed author_name — label pages (UKF) set
+  // author to the channel while `artist`/`artists` still carry "WINK, borne".
+  try {
+    const info = await dumpJson(
+      params.trackUrl,
+      params.cookieTmp,
+      params.signal,
+    );
+    const credited = artistNamesFromInfo(info);
+    if (credited.length) artist = credited.join(", ");
+    const dumpedTitle = String(info.title ?? info.track ?? "").trim();
+    if (dumpedTitle) title = dumpedTitle;
+    const durationSec = Number(info.duration ?? 0);
+    // A 30s "duration" is SoundCloud's snippet, not the track. Passing it on
+    // would make every full-length mirror look like the wrong song.
+    if (Number.isFinite(durationSec) && durationSec > 35) {
+      durationMs = Math.round(durationSec * 1000);
+    }
+  } catch {
+    /* best-effort metadata for YouTube search */
+  }
+
   // oEmbed answers for DRM-protected and geo-blocked tracks, where the yt-dlp
-  // dump below fails outright — without it the mirror search runs on "track"
+  // dump above fails outright — without it the mirror search runs on "track"
   // and never matches anything.
   if (!title || !artist) {
     try {
@@ -443,27 +466,15 @@ async function resolveSoundCloudMeta(params: {
     }
   }
 
-  try {
-    const info = await dumpJson(
-      params.trackUrl,
-      params.cookieTmp,
-      params.signal,
-    );
-    if (!title) title = String(info.title ?? info.track ?? "").trim();
-    if (!artist) artist = artistNamesFromInfo(info).join(", ");
-    const durationSec = Number(info.duration ?? 0);
-    // A 30s "duration" is SoundCloud's snippet, not the track. Passing it on
-    // would make every full-length mirror look like the wrong song.
-    if (Number.isFinite(durationSec) && durationSec > 35) {
-      durationMs = Math.round(durationSec * 1000);
-    }
-  } catch {
-    /* best-effort metadata for YouTube search */
-  }
-
   if (!title) title = "track";
 
-  return { title, artists: splitArtistNames(artist), durationMs };
+  // Normalize before YouTube search: split collabs, parse "Artist - Song"
+  // titles, and drop label-as-artist credits (UKF / nested label pages).
+  return normalizeTrackForMatch({
+    title,
+    artists: splitArtistNames(artist),
+    durationMs,
+  });
 }
 
 type YoutubePreferResult =
