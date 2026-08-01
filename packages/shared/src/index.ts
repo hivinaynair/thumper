@@ -92,6 +92,11 @@ export const DownloadJobPayloadSchema = z.object({
   parentJobId: z.string().uuid().optional(),
   /** Provenance when mirrored from Spotify. */
   spotifyUrl: z.string().url().optional(),
+  /**
+   * Google Drive folder id for `Thumper/<playlist>/`. Set on child tracks by
+   * the parent playlist job so every upload lands in the same subfolder.
+   */
+  driveFolderId: z.string().min(1).optional(),
 });
 export type DownloadJobPayload = z.infer<typeof DownloadJobPayloadSchema>;
 

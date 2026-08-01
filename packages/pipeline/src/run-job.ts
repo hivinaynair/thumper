@@ -24,7 +24,7 @@ import {
   isSoundCloudUnavailableError,
   SoundCloudPreviewError,
 } from "./download";
-import { uploadToDrive } from "./drive";
+import { ensurePlaylistFolder, uploadToDrive } from "./drive";
 import {
   matchSpotifyTrackToMirror,
   matchTrackToYoutube,
@@ -79,13 +79,21 @@ export type ProgressUpdater = (patch: {
   };
 }) => Promise<void>;
 
+export type EnqueueChildContext = {
+  /** Pre-created `Thumper/<playlist>/` folder for Drive uploads. */
+  driveFolderId?: string;
+};
+
 export type RunJobDeps = {
   db: Db;
   payload: DownloadJobPayload;
   signal: AbortSignal;
   update: ProgressUpdater;
   getGoogleAccessToken?: (userId: string) => Promise<string | null>;
-  enqueueChildTracks?: (tracks: PlaylistEntry[]) => Promise<string[]>;
+  enqueueChildTracks?: (
+    tracks: PlaylistEntry[],
+    context?: EnqueueChildContext,
+  ) => Promise<string[]>;
 };
 
 function extFor(format: AudioFormat): string {
@@ -304,6 +312,7 @@ async function processTrack(params: {
       filePath: outPath,
       filename,
       mimeType: mimeFor(payload.audioFormat),
+      folderId: payload.driveFolderId,
     });
     driveFileId = uploaded.fileId;
     driveUrl = uploaded.webViewLink;
@@ -469,6 +478,26 @@ async function fallbackSoundCloudToYoutube(params: {
   }
 }
 
+/**
+ * Create `Thumper/<playlist>/` once for Drive destinations. Child track jobs
+ * receive the folder id so concurrent uploads don't race into duplicates.
+ */
+async function resolvePlaylistDriveFolder(params: {
+  deps: RunJobDeps;
+  playlistName: string;
+}): Promise<string | undefined> {
+  const { payload } = params.deps;
+  if (payload.destination !== "drive" && payload.destination !== "both") {
+    return undefined;
+  }
+  const token = await params.deps.getGoogleAccessToken?.(payload.userId);
+  if (!token) return undefined;
+  return ensurePlaylistFolder({
+    accessToken: token,
+    playlistName: params.playlistName,
+  });
+}
+
 export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
   const { db, payload, signal, update } = deps;
   const workDir = path.join(userRoot(payload.userId), "tmp", payload.jobId);
@@ -522,7 +551,13 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
             `No confident YouTube/SoundCloud mirrors found for ${tracks.length} Spotify tracks (need score ≥ 78)`,
           );
         }
-        const childJobIds = await deps.enqueueChildTracks(matched);
+        const driveFolderId = await resolvePlaylistDriveFolder({
+          deps,
+          playlistName: catalog.title,
+        });
+        const childJobIds = await deps.enqueueChildTracks(matched, {
+          driveFolderId,
+        });
         await update({
           status: "completed",
           stage: "done",
@@ -599,16 +634,24 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
       }
 
       if (expanded.entries.length > 1) {
+        const playlistTitle =
+          expanded.title ?? payload.titleHint ?? "Playlist";
         await update({
-          title: expanded.title ?? payload.titleHint ?? "Playlist",
+          title: playlistTitle,
           progress: 40,
         });
-        const childJobIds = await deps.enqueueChildTracks(expanded.entries);
+        const driveFolderId = await resolvePlaylistDriveFolder({
+          deps,
+          playlistName: playlistTitle,
+        });
+        const childJobIds = await deps.enqueueChildTracks(expanded.entries, {
+          driveFolderId,
+        });
         await update({
           status: "completed",
           stage: "done",
           progress: 100,
-          title: expanded.title ?? payload.titleHint ?? "Playlist",
+          title: playlistTitle,
           result: {
             playlist: true,
             trackCount: childJobIds.length,

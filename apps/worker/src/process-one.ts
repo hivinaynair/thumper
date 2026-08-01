@@ -90,7 +90,7 @@ export async function processJobById(jobId: string): Promise<void> {
         signal: ac.signal,
         update: (patch) => updateJob(p.jobId, patch),
         getGoogleAccessToken,
-        enqueueChildTracks: async (tracks) => {
+        enqueueChildTracks: async (tracks, context) => {
           const childIds: string[] = [];
           let failed = 0;
           // SoundCloud rate-limits (~429) when a set is hammered back-to-back
@@ -151,6 +151,7 @@ export async function processJobById(jobId: string): Promise<void> {
                 artistHint: track.artist,
                 parentJobId: p.jobId,
                 spotifyUrl: track.spotifyUrl,
+                driveFolderId: context?.driveFolderId,
               });
             } catch (err) {
               failed += 1;

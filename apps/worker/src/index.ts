@@ -104,6 +104,7 @@ async function main() {
   async function enqueueChildTracks(
     parent: DownloadJobPayload,
     tracks: PlaylistEntry[],
+    context?: { driveFolderId?: string },
   ): Promise<string[]> {
     const childIds: string[] = [];
     for (const track of tracks) {
@@ -111,7 +112,7 @@ async function main() {
       if (kind !== "youtube" && kind !== "soundcloud") continue;
 
       try {
-        childIds.push(await enqueueChildTrack(parent, track, kind));
+        childIds.push(await enqueueChildTrack(parent, track, kind, context));
       } catch (err) {
         // A track we can't even queue shouldn't cost the user the rest of the
         // playlist; it surfaces in the parent's rollup as a missing child.
@@ -128,6 +129,7 @@ async function main() {
     parent: DownloadJobPayload,
     track: PlaylistEntry,
     kind: "youtube" | "soundcloud",
+    context?: { driveFolderId?: string },
   ): Promise<string> {
     const [child] = await db
       .insert(jobs)
@@ -157,6 +159,7 @@ async function main() {
       artistHint: track.artist,
       parentJobId: parent.jobId,
       spotifyUrl: track.spotifyUrl,
+      driveFolderId: context?.driveFolderId,
     } satisfies DownloadJobPayload);
 
     await db
@@ -190,7 +193,8 @@ async function main() {
           signal: ac.signal,
           update: (patch) => updateJob(payload.jobId, patch),
           getGoogleAccessToken,
-          enqueueChildTracks: (tracks) => enqueueChildTracks(payload, tracks),
+          enqueueChildTracks: (tracks, context) =>
+            enqueueChildTracks(payload, tracks, context),
         });
       } finally {
         abortControllers.delete(payload.jobId);
