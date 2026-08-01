@@ -40,12 +40,53 @@ export async function DELETE() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getDb();
 
+  // Never wipe a playlist parent that still has active children — clearing the
+  // parent while Modal is mid-expand orphans the loop (no row left to cancel).
+  const finished = await db
+    .select({
+      id: jobs.id,
+      status: jobs.status,
+      result: jobs.result,
+    })
+    .from(jobs)
+    .where(
+      and(
+        eq(jobs.userId, userId),
+        inArray(jobs.status, [...TERMINAL_STATUSES]),
+      ),
+    );
+
+  const active = await db
+    .select({ id: jobs.id })
+    .from(jobs)
+    .where(
+      and(
+        eq(jobs.userId, userId),
+        inArray(jobs.status, ["queued", "running", "cancelling"]),
+      ),
+    );
+  const activeIds = new Set(active.map((row) => row.id));
+
+  const deletable = finished.filter((row) => {
+    const childIds = (row.result as { childJobIds?: string[] } | null)
+      ?.childJobIds;
+    if (!Array.isArray(childIds) || childIds.length === 0) return true;
+    return !childIds.some((id) => activeIds.has(id));
+  });
+
+  if (deletable.length === 0) {
+    return NextResponse.json({ ok: true, deleted: 0 });
+  }
+
   const removed = await db
     .delete(jobs)
     .where(
       and(
         eq(jobs.userId, userId),
-        inArray(jobs.status, [...TERMINAL_STATUSES]),
+        inArray(
+          jobs.id,
+          deletable.map((row) => row.id),
+        ),
       ),
     )
     .returning({ id: jobs.id });

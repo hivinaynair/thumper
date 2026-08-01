@@ -115,13 +115,18 @@ async function ensureNotCancelled(
   if (signal.aborted) throw new ProcessCancelledError();
   const ids = parentJobId ? [jobId, parentJobId] : [jobId];
   const rows = await db
-    .select({ status: jobs.status })
+    .select({ id: jobs.id, status: jobs.status })
     .from(jobs)
     .where(inArray(jobs.id, ids));
   // Cancelling the playlist parent must stop every child mid-download.
   if (
     rows.some((row) => row.status === "cancelling" || row.status === "cancelled")
   ) {
+    throw new ProcessCancelledError();
+  }
+  // Parent deleted (e.g. Clear finished) while Modal is still expanding —
+  // treat as cancel so we stop spawning orphan tracks.
+  if (parentJobId && !rows.some((row) => row.id === parentJobId)) {
     throw new ProcessCancelledError();
   }
 }

@@ -82,6 +82,8 @@ export async function processJobById(jobId: string): Promise<void> {
   // One controller for the parent + every inline child. The cancel API flips
   // the parent to "cancelling"; this poll turns that into an abort so the
   // current yt-dlp/ffmpeg child dies and the playlist loop stops.
+  // Also abort if the parent row is gone (Clear finished) or already terminal —
+  // otherwise a zombie Modal loop keeps inserting orphan children forever.
   const ac = new AbortController();
   const cancelPoll = setInterval(() => {
     void (async () => {
@@ -91,10 +93,7 @@ export async function processJobById(jobId: string): Promise<void> {
           .from(jobs)
           .where(eq(jobs.id, jobId))
           .limit(1);
-        if (
-          current?.status === "cancelling" ||
-          current?.status === "cancelled"
-        ) {
+        if (!current || (current.status !== "queued" && current.status !== "running")) {
           ac.abort();
         }
       } catch (err) {
