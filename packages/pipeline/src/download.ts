@@ -110,6 +110,14 @@ export async function downloadMedia(params: {
   try {
     ({ stdout, stderr } = await runCommandOk(getYtDlpPath(), args, spawnOpts));
   } catch (err) {
+    // Preview-only / geo-blocked / DRM SoundCloud tracks have no non-preview
+    // formats once withoutPreview() strips them — surface that as the same
+    // unavailable class processTrack already falls back to YouTube for.
+    if (params.soundcloud && isFormatUnavailable(err)) {
+      throw new SoundCloudPreviewError(
+        "SoundCloud has no full stream (preview-only, geo-blocked, or DRM). Falling back to YouTube when possible.",
+      );
+    }
     if (params.soundcloud || !params.cookiePath || !isFormatUnavailable(err)) {
       throw err;
     }
@@ -158,9 +166,8 @@ export async function downloadMedia(params: {
     throw new Error("yt-dlp did not report output filepath");
   }
 
-  // Fail closed: if SoundCloud still looks like a preview-only fetch, bail.
-  // yt-dlp tags snipped streams in the *format id* — the output template is
-  // `dl_<uuid>.<ext>`, so the filename alone never carries that evidence.
+  // Fail closed: yt-dlp tags snipped streams in the *format id* — the output
+  // template is `dl_<uuid>.<ext>`, so the filename alone never carries that.
   if (
     params.soundcloud &&
     /preview/i.test(`${markers.formatId ?? ""} ${path.basename(markers.filepath)}`)

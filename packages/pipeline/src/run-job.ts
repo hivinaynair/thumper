@@ -428,8 +428,8 @@ async function fallbackSoundCloudToYoutube(params: {
   if (!mirror) {
     const because =
       params.reason === "preview-only"
-        ? "SoundCloud was preview-only"
-        : "SoundCloud audio is DRM-protected or blocked in your region";
+        ? "SoundCloud only has a preview (often geo-blocked or Go+)"
+        : "SoundCloud audio is unavailable (DRM or region-locked)";
     throw new Error(
       `${because} and no confident YouTube mirror found for “${meta.artists[0] ?? "?"} – ${meta.title}”`,
     );

@@ -3,6 +3,8 @@
 import { detectSourceKind } from "@thumper/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+type DjTier = "master" | "club" | "marginal" | "unsuitable";
+
 type Job = {
 	id: string;
 	status: string;
@@ -24,12 +26,34 @@ type Job = {
 		childJobIds?: string[];
 		unmatchedCount?: number;
 		matchScore?: number;
-		djTier?: "master" | "club" | "marginal" | "unsuitable";
+		djTier?: DjTier;
 		djHeadline?: string;
 		warnings?: string[];
 		cutoffHz?: number;
 	} | null;
 };
+
+const TIER_LABEL: Record<DjTier, string> = {
+	master: "Master quality",
+	club: "Club-ready",
+	marginal: "Marginal quality",
+	unsuitable: "Not for club playback",
+};
+
+/**
+ * The verdict headline already leads with its tier ("Marginal — lossy source,
+ * rolls off at 18.2 kHz"), so emphasise that lead rather than prefixing a second
+ * label and printing the word twice.
+ */
+function QualityBadge({ tier, headline }: { tier: DjTier; headline?: string }) {
+	const [lead, ...rest] = (headline || TIER_LABEL[tier]).split(" — ");
+	return (
+		<div className={`quality-badge ${tier}`}>
+			<strong>{lead}</strong>
+			{rest.length ? ` — ${rest.join(" — ")}` : ""}
+		</div>
+	);
+}
 
 type CookieProviderStatus = {
 	present: boolean;
@@ -514,16 +538,10 @@ export default function DownloaderPage() {
 										<span style={{ width: `${job.progress}%` }} />
 									</div>
 									{job.result?.djTier && job.result.djTier !== "master" ? (
-										<div className={`quality-badge ${job.result.djTier}`}>
-											<strong>
-												{job.result.djTier === "unsuitable"
-													? "Not for club playback"
-													: job.result.djTier === "marginal"
-														? "Marginal quality"
-														: "Club-ready"}
-											</strong>
-											{job.result.djHeadline ? ` — ${job.result.djHeadline}` : ""}
-										</div>
+										<QualityBadge
+											tier={job.result.djTier}
+											headline={job.result.djHeadline}
+										/>
 									) : null}
 									{job.result?.warnings?.length ? (
 										<ul className="job-warnings">

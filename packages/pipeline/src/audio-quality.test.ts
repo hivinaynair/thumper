@@ -9,10 +9,24 @@ import {
 } from "./audio-quality";
 
 describe("withoutPreview", () => {
-  it("excludes preview format ids", () => {
+  it("excludes preview format ids and never falls through to bare best", () => {
     const out = withoutPreview("bestaudio[ext=wav]/bestaudio/best");
     expect(out).toContain("format_id!*=preview");
-    expect(out).toContain("bestaudio[format_id!*=preview]/bestaudio/best");
+    expect(out).toBe(
+      "bestaudio[format_id!*=preview][ext=wav]/bestaudio[format_id!*=preview]",
+    );
+    expect(out.endsWith("/best")).toBe(false);
+    expect(out.includes("/bestaudio/") || out.endsWith("/bestaudio")).toBe(
+      false,
+    );
+  });
+
+  it("keeps the real SoundCloud selector fail-closed", () => {
+    const out = withoutPreview(AUDIO_FORMAT_SELECTOR);
+    expect(out).toContain("bestaudio[format_id!*=preview][format_id=download]");
+    expect(out.endsWith("bestaudio[format_id!*=preview]")).toBe(true);
+    expect(out).not.toMatch(/\/bestaudio$/);
+    expect(out).not.toMatch(/\/best$/);
   });
 });
 

@@ -49,6 +49,43 @@ describe("scoreMirrorCandidate", () => {
     const scored = scoreMirrorCandidate(track, candidate);
     expect(scored.score).toBeLessThan(78);
   });
+
+  it("accepts a perfect artist/title hit when duration is unknown", () => {
+    // Geo-blocked SoundCloud tracks only expose a 30s preview length, which
+    // resolveSoundCloudMeta drops — matching must still clear the threshold.
+    const noDuration: SpotifyTrackMeta = {
+      title: "Gravity",
+      artists: ["Oppidan", "Hans Glader"],
+    };
+    const candidate: MirrorCandidate = {
+      url: "https://www.youtube.com/watch?v=grav",
+      title: "Gravity",
+      uploader: "Oppidan",
+      durationSec: 188,
+      views: 50_000,
+      source: "youtube",
+    };
+    const scored = scoreMirrorCandidate(noDuration, candidate);
+    expect(scored.score).toBeGreaterThanOrEqual(78);
+  });
+
+  it("does not trust a 30s preview length against a full YouTube upload", () => {
+    const previewDuration: SpotifyTrackMeta = {
+      title: "Gravity",
+      artists: ["Oppidan"],
+      durationMs: 30_000,
+    };
+    const candidate: MirrorCandidate = {
+      url: "https://www.youtube.com/watch?v=grav",
+      title: "Gravity",
+      uploader: "Oppidan",
+      durationSec: 188,
+      views: 50_000,
+      source: "youtube",
+    };
+    const scored = scoreMirrorCandidate(previewDuration, candidate);
+    expect(scored.score).toBe(0);
+  });
 });
 
 // SoundCloud never gives us a usable duration for the tracks that need a mirror

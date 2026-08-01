@@ -54,16 +54,23 @@ export function youtubeExtractorArgs(): string {
   return `youtube:player_client=${clients}`;
 }
 
-/** Fail-closed: exclude SoundCloud preview formats from the selector. */
+/**
+ * Fail-closed SoundCloud selector: never fall through to an unrestricted
+ * `bestaudio` / `best` that would silently accept a 30s preview clip.
+ * Geo-blocked and Go+ tracks only expose `*_preview` formats; rejecting those
+ * here lets the caller fall back to YouTube instead of shipping a teaser.
+ */
 export const withoutPreview = (selector: string) => {
-  const filteredSelectors = selector.replaceAll(
-    "bestaudio[",
-    "bestaudio[format_id!*=preview][",
-  );
-  return filteredSelectors.replace(
-    "/bestaudio/best",
-    "/bestaudio[format_id!*=preview]/bestaudio/best",
-  );
+  const filtered = selector
+    .replaceAll("bestaudio[", "bestaudio[format_id!*=preview][")
+    .replace(/\/bestaudio(\/best)?$/, "/bestaudio[format_id!*=preview]")
+    .replace(/\/best$/, "");
+  // Belt-and-suspenders: if the input had no trailing fallback group, still
+  // ensure every bare bestaudio picks up the preview exclusion.
+  if (!filtered.includes("format_id!*=preview")) {
+    return `${filtered}/bestaudio[format_id!*=preview]`;
+  }
+  return filtered;
 };
 
 export const isPcmSource = (codec: string, filePath = "") => {

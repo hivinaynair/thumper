@@ -141,7 +141,7 @@ function calcNameMatch(track: SpotifyTrackMeta, candidate: MirrorCandidate): num
 
 function calcTimeMatch(track: SpotifyTrackMeta, candidate: MirrorCandidate): number {
   if (!track.durationMs || track.durationMs <= 0 || candidate.durationSec <= 0) {
-    return 55; // neutral when unknown — don't over-trust
+    return 55; // unused when timeKnown is false — see scoreMirrorCandidate
   }
   const songSec = track.durationMs / 1000;
   const diff = Math.abs(songSec - candidate.durationSec);

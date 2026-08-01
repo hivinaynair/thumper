@@ -28,6 +28,13 @@ describe("isSoundCloudUnavailableError", () => {
     expect(
       isSoundCloudUnavailableError(new SoundCloudPreviewError("preview-only")),
     ).toBe(true);
+    expect(
+      isSoundCloudUnavailableError(
+        new SoundCloudPreviewError(
+          "SoundCloud has no full stream (preview-only, geo-blocked, or DRM).",
+        ),
+      ),
+    ).toBe(true);
   });
 
   it("ignores ordinary download failures so they surface as errors", () => {
