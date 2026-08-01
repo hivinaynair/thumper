@@ -97,21 +97,31 @@ def _run_process_job(job_id: str) -> str:
     env.setdefault("DATA_DIR", "/tmp/thumper-data")
     env.setdefault("YT_DLP_PATH", "/opt/venv/bin/yt-dlp")
 
-    result = subprocess.run(
-        ["bun", "src/process-job.ts", f"--jobId={job_id}"],
-        cwd="/app/apps/worker",
-        env=env,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"process-job failed ({result.returncode})\n"
-            f"stdout:\n{result.stdout[-4000:]}\n"
-            f"stderr:\n{result.stderr[-4000:]}"
+    # Neon pooler can ETIMEDOUT on a cold Modal container; one quick retry
+    # avoids leaving the job stuck in "queued" after a successful wake.
+    last: subprocess.CompletedProcess[str] | None = None
+    for attempt in range(2):
+        last = subprocess.run(
+            ["bun", "src/process-job.ts", f"--jobId={job_id}"],
+            cwd="/app/apps/worker",
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
         )
-    return result.stdout[-2000:]
+        if last.returncode == 0:
+            return last.stdout[-2000:]
+        err_text = f"{last.stdout}\n{last.stderr}"
+        transient = "ETIMEDOUT" in err_text or "CONNECT_TIMEOUT" in err_text
+        if not transient or attempt == 1:
+            break
+
+    assert last is not None
+    raise RuntimeError(
+        f"process-job failed ({last.returncode})\n"
+        f"stdout:\n{last.stdout[-4000:]}\n"
+        f"stderr:\n{last.stderr[-4000:]}"
+    )
 
 
 @app.function(
