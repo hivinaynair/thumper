@@ -436,6 +436,11 @@ async function fallbackSoundCloudToYoutube(params: {
   }
 
   const ytCookieTmp = await materializeCookieFile(payload.userId, "youtube");
+  if (!ytCookieTmp) {
+    throw new Error(
+      `SoundCloud couldn’t serve “${meta.artists[0] ?? "?"} – ${meta.title}” and YouTube cookies aren’t synced — sync YouTube from a signed-in browser, then retry (Modal’s IP needs them to pass the bot check).`,
+    );
+  }
   try {
     await update({
       title: meta.title,
@@ -460,9 +465,7 @@ async function fallbackSoundCloudToYoutube(params: {
       allowYoutubeFallback: false,
     });
   } finally {
-    if (ytCookieTmp) {
-      await fs.unlink(ytCookieTmp).catch(() => undefined);
-    }
+    await fs.unlink(ytCookieTmp).catch(() => undefined);
   }
 }
 

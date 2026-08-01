@@ -93,10 +93,30 @@ export async function processJobById(jobId: string): Promise<void> {
         enqueueChildTracks: async (tracks) => {
           const childIds: string[] = [];
           let failed = 0;
-          for (const track of tracks) {
+          // SoundCloud rate-limits (~429) when a set is hammered back-to-back
+          // from a datacenter IP. A short gap between tracks keeps most of the
+          // playlist alive without much wall-clock cost.
+          const TRACK_GAP_MS = 2_000;
+          for (const [index, track] of tracks.entries()) {
             if (ac.signal.aborted) break;
             const kind = detectSourceKind(track.url) ?? detectSourceKind(p.url);
             if (kind !== "youtube" && kind !== "soundcloud") continue;
+
+            if (index > 0 && TRACK_GAP_MS > 0) {
+              await new Promise<void>((resolve, reject) => {
+                const timer = setTimeout(resolve, TRACK_GAP_MS);
+                const onAbort = () => {
+                  clearTimeout(timer);
+                  reject(new Error("Cancelled"));
+                };
+                if (ac.signal.aborted) {
+                  onAbort();
+                  return;
+                }
+                ac.signal.addEventListener("abort", onAbort, { once: true });
+              }).catch(() => undefined);
+              if (ac.signal.aborted) break;
+            }
 
             const [child] = await db
               .insert(jobs)

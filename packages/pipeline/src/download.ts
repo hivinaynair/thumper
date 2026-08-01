@@ -8,10 +8,20 @@ import {
   youtubeExtractorArgs,
 } from "./audio-quality";
 import { getYtDlpPath } from "./paths";
-import { runCommandOk, type SpawnOptions } from "./process";
+import {
+  ProcessCancelledError,
+  runCommandOk,
+  type SpawnOptions,
+} from "./process";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+/** Alternate YouTube clients tried when the default set hits a bot wall. */
+const YOUTUBE_BOT_CLIENTS = ["tv", "web_safari", "mweb", "android_vr"] as const;
+
+const RATE_LIMIT_ATTEMPTS = 4;
+const RATE_LIMIT_BASE_MS = 2_500;
 
 export type DownloadMediaResult = {
   filePath: string;
@@ -45,6 +55,35 @@ function parsePrintMarkers(output: string) {
     formatId: formatId && formatId !== "NA" ? formatId : undefined,
     acodec: acodec && acodec !== "NA" ? acodec : undefined,
   };
+}
+
+async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw new ProcessCancelledError();
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new ProcessCancelledError());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+function withExtractorClients(args: string[], clients: string): string[] {
+  return args.map((arg, i) =>
+    args[i - 1] === "--extractor-args"
+      ? `youtube:player_client=${clients}`
+      : arg,
+  );
+}
+
+function withoutCookies(args: string[]): string[] {
+  return args.filter(
+    (arg, i) => arg !== "--cookies" && args[i - 1] !== "--cookies",
+  );
 }
 
 export async function downloadMedia(params: {
@@ -106,60 +145,69 @@ export async function downloadMedia(params: {
   let stdout = "";
   let stderr = "";
   let anonymousFallback = false;
+  let lastErr: unknown;
 
-  try {
-    ({ stdout, stderr } = await runCommandOk(getYtDlpPath(), args, spawnOpts));
-  } catch (err) {
-    // Preview-only / geo-blocked / DRM SoundCloud tracks have no non-preview
-    // formats once withoutPreview() strips them — surface that as the same
-    // unavailable class processTrack already falls back to YouTube for.
-    if (params.soundcloud && isFormatUnavailable(err)) {
-      throw new SoundCloudPreviewError(
-        "SoundCloud has no full stream (preview-only, geo-blocked, or DRM). Falling back to YouTube when possible.",
-      );
-    }
-    if (params.soundcloud || !params.cookiePath || !isFormatUnavailable(err)) {
-      throw err;
-    }
-
-    // Some player clients need a PO token and answer authenticated requests
-    // with zero formats. Retry on a different client first — *keeping* the
-    // cookies, because dropping them is what caps a Premium account at 128 kbps
-    // AAC. Only give up authentication as a last resort, and flag it when we do
-    // so the caller can explain the downgrade instead of shipping a quietly
-    // worse file.
-    const withClients = (clients: string) =>
-      args.map((arg, i) =>
-        args[i - 1] === "--extractor-args" ? `youtube:player_client=${clients}` : arg,
-      );
-
-    let recovered = false;
-    for (const clients of ["tv", "web_safari,mweb", "android_vr"]) {
-      try {
-        ({ stdout, stderr } = await runCommandOk(
-          getYtDlpPath(),
-          withClients(clients),
-          spawnOpts,
-        ));
-        recovered = true;
-        break;
-      } catch (retryErr) {
-        if (!isFormatUnavailable(retryErr)) throw retryErr;
-      }
-    }
-
-    if (!recovered) {
-      const retryArgs = args.filter(
-        (arg, i) => arg !== "--cookies" && args[i - 1] !== "--cookies",
-      );
+  for (let attempt = 0; attempt < RATE_LIMIT_ATTEMPTS; attempt++) {
+    try {
       ({ stdout, stderr } = await runCommandOk(
         getYtDlpPath(),
-        retryArgs,
+        args,
         spawnOpts,
       ));
-      anonymousFallback = true;
+      lastErr = undefined;
+      break;
+    } catch (err) {
+      lastErr = err;
+
+      // Preview-only / geo-blocked / DRM SoundCloud tracks have no non-preview
+      // formats once withoutPreview() strips them — surface that as the same
+      // unavailable class processTrack already falls back to YouTube for.
+      if (params.soundcloud && isFormatUnavailable(err)) {
+        throw new SoundCloudPreviewError(
+          "SoundCloud has no full stream (preview-only, geo-blocked, or DRM). Falling back to YouTube when possible.",
+        );
+      }
+
+      if (isRateLimitError(err) && attempt < RATE_LIMIT_ATTEMPTS - 1) {
+        const waitMs = RATE_LIMIT_BASE_MS * 2 ** attempt;
+        params.onProgress?.(
+          `Rate limited — waiting ${Math.round(waitMs / 1000)}s before retry ${attempt + 2}/${RATE_LIMIT_ATTEMPTS}\n`,
+        );
+        await sleep(waitMs, params.signal);
+        continue;
+      }
+
+      if (
+        !params.soundcloud &&
+        (isYoutubeBotError(err) || isFormatUnavailable(err))
+      ) {
+        const recovered = await tryYoutubeRecovery({
+          args,
+          spawnOpts,
+          cookiePath: params.cookiePath,
+          onProgress: params.onProgress,
+          initialErr: err,
+        });
+        if (recovered) {
+          ({ stdout, stderr, anonymousFallback } = recovered);
+          lastErr = undefined;
+          break;
+        }
+        if (isYoutubeBotError(err)) {
+          throw new Error(
+            params.cookiePath
+              ? "YouTube blocked this download (bot check), even with your synced cookies. Re-sync fresh YouTube cookies from a signed-in browser and retry."
+              : "YouTube blocked this download (bot check). Sync YouTube cookies from a signed-in browser, then retry.",
+          );
+        }
+      }
+
+      throw err;
     }
   }
+
+  if (lastErr) throw lastErr;
+
   const combined = `${stdout}\n${stderr}`;
   const markers = parsePrintMarkers(combined);
   if (!markers.filepath) {
@@ -189,6 +237,61 @@ export async function downloadMedia(params: {
     acodec: markers.acodec,
     anonymousFallback,
   };
+}
+
+async function tryYoutubeRecovery(params: {
+  args: string[];
+  spawnOpts: SpawnOptions;
+  cookiePath?: string | null;
+  onProgress?: (line: string) => void;
+  initialErr: unknown;
+}): Promise<{
+  stdout: string;
+  stderr: string;
+  anonymousFallback: boolean;
+} | null> {
+  // Some player clients need a PO token and answer authenticated requests
+  // with zero formats / bot walls. Retry on a different client first —
+  // *keeping* the cookies, because dropping them caps Premium at 128 kbps AAC.
+  for (const clients of YOUTUBE_BOT_CLIENTS) {
+    try {
+      params.onProgress?.(
+        `Retrying YouTube with player_client=${clients}\n`,
+      );
+      const { stdout, stderr } = await runCommandOk(
+        getYtDlpPath(),
+        withExtractorClients(params.args, clients),
+        params.spawnOpts,
+      );
+      return { stdout, stderr, anonymousFallback: false };
+    } catch (retryErr) {
+      if (
+        !isFormatUnavailable(retryErr) &&
+        !isYoutubeBotError(retryErr) &&
+        !isRateLimitError(retryErr)
+      ) {
+        throw retryErr;
+      }
+    }
+  }
+
+  // Last resort: anonymous fetch. Only when the original failure was a
+  // format-unavailable (cookies forcing a broken client), not a hard bot wall
+  // — anonymous from a datacenter IP almost never clears a bot check.
+  if (params.cookiePath && isFormatUnavailable(params.initialErr)) {
+    try {
+      const { stdout, stderr } = await runCommandOk(
+        getYtDlpPath(),
+        withoutCookies(params.args),
+        params.spawnOpts,
+      );
+      return { stdout, stderr, anonymousFallback: true };
+    } catch {
+      /* fall through */
+    }
+  }
+
+  return null;
 }
 
 export class SoundCloudPreviewError extends Error {
@@ -231,6 +334,24 @@ export function isFormatUnavailable(err: unknown): boolean {
     /Requested format is not available|No video formats found/i.test(
       err.message,
     )
+  );
+}
+
+/** YouTube datacenter / anonymous IP bot challenge. */
+export function isYoutubeBotError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    /Sign in to confirm you.?re not a bot|confirm your age|login required|not a bot/i.test(
+      err.message,
+    )
+  );
+}
+
+/** Transient HTTP 429 from SoundCloud / YouTube / CDNs. */
+export function isRateLimitError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    /HTTP Error 429|Too Many Requests|rate[_ ]?limit/i.test(err.message)
   );
 }
 

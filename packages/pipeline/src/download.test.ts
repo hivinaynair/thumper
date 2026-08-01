@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import {
   isFormatUnavailable,
+  isRateLimitError,
   isSoundCloudPreviewError,
   isSoundCloudUnavailableError,
+  isYoutubeBotError,
   SoundCloudPreviewError,
 } from "./download";
 
@@ -70,5 +72,39 @@ describe("isFormatUnavailable", () => {
       false,
     );
     expect(isFormatUnavailable(new Error("Video unavailable"))).toBe(false);
+  });
+});
+
+describe("isYoutubeBotError", () => {
+  it("matches the datacenter bot challenge", () => {
+    expect(
+      isYoutubeBotError(
+        new Error(
+          "ERROR: [youtube] 6IQ7KznpdCQ: Sign in to confirm you’re not a bot. Use --cookies-from-browser",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("ignores ordinary YouTube failures", () => {
+    expect(isYoutubeBotError(new Error("Video unavailable"))).toBe(false);
+  });
+});
+
+describe("isRateLimitError", () => {
+  it("matches HTTP 429", () => {
+    expect(
+      isRateLimitError(
+        new Error(
+          "/opt/venv/bin/yt-dlp failed (1): ERROR: HTTP Error 429: Too Many Requests",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("ignores other HTTP errors", () => {
+    expect(isRateLimitError(new Error("HTTP Error 403: Forbidden"))).toBe(
+      false,
+    );
   });
 });

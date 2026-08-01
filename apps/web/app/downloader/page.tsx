@@ -163,6 +163,13 @@ function cookiesReadyForUrl(
 			reason: "Sync SoundCloud cookies before queuing SoundCloud downloads",
 		};
 	}
+	if (kind === "soundcloud" && !cookies.youtube.present) {
+		return {
+			ready: true,
+			reason:
+				"Tip: sync YouTube cookies too — geo-blocked SoundCloud tracks fall back to YouTube, and Modal’s IP needs them to pass the bot check",
+		};
+	}
 	if (
 		kind === "spotify" &&
 		!cookies.youtube.present &&
@@ -478,8 +485,10 @@ export default function DownloaderPage() {
 							{busy ? "Queuing…" : "Queue download"}
 						</button>
 					</div>
-					{!gate.ready && gate.reason ? (
-						<p className="flash error">{gate.reason}</p>
+					{gate.reason ? (
+						<p className={`flash${gate.ready ? "" : " error"}`}>
+							{gate.reason}
+						</p>
 					) : null}
 					{message ? (
 						<p className={`flash${messageTone === "error" ? " error" : ""}`}>
