@@ -144,12 +144,35 @@ async function processTrack(params: {
   matchScore?: number;
   /** Spotify / SoundCloud URL used for tags + artwork (never YouTube). */
   catalogUrl?: string | null;
-  /** Prevent infinite SC→YT→… loops. */
+  /**
+   * SoundCloud inputs prefer a confident YouTube mirror first (Premium Opus
+   * usually beats SC AAC). Set false when already on the YouTube path.
+   */
+  preferYoutube?: boolean;
+  /** Prevent infinite SC→YT→… loops after a failed / skipped YT prefer. */
   allowYoutubeFallback?: boolean;
 }): Promise<void> {
   const { deps, soundcloud, workDir, outDir } = params;
   const { db, payload, signal, update } = deps;
   const cookieTmp = params.cookieTmp;
+
+  // SoundCloud playlist/track: YouTube first when a confident mirror exists;
+  // only hit SoundCloud when YT isn't available (remixes, bootlegs, free DLs).
+  let youtubeAlreadyTried = false;
+  if (soundcloud && params.preferYoutube !== false) {
+    const ytResult = await trySoundCloudViaYoutubeFirst({
+      deps,
+      trackUrl: params.trackUrl,
+      titleHint: params.titleHint,
+      artistHint: params.artistHint,
+      scCookieTmp: cookieTmp,
+      workDir,
+      outDir,
+      catalogUrl: params.catalogUrl ?? params.trackUrl,
+    });
+    if (ytResult === "downloaded") return;
+    if (ytResult === "youtube_failed") youtubeAlreadyTried = true;
+  }
 
   await update({
     title: params.titleHint,
@@ -188,6 +211,7 @@ async function processTrack(params: {
   } catch (err) {
     if (
       soundcloud &&
+      !youtubeAlreadyTried &&
       params.allowYoutubeFallback !== false &&
       isSoundCloudUnavailableError(err)
     ) {
@@ -416,6 +440,85 @@ async function resolveSoundCloudMeta(params: {
   return { title, artists: splitArtistNames(artist), durationMs };
 }
 
+type YoutubePreferResult =
+  | "downloaded"
+  | "no_mirror"
+  | "no_cookies"
+  | "youtube_failed";
+
+/**
+ * Prefer YouTube (Premium Opus) for SoundCloud inputs when a confident mirror
+ * exists. Tags/artwork still come from the SoundCloud catalog URL.
+ */
+async function trySoundCloudViaYoutubeFirst(params: {
+  deps: RunJobDeps;
+  trackUrl: string;
+  titleHint?: string;
+  artistHint?: string;
+  scCookieTmp: string | null;
+  workDir: string;
+  outDir: string;
+  catalogUrl?: string | null;
+}): Promise<YoutubePreferResult> {
+  const { deps, workDir, outDir } = params;
+  const { payload, signal, update } = deps;
+
+  await update({ stage: "resolving", progress: 22 });
+  await ensureNotCancelled(
+    signal,
+    deps.db,
+    payload.jobId,
+    payload.parentJobId,
+  );
+
+  const meta = await resolveSoundCloudMeta({
+    trackUrl: params.trackUrl,
+    titleHint: params.titleHint,
+    artistHint: params.artistHint,
+    cookieTmp: params.scCookieTmp,
+    signal,
+  });
+
+  const mirror = await matchTrackToYoutube(meta, { signal });
+  if (!mirror) return "no_mirror";
+
+  const ytCookieTmp = await materializeCookieFile(payload.userId, "youtube");
+  if (!ytCookieTmp) return "no_cookies";
+
+  try {
+    await update({
+      title: meta.title,
+      artist: meta.artists.join(", ") || undefined,
+      matchedUrl: mirror.url,
+      stage: "downloading",
+      progress: 30,
+    });
+
+    await processTrack({
+      deps,
+      trackUrl: mirror.url,
+      titleHint: meta.title,
+      artistHint: meta.artists.join(", ") || undefined,
+      soundcloud: false,
+      cookieTmp: ytCookieTmp,
+      workDir,
+      outDir,
+      matchedUrl: mirror.url,
+      matchScore: mirror.matchScore,
+      catalogUrl: params.catalogUrl ?? params.trackUrl,
+      preferYoutube: false,
+      allowYoutubeFallback: false,
+    });
+    return "downloaded";
+  } catch (err) {
+    if (err instanceof ProcessCancelledError) throw err;
+    // Matched YouTube but download failed (bot wall, formats) — try SoundCloud.
+    return "youtube_failed";
+  } finally {
+    await fs.unlink(ytCookieTmp).catch(() => undefined);
+  }
+}
+
 async function fallbackSoundCloudToYoutube(params: {
   deps: RunJobDeps;
   trackUrl: string;
@@ -489,6 +592,7 @@ async function fallbackSoundCloudToYoutube(params: {
       matchedUrl: mirror.url,
       matchScore: mirror.matchScore,
       catalogUrl: params.catalogUrl ?? params.trackUrl,
+      preferYoutube: false,
       allowYoutubeFallback: false,
     });
   } finally {

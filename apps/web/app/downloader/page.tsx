@@ -195,7 +195,7 @@ function cookiesReadyForUrl(
 		return {
 			ready: true,
 			reason:
-				"Tip: refresh YouTube cookies too — geo-blocked tracks fall back to YouTube",
+				"Tip: sync YouTube cookies too — SoundCloud tracks prefer YouTube when a match exists",
 		};
 	}
 	if (
