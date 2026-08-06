@@ -33,6 +33,11 @@ type Job = {
 		sourceFormatId?: string;
 		/** SoundCloud free-download / original upload (`format_id=download`). */
 		soundcloudOriginal?: boolean;
+		/** Hypeddit Free Download gate → tagged AIFF. */
+		hypedditOriginal?: boolean;
+		/** Non-Hypeddit purchase link — open and download manually. */
+		manualDownloadUrl?: string;
+		manualDownloadTitle?: string | null;
 	} | null;
 };
 
@@ -66,6 +71,7 @@ type CookieProviderStatus = {
 type CookieStatus = {
 	youtube: CookieProviderStatus;
 	soundcloud: CookieProviderStatus;
+	spotify: CookieProviderStatus;
 };
 
 type SyncResult = {
@@ -75,6 +81,7 @@ type SyncResult = {
 	results?: {
 		youtube?: { status: string; reason?: string };
 		soundcloud?: { status: string; reason?: string };
+		spotify?: { status: string; reason?: string };
 	};
 };
 
@@ -413,7 +420,9 @@ export default function DownloaderPage() {
 	}
 
 	const anyCookiesPresent = Boolean(
-		cookies?.youtube.present || cookies?.soundcloud.present,
+		cookies?.youtube.present ||
+			cookies?.soundcloud.present ||
+			cookies?.spotify.present,
 	);
 	const youtubeStale =
 		Boolean(cookies?.youtube.present) &&
@@ -431,7 +440,7 @@ export default function DownloaderPage() {
 					</div>
 					<aside
 						className="cookie-sync"
-						title="Uses the Thumper Chrome extension. Refresh after browsing YouTube — Google rotates sessions and Modal needs the latest cookies."
+						title="Uses the Thumper Chrome extension. Refresh after browsing YouTube — Google rotates sessions and Modal needs the latest cookies. Spotify is for Hypeddit Connect gates."
 					>
 						<div className="cookie-sync-top">
 							<span className="cookie-sync-label">Cookies</span>
@@ -440,6 +449,7 @@ export default function DownloaderPage() {
 									[
 										["youtube", "YT"],
 										["soundcloud", "SC"],
+										["spotify", "SP"],
 									] as const
 								).map(([key, label]) => {
 									const status = cookies?.[key];
@@ -621,10 +631,30 @@ export default function DownloaderPage() {
 									<div className="bar">
 										<span style={{ width: `${job.progress}%` }} />
 									</div>
+									{job.result?.hypedditOriginal ? (
+										<div className="quality-badge original">
+											<strong>Hypeddit original</strong>
+											{" — Free Download gate → tagged AIFF"}
+										</div>
+									) : null}
 									{job.result?.soundcloudOriginal ? (
 										<div className="quality-badge original">
 											<strong>SoundCloud original</strong>
 											{" — free download (artist upload, not a stream)"}
+										</div>
+									) : null}
+									{job.result?.manualDownloadUrl ? (
+										<div className="quality-badge unsuitable">
+											<strong>Download manually</strong>
+											{" — this Free Download isn’t Hypeddit. "}
+											<a
+												href={job.result.manualDownloadUrl}
+												target="_blank"
+												rel="noreferrer"
+											>
+												Open gate
+											</a>
+											{", then use WAV → AIFF to tag."}
 										</div>
 									) : null}
 									{job.result?.djTier && job.result.djTier !== "master" ? (
@@ -683,6 +713,16 @@ export default function DownloaderPage() {
 												rel="noreferrer"
 											>
 												Open in Drive
+											</a>
+										) : null}
+										{job.result?.manualDownloadUrl ? (
+											<a
+												className="btn secondary"
+												href={job.result.manualDownloadUrl}
+												target="_blank"
+												rel="noreferrer"
+											>
+												Open Free Download
 											</a>
 										) : null}
 									</div>

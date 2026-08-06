@@ -96,7 +96,15 @@ export async function runRetagJob(deps: RunRetagJobDeps): Promise<void> {
     });
     await ensureNotCancelled(signal, db, payload.jobId);
 
-    const inputPath = path.join(workDir, `input_${randomUUID()}.wav`);
+    // Extension is a hint only — convertAudio probes the real codec. Hypeddit
+    // gates may hand back wav or mp3; manual retag uploads stay WAV.
+    const keyExt =
+      path.extname(payload.inputStorageKey).replace(/^\./, "").toLowerCase() ||
+      "wav";
+    const inputPath = path.join(
+      workDir,
+      `input_${randomUUID()}.${keyExt === "bin" ? "wav" : keyExt}`,
+    );
     await materializeObject(payload.inputStorageKey, inputPath);
 
     let artworkPath: string | null = null;
@@ -201,6 +209,7 @@ export async function runRetagJob(deps: RunRetagJobDeps): Promise<void> {
         driveFileId,
         driveUrl,
         qualityLabel,
+        ...(payload.hypedditOriginal ? { hypedditOriginal: true } : {}),
       },
     });
   } catch (err) {

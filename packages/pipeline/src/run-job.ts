@@ -27,6 +27,7 @@ import {
   SoundCloudPreviewError,
 } from "./download";
 import { ensurePlaylistFolder, uploadToDrive } from "./drive";
+import { downloadHypedditGate } from "./hypeddit";
 import {
   matchSpotifyTrackToMirror,
   matchTrackToYoutube,
@@ -43,6 +44,11 @@ import {
 import { assertPathInside, userRoot } from "./paths";
 import { expandPlaylistEntries, type PlaylistEntry } from "./playlist";
 import { ProcessCancelledError } from "./process";
+import {
+  isManualDownloadRequiredError,
+  ManualDownloadRequiredError,
+  resolveSoundCloudPurchase,
+} from "./soundcloud-purchase";
 import { fetchSpotifyCatalog, type SpotifyTrackMeta } from "./spotify";
 import { putLocalFile, useBlobStorage, userStorageKey } from "./storage";
 import { randomUUID } from "node:crypto";
@@ -89,6 +95,11 @@ export type ProgressUpdater = (patch: {
     /** True when this job retagged an uploaded WAV → AIFF. */
     retag?: boolean;
     inputStorageKey?: string;
+    hypedditOriginal?: boolean;
+    manualDownloadUrl?: string;
+    manualDownloadTitle?: string | null;
+    gateEmail?: string;
+    gateName?: string;
   };
 }) => Promise<void>;
 
@@ -145,6 +156,80 @@ async function ensureNotCancelled(
   }
 }
 
+/**
+ * Unlock a Hypeddit Free Download gate, store the file, then retag → AIFF
+ * using the SoundCloud track URL for metadata/artwork.
+ */
+async function processHypedditRetag(params: {
+  deps: RunJobDeps;
+  hypedditUrl: string;
+  metadataUrl: string;
+  titleHint?: string;
+  artistHint?: string;
+  workDir: string;
+}): Promise<void> {
+  const { deps, hypedditUrl, metadataUrl, workDir } = params;
+  const { payload, signal, update } = deps;
+  const email = payload.gateEmail?.trim();
+  if (!email) {
+    throw new Error(
+      "Hypeddit Free Download needs your account email — sign in with Google and retry",
+    );
+  }
+
+  await update({
+    stage: "downloading",
+    progress: 25,
+    matchedUrl: hypedditUrl,
+  });
+  await ensureNotCancelled(signal, deps.db, payload.jobId, payload.parentJobId);
+
+  const downloaded = await downloadHypedditGate({
+    gateUrl: hypedditUrl,
+    email,
+    name: payload.gateName?.trim() || email.split("@")[0] || "DJ",
+    workDir,
+    signal,
+  });
+
+  const contentType =
+    downloaded.ext === "wav"
+      ? "audio/wav"
+      : downloaded.ext === "mp3"
+        ? "audio/mpeg"
+        : downloaded.ext === "flac"
+          ? "audio/flac"
+          : downloaded.ext === "aiff" || downloaded.ext === "aif"
+            ? "audio/aiff"
+            : "application/octet-stream";
+
+  const inputStorageKey = userStorageKey(
+    payload.userId,
+    "uploads",
+    `${randomUUID()}.${downloaded.ext}`,
+  );
+  await putLocalFile(inputStorageKey, downloaded.filePath, { contentType });
+
+  // Dynamic import avoids a circular module graph with retag-job → run-job types.
+  const { runRetagJob } = await import("./retag-job");
+  await runRetagJob({
+    db: deps.db,
+    payload: {
+      jobId: payload.jobId,
+      userId: payload.userId,
+      inputStorageKey,
+      metadataUrl,
+      titleHint: params.titleHint,
+      artistHint: params.artistHint,
+      destination: payload.destination,
+      hypedditOriginal: true,
+    },
+    signal,
+    update,
+    getGoogleAccessToken: deps.getGoogleAccessToken,
+  });
+}
+
 async function processTrack(params: {
   deps: RunJobDeps;
   trackUrl: string;
@@ -171,6 +256,8 @@ async function processTrack(params: {
   const cookieTmp = params.cookieTmp;
 
   // SoundCloud playlist/track priority:
+  // 0) Free Download purchase_url → Hypeddit unlock → retag AIFF
+  //    (other store/gate links → fail flagged for manual download)
   // 1) artist free-download / original upload (best possible)
   // 2) confident YouTube mirror (Premium Opus beats SC AAC stream)
   // 3) SoundCloud stream (remixes/bootlegs with no YT upload)
@@ -178,6 +265,29 @@ async function processTrack(params: {
   // YouTube is loudness-normalized (~−14 LUFS), so peaks look quieter than
   // club masters — convert.ts peak-normalizes lossy sources to 0 dBFS so DJ
   // waveforms stay full-height without giving up YT's better stream quality.
+  if (soundcloud) {
+    await update({ stage: "resolving", progress: 12 });
+    const purchase = await resolveSoundCloudPurchase({
+      trackUrl: params.trackUrl,
+      cookiePath: cookieTmp,
+      signal,
+    });
+    if (purchase.kind === "other" && purchase.url) {
+      throw new ManualDownloadRequiredError(purchase.url, purchase.title);
+    }
+    if (purchase.kind === "hypeddit" && purchase.url) {
+      await processHypedditRetag({
+        deps,
+        hypedditUrl: purchase.url,
+        metadataUrl: params.catalogUrl ?? params.trackUrl,
+        titleHint: params.titleHint,
+        artistHint: params.artistHint,
+        workDir,
+      });
+      return;
+    }
+  }
+
   let youtubeAlreadyTried = false;
   if (soundcloud && params.preferYoutube !== false) {
     await update({ stage: "resolving", progress: 18 });
@@ -880,6 +990,18 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
         error: "Cancelled",
       });
       return;
+    }
+    if (isManualDownloadRequiredError(err)) {
+      await update({
+        status: "failed",
+        stage: "error",
+        error: err.message,
+        result: {
+          manualDownloadUrl: err.manualDownloadUrl,
+          manualDownloadTitle: err.purchaseTitle,
+        },
+      });
+      throw err;
     }
     const message = err instanceof Error ? err.message : "Job failed";
     await update({

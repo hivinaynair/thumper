@@ -1,4 +1,4 @@
-import { auth } from "@clerk/nextjs/server";
+import { auth, clerkClient } from "@clerk/nextjs/server";
 import { jobs } from "@thumper/db";
 import { getCookieStatus } from "@thumper/pipeline";
 import {
@@ -14,6 +14,30 @@ import { getBoss } from "../../../lib/boss";
 import { getDb } from "../../../lib/db";
 import { userHasGoogleDriveAccess } from "../../../lib/google-drive";
 import { wakeModalJob } from "../../../lib/wake-modal";
+
+async function clerkGateIdentity(userId: string): Promise<{
+  gateEmail?: string;
+  gateName?: string;
+}> {
+  try {
+    const client = await clerkClient();
+    const user = await client.users.getUser(userId);
+    const gateEmail =
+      user.primaryEmailAddress?.emailAddress ??
+      user.emailAddresses[0]?.emailAddress ??
+      undefined;
+    const gateName =
+      user.fullName?.trim() ||
+      user.firstName?.trim() ||
+      (gateEmail ? gateEmail.split("@")[0] : undefined);
+    return {
+      ...(gateEmail ? { gateEmail } : {}),
+      ...(gateName ? { gateName } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
 
 const TERMINAL_STATUSES = ["completed", "failed", "cancelled"] as const;
 
@@ -174,6 +198,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Job limit reached" }, { status: 429 });
   }
 
+  const gateIdentity =
+    sourceKind === "soundcloud" ? await clerkGateIdentity(userId) : {};
+
   const [job] = await db
     .insert(jobs)
     .values({
@@ -187,6 +214,14 @@ export async function POST(req: Request) {
       status: "queued",
       stage: "queued",
       progress: 0,
+      ...(gateIdentity.gateEmail
+        ? {
+            result: {
+              gateEmail: gateIdentity.gateEmail,
+              gateName: gateIdentity.gateName,
+            },
+          }
+        : {}),
     })
     .returning();
 
@@ -235,6 +270,7 @@ export async function POST(req: Request) {
         destination: input.destination,
         titleHint: input.titleHint,
         artistHint: input.artistHint,
+        ...gateIdentity,
       })) ?? null;
 
     await db

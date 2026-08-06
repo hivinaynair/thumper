@@ -92,6 +92,12 @@ export const DownloadJobPayloadSchema = z.object({
    * the parent playlist job so every upload lands in the same subfolder.
    */
   driveFolderId: z.string().min(1).optional(),
+  /**
+   * Clerk primary email / display name for Hypeddit email gate steps.
+   * Set at job create; playlist children inherit from the parent payload.
+   */
+  gateEmail: z.string().email().optional(),
+  gateName: z.string().min(1).optional(),
 });
 export type DownloadJobPayload = z.infer<typeof DownloadJobPayloadSchema>;
 
@@ -114,6 +120,8 @@ export const RetagJobPayloadSchema = z.object({
   titleHint: z.string().optional(),
   artistHint: z.string().optional(),
   destination: DeliveryDestinationSchema.default("browser"),
+  /** Set when the input came from a Hypeddit Free Download gate. */
+  hypedditOriginal: z.boolean().optional(),
 });
 export type RetagJobPayload = z.infer<typeof RetagJobPayloadSchema>;
 

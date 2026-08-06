@@ -86,6 +86,14 @@ export const jobs = pgTable("jobs", {
     /** Retag (WAV→AIFF) jobs store the uploaded input key here. */
     retag?: boolean;
     inputStorageKey?: string;
+    /** SoundCloud Free Download via Hypeddit gate → tagged AIFF. */
+    hypedditOriginal?: boolean;
+    /** Non-Hypeddit purchase_url — user must download manually. */
+    manualDownloadUrl?: string;
+    manualDownloadTitle?: string | null;
+    /** Clerk identity for Hypeddit email gates (set at job create). */
+    gateEmail?: string;
+    gateName?: string;
   }>(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()

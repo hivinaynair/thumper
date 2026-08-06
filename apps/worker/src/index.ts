@@ -145,6 +145,14 @@ async function main() {
         status: "queued",
         stage: "queued",
         progress: 0,
+        ...(parent.gateEmail
+          ? {
+              result: {
+                gateEmail: parent.gateEmail,
+                gateName: parent.gateName,
+              },
+            }
+          : {}),
       })
       .returning();
     if (!child) throw new Error("Could not create job row for playlist track");
@@ -160,6 +168,8 @@ async function main() {
       parentJobId: parent.jobId,
       spotifyUrl: track.spotifyUrl,
       driveFolderId: context?.driveFolderId,
+      gateEmail: parent.gateEmail,
+      gateName: parent.gateName,
     } satisfies DownloadJobPayload);
 
     await db

@@ -1,11 +1,14 @@
 const PROVIDERS = {
   youtube: [".youtube.com", ".google.com"],
   soundcloud: [".soundcloud.com"],
+  // sp_dc lives on .spotify.com; accounts.* is needed for Hypeddit OAuth.
+  spotify: [".spotify.com"],
 };
 
 const WARM_URLS = {
   youtube: "https://www.youtube.com/",
   soundcloud: "https://soundcloud.com/",
+  spotify: "https://open.spotify.com/",
 };
 
 const AUTH_COOKIE_NAMES = {
@@ -17,6 +20,7 @@ const AUTH_COOKIE_NAMES = {
     "__Secure-3PSID",
   ]),
   soundcloud: new Set(["oauth_token", "oauth_token_refresh"]),
+  spotify: new Set(["sp_dc", "sp_key"]),
 };
 
 function getCookiesForDomains(domains) {
@@ -124,6 +128,7 @@ async function syncAll(origin) {
   const results = {
     youtube: { status: "pending" },
     soundcloud: { status: "pending" },
+    spotify: { status: "pending" },
   };
 
   const yt = await exportProvider("youtube");
@@ -148,13 +153,24 @@ async function syncAll(origin) {
     results.soundcloud = { status: "synced" };
   }
 
-  const synced = ["youtube", "soundcloud"].filter(
+  const sp = await exportProvider("spotify");
+  if (!sp.loggedIn) {
+    results.spotify = {
+      status: "skipped",
+      reason: "Not signed in to Spotify — skipped",
+    };
+  } else {
+    await uploadCookies(origin, "spotify", sp.cookies);
+    results.spotify = { status: "synced" };
+  }
+
+  const synced = ["youtube", "soundcloud", "spotify"].filter(
     (p) => results[p].status === "synced",
   );
   if (synced.length === 0) {
     return {
       ok: false,
-      error: "No signed-in sessions found for YouTube or SoundCloud",
+      error: "No signed-in sessions found for YouTube, SoundCloud, or Spotify",
       results,
     };
   }
@@ -168,6 +184,8 @@ function summarize(results) {
   if (results.youtube.status === "skipped") parts.push("YouTube skipped");
   if (results.soundcloud.status === "synced") parts.push("SoundCloud refreshed");
   if (results.soundcloud.status === "skipped") parts.push("SoundCloud skipped");
+  if (results.spotify.status === "synced") parts.push("Spotify refreshed");
+  if (results.spotify.status === "skipped") parts.push("Spotify skipped");
   return parts.join(" · ");
 }
 

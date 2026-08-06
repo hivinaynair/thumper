@@ -144,6 +144,11 @@ export async function processJobById(jobId: string): Promise<void> {
     return;
   }
 
+  const gateMeta = row.result as
+    | { gateEmail?: string; gateName?: string }
+    | null
+    | undefined;
+
   const payload: DownloadJobPayload = {
     jobId: row.id,
     userId: row.userId,
@@ -152,6 +157,8 @@ export async function processJobById(jobId: string): Promise<void> {
     destination: row.destination,
     titleHint: row.title ?? undefined,
     artistHint: row.artist ?? undefined,
+    gateEmail: gateMeta?.gateEmail,
+    gateName: gateMeta?.gateName,
   };
 
   async function runOne(p: DownloadJobPayload): Promise<void> {
@@ -206,6 +213,14 @@ export async function processJobById(jobId: string): Promise<void> {
                 status: "queued",
                 stage: "queued",
                 progress: 0,
+                ...(p.gateEmail
+                  ? {
+                      result: {
+                        gateEmail: p.gateEmail,
+                        gateName: p.gateName,
+                      },
+                    }
+                  : {}),
               })
               .returning();
             if (!child) continue;
@@ -218,6 +233,9 @@ export async function processJobById(jobId: string): Promise<void> {
                 playlist: true,
                 trackCount: tracks.length,
                 childJobIds: [...childIds],
+                ...(p.gateEmail
+                  ? { gateEmail: p.gateEmail, gateName: p.gateName }
+                  : {}),
               },
             });
 
@@ -236,6 +254,8 @@ export async function processJobById(jobId: string): Promise<void> {
                 parentJobId: p.jobId,
                 spotifyUrl: track.spotifyUrl,
                 driveFolderId: context?.driveFolderId,
+                gateEmail: p.gateEmail,
+                gateName: p.gateName,
               });
             } catch (err) {
               if (
