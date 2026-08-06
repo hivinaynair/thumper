@@ -126,6 +126,7 @@ export async function processJobById(jobId: string): Promise<void> {
       metadataUrl: row.sourceUrl,
       titleHint: row.title ?? undefined,
       artistHint: row.artist ?? undefined,
+      destination: row.destination,
     };
     try {
       log.info({ jobId }, "Retag job started");
@@ -134,6 +135,7 @@ export async function processJobById(jobId: string): Promise<void> {
         payload: retagPayload,
         signal: ac.signal,
         update: (patch) => updateJob(jobId, patch),
+        getGoogleAccessToken,
       });
     } finally {
       clearInterval(cancelPoll);
@@ -146,10 +148,7 @@ export async function processJobById(jobId: string): Promise<void> {
     jobId: row.id,
     userId: row.userId,
     url: row.matchedUrl ?? row.sourceUrl,
-    audioFormat:
-      row.audioFormat === "aiff"
-        ? "alac"
-        : (row.audioFormat as DownloadJobPayload["audioFormat"]),
+    audioFormat: row.audioFormat,
     destination: row.destination,
     titleHint: row.title ?? undefined,
     artistHint: row.artist ?? undefined,

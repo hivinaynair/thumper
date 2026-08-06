@@ -267,7 +267,7 @@ function requestExtensionSync(timeoutMs = 45000): Promise<SyncResult> {
 
 export default function DownloaderPage() {
 	const [url, setUrl] = useState("");
-	const [audioFormat, setAudioFormat] = useState("alac");
+	const [audioFormat, setAudioFormat] = useState("aiff");
 	const [destination, setDestination] = useState("browser");
 	const [jobs, setJobs] = useState<Job[]>([]);
 	const [cookies, setCookies] = useState<CookieStatus | null>(null);
@@ -533,9 +533,8 @@ export default function DownloaderPage() {
 								value={audioFormat}
 								onChange={(e) => setAudioFormat(e.target.value)}
 							>
-								<option value="alac">ALAC</option>
+								<option value="aiff">AIFF</option>
 								<option value="flac">FLAC</option>
-								<option value="wav">WAV (Rekordbox)</option>
 							</select>
 						</label>
 						<label>

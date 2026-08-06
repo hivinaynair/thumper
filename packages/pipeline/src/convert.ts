@@ -7,24 +7,23 @@ import {
 } from "./audio-quality";
 import { measurePeakDb } from "./audio-verify";
 
-/** Leave this much room below full scale when re-encoding to an integer format. */
-const TARGET_PEAK_DBFS = -0.3;
-
 /**
- * Lossy decoders routinely produce samples above ±1.0 — the reconstruction
- * overshoots even when the original master didn't clip. Writing that straight
- * into 16- or 24-bit PCM clamps every one of those samples flat, which is how a
- * 128 kbps stream ends up with ten thousand clipped samples after being
- * "losslessly" rewrapped.
+ * Peak-normalize lossy sources for DJ use.
  *
- * Returns the attenuation to apply, or null when the signal already fits or the
- * peak could not be measured — an unmeasured file is left alone rather than
- * quietly attenuated on a guess.
+ * Lossy decoders can overshoot (±1.0) — pull those back to 0 dBFS so PCM
+ * doesn't clip. Quiet loudness-normalized streams (YouTube ~−14 LUFS) get
+ * boosted to 0 dBFS so waveforms in Rekordbox/DJ Pro match club masters.
+ * Relative dynamics within the track are unchanged; only overall gain moves.
+ *
+ * Lossless masters are never touched (caller skips this path).
+ * Returns null when already at full scale or peak could not be measured.
  */
 export function headroomGainDb(peakDb: number | null): number | null {
   if (peakDb === null || !Number.isFinite(peakDb)) return null;
-  if (peakDb <= TARGET_PEAK_DBFS) return null;
-  return Number((TARGET_PEAK_DBFS - peakDb).toFixed(3));
+  // Near full scale (±0.1 dB) — leave alone.
+  if (peakDb <= 0.1 && peakDb >= -0.1) return null;
+  // Overshoot or quiet stream → bring peak to 0 dBFS.
+  return Number((-peakDb).toFixed(3));
 }
 
 export type AudioProbe = {

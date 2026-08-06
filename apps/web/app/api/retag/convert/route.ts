@@ -4,12 +4,14 @@ import { headObject, safeUserId } from "@thumper/pipeline";
 import {
   CreateRetagJobInputSchema,
   detectSourceKind,
+  GOOGLE_DRIVE_TOKEN_ERROR,
   QUEUE_NAME_DOWNLOAD,
 } from "@thumper/shared";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getBoss } from "../../../../lib/boss";
 import { getDb } from "../../../../lib/db";
+import { userHasGoogleDriveAccess } from "../../../../lib/google-drive";
 import { wakeModalJob } from "../../../../lib/wake-modal";
 
 export async function POST(req: Request) {
@@ -42,7 +44,6 @@ export async function POST(req: Request) {
     );
   }
 
-  // Uploads live under users/<id>/uploads/ — reject cross-user keys.
   const expectedPrefix = `users/${safeUserId(userId)}/`;
   if (
     !input.inputStorageKey.startsWith(expectedPrefix) ||
@@ -59,6 +60,16 @@ export async function POST(req: Request) {
     );
   }
 
+  if (input.destination === "drive" || input.destination === "both") {
+    const hasDrive = await userHasGoogleDriveAccess(userId);
+    if (!hasDrive) {
+      return NextResponse.json(
+        { error: GOOGLE_DRIVE_TOKEN_ERROR },
+        { status: 400 },
+      );
+    }
+  }
+
   const db = getDb();
   const [job] = await db
     .insert(jobs)
@@ -67,7 +78,7 @@ export async function POST(req: Request) {
       sourceUrl: input.metadataUrl,
       sourceKind: kind,
       audioFormat: "aiff",
-      destination: "browser",
+      destination: input.destination,
       title: input.titleHint,
       artist: input.artistHint,
       status: "queued",

@@ -63,14 +63,9 @@ export type JobStage = z.infer<typeof JobStageSchema>;
 
 export const CreateJobInputSchema = z.object({
   url: z.string().url(),
-  // ALAC by default: bit-identical to FLAC in quality, embeds artwork reliably,
-  // and is the one lossless container that Apple Music / iOS treat as a first
-  // class citizen. WAV is the odd one out here — DJ software reads its tags
-  // inconsistently, so convert.ts deliberately skips artwork for it.
-  //
-  // Caveat worth knowing: ALAC and FLAC both need CDJ-2000NXS2 or newer. On
-  // older club gear only WAV/AIFF/MP3/AAC will load.
-  audioFormat: z.enum(["flac", "wav", "alac"]).default("alac"),
+  // AIFF for Rekordbox / older CDJs (PCM + ID3 artwork). FLAC when you want
+  // a smaller lossless file on newer players.
+  audioFormat: z.enum(["aiff", "flac"]).default("aiff"),
   destination: DeliveryDestinationSchema.default("browser"),
   titleHint: z.string().optional(),
   artistHint: z.string().optional(),
@@ -85,7 +80,7 @@ export const DownloadJobPayloadSchema = z.object({
   userId: z.string().min(1),
   /** URL to download (YouTube/SoundCloud). For Spotify parents this is the Spotify URL. */
   url: z.string().url(),
-  audioFormat: z.enum(["flac", "wav", "alac"]),
+  audioFormat: AudioFormatSchema,
   destination: DeliveryDestinationSchema,
   titleHint: z.string().optional(),
   artistHint: z.string().optional(),
@@ -100,6 +95,15 @@ export const DownloadJobPayloadSchema = z.object({
 });
 export type DownloadJobPayload = z.infer<typeof DownloadJobPayloadSchema>;
 
+export const CreateRetagJobInputSchema = z.object({
+  inputStorageKey: z.string().min(1),
+  metadataUrl: z.string().url(),
+  titleHint: z.string().optional(),
+  artistHint: z.string().optional(),
+  destination: DeliveryDestinationSchema.default("browser"),
+});
+export type CreateRetagJobInput = z.infer<typeof CreateRetagJobInputSchema>;
+
 export const RetagJobPayloadSchema = z.object({
   jobId: z.string().uuid(),
   userId: z.string().min(1),
@@ -109,16 +113,9 @@ export const RetagJobPayloadSchema = z.object({
   metadataUrl: z.string().url(),
   titleHint: z.string().optional(),
   artistHint: z.string().optional(),
+  destination: DeliveryDestinationSchema.default("browser"),
 });
 export type RetagJobPayload = z.infer<typeof RetagJobPayloadSchema>;
-
-export const CreateRetagJobInputSchema = z.object({
-  inputStorageKey: z.string().min(1),
-  metadataUrl: z.string().url(),
-  titleHint: z.string().optional(),
-  artistHint: z.string().optional(),
-});
-export type CreateRetagJobInput = z.infer<typeof CreateRetagJobInputSchema>;
 
 export function detectSourceKind(url: string): SourceKind | null {
   try {

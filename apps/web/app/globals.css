@@ -921,6 +921,78 @@ textarea {
 	display: flex;
 	gap: 0.6rem;
 	flex-wrap: wrap;
+	align-items: flex-end;
+}
+
+.retag-dest {
+	min-width: 12rem;
+}
+
+.retag-track-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	gap: 1.25rem;
+}
+
+.retag-track {
+	display: grid;
+	gap: 0.75rem;
+	padding: 1rem 0;
+	border-top: 1px solid var(--line);
+}
+
+.retag-track:first-child {
+	border-top: none;
+	padding-top: 0;
+}
+
+.retag-track-head {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.75rem;
+	align-items: center;
+}
+
+.retag-approve {
+	display: inline-flex;
+	flex-direction: row;
+	align-items: center;
+	gap: 0.4rem;
+	font-size: 0.8rem;
+	width: auto;
+}
+
+.retag-approve input {
+	width: auto;
+}
+
+.retag-track-match {
+	display: flex;
+	gap: 0.85rem;
+	align-items: center;
+}
+
+.retag-track-match img,
+.retag-track-match .retag-art-fallback {
+	width: 64px;
+	height: 64px;
+	border-radius: 4px;
+	object-fit: cover;
+	flex-shrink: 0;
+	background: rgba(92, 92, 92, 0.35);
+}
+
+.retag-track-match strong {
+	display: block;
+}
+
+.retag-track-match em {
+	display: block;
+	font-style: normal;
+	color: var(--muted);
+	font-size: 0.9rem;
 }
 
 .retag-done .btn {

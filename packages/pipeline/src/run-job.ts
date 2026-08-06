@@ -171,8 +171,12 @@ async function processTrack(params: {
 
   // SoundCloud playlist/track priority:
   // 1) artist free-download / original upload (best possible)
-  // 2) confident YouTube mirror (Premium Opus usually beats SC AAC stream)
+  // 2) confident YouTube mirror (Premium Opus beats SC AAC stream)
   // 3) SoundCloud stream (remixes/bootlegs with no YT upload)
+  //
+  // YouTube is loudness-normalized (~−14 LUFS), so peaks look quieter than
+  // club masters — convert.ts peak-normalizes lossy sources to 0 dBFS so DJ
+  // waveforms stay full-height without giving up YT's better stream quality.
   let youtubeAlreadyTried = false;
   if (soundcloud && params.preferYoutube !== false) {
     await update({ stage: "resolving", progress: 18 });
@@ -490,6 +494,7 @@ type YoutubePreferResult =
 /**
  * Prefer YouTube (Premium Opus) when SoundCloud has no free-download master
  * but a confident YouTube mirror exists. Tags/artwork stay on the SC URL.
+ * SC progressive/HLS AAC is usually worse than YT for DJ use.
  */
 async function trySoundCloudViaYoutubeFirst(params: {
   deps: RunJobDeps;

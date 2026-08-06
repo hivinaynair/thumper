@@ -20,9 +20,10 @@ describe("aiffPcmCodec", () => {
 });
 
 describe("headroomGainDb", () => {
-  it("leaves a signal with headroom alone", () => {
-    expect(headroomGainDb(-1.5)).toBeNull();
-    expect(headroomGainDb(-0.4)).toBeNull();
+  it("leaves a signal already at full scale alone", () => {
+    expect(headroomGainDb(0)).toBeNull();
+    expect(headroomGainDb(-0.05)).toBeNull();
+    expect(headroomGainDb(0.05)).toBeNull();
   });
 
   it("pulls back a decode that overshoots full scale", () => {
@@ -30,11 +31,14 @@ describe("headroomGainDb", () => {
     // exceeds ±1.0. Writing that to integer PCM clamps it flat.
     const gain = headroomGainDb(1.2);
     expect(gain).not.toBeNull();
-    expect(gain!).toBeCloseTo(-1.5, 3);
+    expect(gain!).toBeCloseTo(-1.2, 3);
   });
 
-  it("pulls back a signal sitting exactly at 0 dBFS", () => {
-    expect(headroomGainDb(0)).toBeCloseTo(-0.3, 3);
+  it("boosts quiet loudness-normalized streams up to 0 dBFS", () => {
+    // YouTube ~−14 LUFS often peaks around −1 to −8 dBFS — raise to full scale
+    // so DJ waveforms aren't tiny next to club masters.
+    expect(headroomGainDb(-1.5)).toBeCloseTo(1.5, 3);
+    expect(headroomGainDb(-6)).toBeCloseTo(6, 3);
   });
 
   it("ignores a silent file", () => {
