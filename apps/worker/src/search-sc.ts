@@ -15,7 +15,7 @@ if (!query) {
 }
 
 try {
-  const candidates = await searchSoundCloudTracks(query, { limit: 5 });
+  const candidates = await searchSoundCloudTracks(query, { limit: 2 });
   process.stdout.write(JSON.stringify({ ok: true, candidates }));
 } catch (err) {
   const message = err instanceof Error ? err.message : String(err);

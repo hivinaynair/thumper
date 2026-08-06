@@ -46,7 +46,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ query, candidates });
     }
 
-    const candidates = await searchSoundCloudTracks(query, { limit: 5 });
+    const candidates = await searchSoundCloudTracks(query, { limit: 2 });
     return NextResponse.json({ query, candidates });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

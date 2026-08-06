@@ -58,7 +58,7 @@ export async function searchSoundCloudTracks(
   const cleaned = query.replace(/\s+/g, " ").trim();
   if (!cleaned) return [];
 
-  const limit = Math.min(Math.max(options.limit ?? 5, 1), 8);
+  const limit = Math.min(Math.max(options.limit ?? 2, 1), 8);
   const { stdout } = await runCommandOk(
     getYtDlpPath(),
     [
