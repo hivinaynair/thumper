@@ -1,6 +1,6 @@
 "use client";
 
-import { detectSourceKind } from "@thumper/shared";
+import { detectSourceKind, trackDisplayName } from "@thumper/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type DjTier = "master" | "club" | "marginal" | "unsuitable";
@@ -87,7 +87,7 @@ type PlaylistRollup = {
 };
 
 function jobLabel(job: Job): string {
-	if (job.title) return job.artist ? `${job.artist} — ${job.title}` : job.title;
+	if (job.title || job.artist) return trackDisplayName(job.artist, job.title);
 	return job.sourceUrl;
 }
 

@@ -186,3 +186,29 @@ export function sanitizeFilename(name: string, maxLen = 120): string {
       .slice(0, maxLen) || "track"
   );
 }
+
+/** Collapse to alphanumerics so "bread.man" matches "BREAD.MAN". */
+function normArtistToken(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+/**
+ * Build a display / file title from artist + track.
+ * Remix uploads often already credit the remixer in parentheses
+ * ("… (grayshift remix)"), so prefixing artist again doubles the name.
+ */
+export function trackDisplayName(
+  artist: string | null | undefined,
+  title: string | null | undefined,
+): string {
+  const t = (title ?? "").trim() || "track";
+  const a = (artist ?? "").trim();
+  if (!a) return t;
+
+  const na = normArtistToken(a);
+  if (na.length >= 2 && normArtistToken(t).includes(na)) {
+    return t;
+  }
+  return `${a} - ${t}`;
+}
+

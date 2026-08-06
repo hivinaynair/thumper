@@ -7,6 +7,7 @@ import { files, jobs } from "@thumper/db";
 import {
   GOOGLE_DRIVE_TOKEN_ERROR,
   sanitizeFilename,
+  trackDisplayName,
   type RetagJobPayload,
 } from "@thumper/shared";
 import { FILE_TTL_MS } from "./cleanup";
@@ -108,7 +109,7 @@ export async function runRetagJob(deps: RunRetagJobDeps): Promise<void> {
     }
 
     const filename = `${sanitizeFilename(
-      artist ? `${artist} - ${title}` : title,
+      trackDisplayName(artist, title),
     )}.aiff`;
     const outPath = assertPathInside(outDir, path.join(outDir, filename));
 

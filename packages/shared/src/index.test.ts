@@ -4,6 +4,7 @@ import {
   isSupportedSource,
   looksLikePlaylistUrl,
   sanitizeFilename,
+  trackDisplayName,
 } from "./index";
 
 describe("detectSourceKind", () => {
@@ -41,5 +42,23 @@ describe("looksLikePlaylistUrl", () => {
 describe("sanitizeFilename", () => {
   it("strips illegal characters", () => {
     expect(sanitizeFilename("a/b:c*d?.wav")).toBe("abcd.wav");
+  });
+});
+
+describe("trackDisplayName", () => {
+  it("drops a leading artist when the title already credits them", () => {
+    expect(
+      trackDisplayName("grayshift", "benny benassi - cinema (grayshift remix)"),
+    ).toBe("benny benassi - cinema (grayshift remix)");
+    expect(
+      trackDisplayName("MAXARKA", "Baby - Prospa (MAXARKA UKG DUB)"),
+    ).toBe("Baby - Prospa (MAXARKA UKG DUB)");
+    expect(
+      trackDisplayName("bread.man", "RUNAWAY (BREAD.MAN REMIX)"),
+    ).toBe("RUNAWAY (BREAD.MAN REMIX)");
+  });
+
+  it("keeps Artist - Title when the title does not mention the artist", () => {
+    expect(trackDisplayName("Oppidan", "Borne")).toBe("Oppidan - Borne");
   });
 });

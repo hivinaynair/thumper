@@ -2,6 +2,7 @@
 
 import { upload } from "@vercel/blob/client";
 import { useAuth } from "@clerk/nextjs";
+import { trackDisplayName } from "@thumper/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 type Candidate = {
@@ -535,8 +536,8 @@ export default function RetagPage() {
 								<li key={t.id} className="retag-track">
 									<div className="retag-track-head">
 										<strong>
-											{job?.artist && job?.title
-												? `${job.artist} — ${job.title}`
+											{job?.artist || job?.title
+												? trackDisplayName(job.artist, job.title)
 												: t.filename}
 										</strong>
 										{job ? (

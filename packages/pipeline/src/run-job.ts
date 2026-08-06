@@ -9,6 +9,7 @@ import {
   isPlaylistUrl,
   MAX_PLAYLIST_TRACKS,
   sanitizeFilename,
+  trackDisplayName,
   type AudioFormat,
   type DeliveryDestination,
   type DownloadJobPayload,
@@ -301,7 +302,7 @@ async function processTrack(params: {
   }
 
   const filename = `${sanitizeFilename(
-    artist ? `${artist} - ${title}` : title,
+    trackDisplayName(artist, title),
   )}.${extFor(payload.audioFormat)}`;
   const outPath = assertPathInside(outDir, path.join(outDir, filename));
 
