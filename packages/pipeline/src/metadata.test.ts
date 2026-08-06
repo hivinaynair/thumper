@@ -1,9 +1,22 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { fetchSoundCloudOEmbed, soundCloudOEmbedTarget } from "./metadata";
+import {
+  fetchSoundCloudOEmbed,
+  soundCloudOEmbedTarget,
+  stripFreeDownloadLabel,
+} from "./metadata";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = realFetch;
+});
+
+describe("stripFreeDownloadLabel", () => {
+  it("removes free DL / free download markers", () => {
+    expect(stripFreeDownloadLabel("Swoon (free DL)")).toBe("Swoon");
+    expect(stripFreeDownloadLabel("Swoon (Free Download)")).toBe("Swoon");
+    expect(stripFreeDownloadLabel("Swoon [FREE DL]")).toBe("Swoon");
+    expect(stripFreeDownloadLabel("Swoon - free download")).toBe("Swoon");
+  });
 });
 
 describe("soundCloudOEmbedTarget", () => {

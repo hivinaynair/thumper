@@ -35,6 +35,19 @@ const ARTIST_SEPARATOR =
   /\s*[,，、;]\s*|\s*&\s*|\s+\/\s+|\s+(?:x|vs\.?|feat\.?|ft\.?|featuring|with)\s+|\s+and\s+(?!the\s)/i;
 
 /**
+ * SoundCloud free-download titles often trail "(free DL)" / "(Free Download)".
+ * Strip those so AIFF tags and filenames stay clean.
+ */
+export function stripFreeDownloadLabel(text: string): string {
+  return text
+    .replace(/\s*[\(\[]\s*free\s*(?:dl|d\/l|download)\s*[\)\]]/gi, "")
+    .replace(/\s*[-–—]\s*free\s*(?:dl|d\/l|download)\s*$/i, "")
+    .replace(/\s+free\s*(?:dl|d\/l|download)\s*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
  * SoundCloud display names often trail emoji ("MARY DROPPINZ ☔"). Those
  * characters break ytsearch queries and never appear on YouTube Topic
  * channels, so a perfect track match scores as a miss.
@@ -123,6 +136,7 @@ export async function fetchSoundCloudOEmbed(
   if (title && artist && title.toLowerCase().endsWith(` by ${artist.toLowerCase()}`)) {
     title = title.slice(0, -(artist.length + 4)).trim() || undefined;
   }
+  if (title) title = stripFreeDownloadLabel(title) || undefined;
 
   const artworkUrl = data.thumbnail_url
     ? data.thumbnail_url.replace(/^http:\/\//i, "https://")
@@ -155,6 +169,7 @@ export async function fetchSoundCloudTags(
   try {
     const info = await dumpJson(url, options.cookiePath ?? null, options.signal);
     if (!title) title = String(info.title ?? info.track ?? "").trim() || undefined;
+    if (title) title = stripFreeDownloadLabel(title) || undefined;
     if (!artist) artist = artistNamesFromInfo(info).join(", ") || undefined;
     if (!artworkUrl) {
       const thumb =

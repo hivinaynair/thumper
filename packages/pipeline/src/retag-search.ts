@@ -1,5 +1,5 @@
 import { getYtDlpPath } from "./paths";
-import { fetchSoundCloudOEmbed } from "./metadata";
+import { fetchSoundCloudOEmbed, stripFreeDownloadLabel } from "./metadata";
 import { runCommandOk, type SpawnOptions } from "./process";
 
 export type SoundCloudSearchHit = {
@@ -21,9 +21,9 @@ export function queryFromWavFilename(filename: string): string {
     .replace(/_/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  // Drop common SoundCloud free-download suffixes that poison search.
-  return base
-    .replace(/\s*[\(\[]?(free\s*download|hq|wav|aiff|flac)[\)\]]?\s*$/i, "")
+  // Drop common SoundCloud free-download / format suffixes that poison search.
+  return stripFreeDownloadLabel(base)
+    .replace(/\s*[\(\[]?(hq|wav|aiff|flac)[\)\]]?\s*$/i, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -81,7 +81,7 @@ export async function searchSoundCloudTracks(
     });
     hits.push({
       url: row.url,
-      title: oembed?.title || row.title,
+      title: stripFreeDownloadLabel(oembed?.title || row.title),
       artist: oembed?.artist || row.artist,
       artworkUrl: oembed?.artworkUrl,
       durationSec: row.durationSec,

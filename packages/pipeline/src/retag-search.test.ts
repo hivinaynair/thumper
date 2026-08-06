@@ -12,6 +12,9 @@ describe("queryFromWavFilename", () => {
     expect(queryFromWavFilename("Oppidan - Borne (Free Download).wav")).toBe(
       "Oppidan - Borne",
     );
+    expect(queryFromWavFilename("MPH - Swoon (free DL).wav")).toBe(
+      "MPH - Swoon",
+    );
     expect(queryFromWavFilename("Track Name HQ.wav")).toBe("Track Name");
   });
 
