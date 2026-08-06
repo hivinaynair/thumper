@@ -1,10 +1,15 @@
 import { createClerkClient } from "@clerk/backend";
 import { createDb, jobs } from "@thumper/db";
-import { ProcessCancelledError, runDownloadJob } from "@thumper/pipeline";
+import {
+  ProcessCancelledError,
+  runDownloadJob,
+  runRetagJob,
+} from "@thumper/pipeline";
 import {
   detectSourceKind,
   oauthScopesIncludeDrive,
   type DownloadJobPayload,
+  type RetagJobPayload,
 } from "@thumper/shared";
 import { eq, inArray } from "drizzle-orm";
 import pino from "pino";
@@ -69,15 +74,11 @@ export async function processJobById(jobId: string): Promise<void> {
   const [row] = await db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
   if (!row) throw new Error(`Job not found: ${jobId}`);
 
-  const payload: DownloadJobPayload = {
-    jobId: row.id,
-    userId: row.userId,
-    url: row.matchedUrl ?? row.sourceUrl,
-    audioFormat: row.audioFormat,
-    destination: row.destination,
-    titleHint: row.title ?? undefined,
-    artistHint: row.artist ?? undefined,
-  };
+  const retagMeta = row.result as
+    | { retag?: boolean; inputStorageKey?: string }
+    | null
+    | undefined;
+  const isRetag = Boolean(retagMeta?.retag && retagMeta.inputStorageKey);
 
   // One controller for the parent + every inline child. The cancel API flips
   // the parent to "cancelling"; this poll turns that into an abort so the
@@ -116,6 +117,43 @@ export async function processJobById(jobId: string): Promise<void> {
       })
       .where(inArray(jobs.id, unique));
   }
+
+  if (isRetag) {
+    const retagPayload: RetagJobPayload = {
+      jobId: row.id,
+      userId: row.userId,
+      inputStorageKey: retagMeta!.inputStorageKey!,
+      metadataUrl: row.sourceUrl,
+      titleHint: row.title ?? undefined,
+      artistHint: row.artist ?? undefined,
+    };
+    try {
+      log.info({ jobId }, "Retag job started");
+      await runRetagJob({
+        db,
+        payload: retagPayload,
+        signal: ac.signal,
+        update: (patch) => updateJob(jobId, patch),
+      });
+    } finally {
+      clearInterval(cancelPoll);
+      log.info({ jobId }, "Retag job finished");
+    }
+    return;
+  }
+
+  const payload: DownloadJobPayload = {
+    jobId: row.id,
+    userId: row.userId,
+    url: row.matchedUrl ?? row.sourceUrl,
+    audioFormat:
+      row.audioFormat === "aiff"
+        ? "alac"
+        : (row.audioFormat as DownloadJobPayload["audioFormat"]),
+    destination: row.destination,
+    titleHint: row.title ?? undefined,
+    artistHint: row.artist ?? undefined,
+  };
 
   async function runOne(p: DownloadJobPayload): Promise<void> {
     log.info({ jobId: p.jobId }, "Job started");

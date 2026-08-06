@@ -28,7 +28,12 @@ export const jobStageEnum = pgEnum("job_stage", [
   "error",
 ]);
 
-export const audioFormatEnum = pgEnum("audio_format", ["flac", "wav", "alac"]);
+export const audioFormatEnum = pgEnum("audio_format", [
+  "flac",
+  "wav",
+  "alac",
+  "aiff",
+]);
 
 export const destinationEnum = pgEnum("destination", [
   "browser",
@@ -78,6 +83,9 @@ export const jobs = pgTable("jobs", {
     sourceCodec?: string;
     sourceBitrateKbps?: number | null;
     cutoffHz?: number;
+    /** Retag (WAV→AIFF) jobs store the uploaded input key here. */
+    retag?: boolean;
+    inputStorageKey?: string;
   }>(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()

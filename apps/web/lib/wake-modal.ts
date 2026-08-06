@@ -29,3 +29,58 @@ export async function wakeModalJob(jobId: string): Promise<void> {
     throw new Error(`Modal wake failed (${res.status}): ${text.slice(0, 500)}`);
   }
 }
+
+export type ModalSearchCandidate = {
+  url: string;
+  title: string;
+  artist: string;
+  artworkUrl?: string;
+  durationSec: number;
+};
+
+/**
+ * Synchronous SoundCloud search on Modal (yt-dlp is not on Vercel).
+ * Uses MODAL_SEARCH_URL when set; otherwise derives it from MODAL_JOB_URL
+ * by replacing the trailing `/wake` with `/search`.
+ */
+export async function wakeModalSearch(
+  query: string,
+): Promise<ModalSearchCandidate[]> {
+  const secret = process.env.MODAL_WEBHOOK_SECRET?.trim();
+  let url = process.env.MODAL_SEARCH_URL?.trim();
+  if (!url) {
+    const jobUrl = process.env.MODAL_JOB_URL?.trim();
+    if (!jobUrl) {
+      throw new Error(
+        "PROCESS_BACKEND=modal requires MODAL_SEARCH_URL or MODAL_JOB_URL",
+      );
+    }
+    url = jobUrl.replace(/\/wake\/?$/, "/search");
+    if (url === jobUrl) {
+      throw new Error(
+        "Set MODAL_SEARCH_URL — could not derive it from MODAL_JOB_URL",
+      );
+    }
+  }
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      query,
+      ...(secret ? { secret } : {}),
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(
+      `Modal search failed (${res.status}): ${text.slice(0, 500)}`,
+    );
+  }
+
+  const data = (await res.json()) as {
+    candidates?: ModalSearchCandidate[];
+  };
+  return Array.isArray(data.candidates) ? data.candidates : [];
+}

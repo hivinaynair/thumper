@@ -1,5 +1,23 @@
 import { describe, expect, it } from "bun:test";
-import { headroomGainDb } from "./convert";
+import { aiffPcmCodec, headroomGainDb } from "./convert";
+
+describe("aiffPcmCodec", () => {
+  it("maps common WAV codecs to matching big-endian AIFF PCM", () => {
+    expect(aiffPcmCodec("pcm_s16le")).toBe("pcm_s16be");
+    expect(aiffPcmCodec("pcm_s24le")).toBe("pcm_s24be");
+    expect(aiffPcmCodec("pcm_s32le")).toBe("pcm_s32be");
+    expect(aiffPcmCodec("pcm_f32le")).toBe("pcm_f32be");
+  });
+
+  it("uses sample_fmt when codec name has no bit depth", () => {
+    expect(aiffPcmCodec("", "s24")).toBe("pcm_s24be");
+    expect(aiffPcmCodec("", "s16")).toBe("pcm_s16be");
+  });
+
+  it("defaults to 24-bit when nothing is known", () => {
+    expect(aiffPcmCodec("")).toBe("pcm_s24be");
+  });
+});
 
 describe("headroomGainDb", () => {
   it("leaves a signal with headroom alone", () => {

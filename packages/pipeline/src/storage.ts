@@ -164,6 +164,25 @@ export async function deleteObject(key: string): Promise<void> {
   }
 }
 
+/** Copy a stored object to a local path for ffmpeg / yt-dlp. */
+export async function materializeObject(
+  key: string,
+  destPath: string,
+): Promise<void> {
+  await fs.mkdir(path.dirname(destPath), { recursive: true });
+
+  if (useBlobStorage()) {
+    const data = await readBytes(key);
+    if (!data) throw new Error(`Missing stored object: ${key}`);
+    await fs.writeFile(destPath, data);
+    return;
+  }
+
+  const src = localPathFromKey(key);
+  if (path.resolve(src) === path.resolve(destPath)) return;
+  await fs.copyFile(src, destPath);
+}
+
 /** Resolve a downloadable URL for browser delivery (blob) or local absolute path. */
 export async function resolveDownloadTarget(
   userId: string,

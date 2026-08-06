@@ -10,6 +10,8 @@ export * from "./metadata";
 export * from "./paths";
 export * from "./playlist";
 export * from "./process";
+export * from "./retag-job";
+export * from "./retag-search";
 export * from "./run-job";
 export * from "./similarity";
 export * from "./spotify";

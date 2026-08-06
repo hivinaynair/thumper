@@ -32,7 +32,25 @@ export type AudioProbe = {
   channels: number;
   sampleRate: string;
   bitRate: string;
+  /** e.g. s16, s24, s32, flt — used to pick a matching AIFF PCM codec. */
+  sampleFmt: string;
 };
+
+/**
+ * AIFF stores PCM big-endian. Map a probed WAV/PCM codec (or sample_fmt) to
+ * the matching AIFF encoder so bit depth is preserved — only endianness changes.
+ */
+export function aiffPcmCodec(codec: string, sampleFmt = ""): string {
+  const c = codec.toLowerCase();
+  const fmt = sampleFmt.toLowerCase();
+  // Float before int32 — "pcm_f32le" also contains "32".
+  if (c.includes("f32") || fmt.includes("flt") || fmt === "flt") return "pcm_f32be";
+  if (c.includes("32") || fmt.includes("s32") || fmt === "s32") return "pcm_s32be";
+  if (c.includes("24") || fmt.includes("s24") || fmt === "s24") return "pcm_s24be";
+  if (c.includes("16") || fmt.includes("s16") || fmt === "s16") return "pcm_s16be";
+  // Producer masters are usually 24-bit when the probe is vague.
+  return "pcm_s24be";
+}
 
 export type ConvertMetadata = {
   title?: string;
@@ -57,7 +75,7 @@ export async function probeAudio(
         "-select_streams",
         "a:0",
         "-show_entries",
-        "stream=codec_name,channels,sample_rate,bit_rate",
+        "stream=codec_name,channels,sample_rate,bit_rate,sample_fmt",
         "-of",
         "json",
         filePath,
@@ -70,9 +88,16 @@ export async function probeAudio(
       channels: stream.channels || 2,
       sampleRate: stream.sample_rate || "48000",
       bitRate: stream.bit_rate || "",
+      sampleFmt: stream.sample_fmt || "",
     };
   } catch {
-    return { codec: "", channels: 2, sampleRate: "48000", bitRate: "" };
+    return {
+      codec: "",
+      channels: 2,
+      sampleRate: "48000",
+      bitRate: "",
+      sampleFmt: "",
+    };
   }
 }
 
@@ -131,7 +156,9 @@ export async function convertAudio(params: {
   const meta = buildMetadataArgs(params);
   const canEmbedArt =
     Boolean(params.artworkPath) &&
-    (params.target === "flac" || params.target === "alac");
+    (params.target === "flac" ||
+      params.target === "alac" ||
+      params.target === "aiff");
 
   let args: string[];
 
@@ -152,6 +179,56 @@ export async function convertAudio(params: {
         "pcm_s16le",
         "-ac",
         String(channels),
+        ...meta,
+        params.outputPath,
+      ];
+    }
+  } else if (params.target === "aiff") {
+    // Lossless PCM remux into AIFF. Preserve bit depth; AIFF wants big-endian.
+    // ID3v2 carries text tags + cover art (Rekordbox / most DJ tools read it).
+    const pcmCodec = aiffPcmCodec(info.codec, info.sampleFmt);
+    if (canEmbedArt) {
+      args = [
+        "-y",
+        "-i",
+        params.inputPath,
+        "-i",
+        params.artworkPath!,
+        "-map",
+        "0:a:0",
+        "-map",
+        "1:0",
+        ...gain,
+        "-c:a",
+        pcmCodec,
+        "-ar",
+        String(sampleRate),
+        "-ac",
+        String(channels),
+        "-c:v",
+        "mjpeg",
+        "-disposition:v:0",
+        "attached_pic",
+        "-write_id3v2",
+        "1",
+        ...meta,
+        params.outputPath,
+      ];
+    } else {
+      args = [
+        "-y",
+        "-i",
+        params.inputPath,
+        "-vn",
+        ...gain,
+        "-c:a",
+        pcmCodec,
+        "-ar",
+        String(sampleRate),
+        "-ac",
+        String(channels),
+        "-write_id3v2",
+        "1",
         ...meta,
         params.outputPath,
       ];

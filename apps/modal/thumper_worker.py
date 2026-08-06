@@ -185,6 +185,63 @@ def wake(item: dict):
     return {"ok": True, "jobId": job_id, "callId": call.object_id}
 
 
+def _run_soundcloud_search(query: str) -> dict:
+    env = os.environ.copy()
+    env.setdefault("DATA_DIR", "/tmp/thumper-data")
+    env.setdefault("YT_DLP_PATH", "/opt/venv/bin/yt-dlp")
+
+    result = subprocess.run(
+        ["bun", "src/search-sc.ts", f"--query={query}"],
+        cwd="/app/apps/worker",
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        err = (result.stderr or result.stdout or "search failed")[-2000:]
+        raise RuntimeError(err)
+    import json
+
+    return json.loads(result.stdout)
+
+
+@app.function(
+    image=worker_image,
+    secrets=[secrets],
+    timeout=90,
+    cpu=1.0,
+    memory=2048,
+)
+@modal.fastapi_endpoint(method="POST")
+def search(item: dict):
+    """Sync SoundCloud search for the retag page (yt-dlp lives on Modal)."""
+    from fastapi import HTTPException
+
+    expected = os.environ.get("MODAL_WEBHOOK_SECRET", "").strip()
+    if not expected:
+        raise HTTPException(status_code=503, detail="webhook secret is not configured")
+    provided = str(item.get("secret") or "").strip()
+    if not stdlib_secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+    query = str(item.get("query") or "").strip()
+    if not query:
+        raise HTTPException(status_code=422, detail="query required")
+
+    try:
+        payload = _run_soundcloud_search(query)
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(err)[:500]) from err
+
+    if not payload.get("ok"):
+        raise HTTPException(
+            status_code=502,
+            detail=str(payload.get("error") or "search failed")[:500],
+        )
+    return {"ok": True, "candidates": payload.get("candidates") or []}
+
+
 @app.local_entrypoint()
 def main(job_id: str):
     print(process_job.remote(job_id))

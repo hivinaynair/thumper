@@ -840,6 +840,93 @@ textarea {
 	font-size: 0.85rem;
 }
 
+/* ——— Retag (WAV → AIFF) ——— */
+
+.retag-upload {
+	display: grid;
+	gap: 0.75rem;
+}
+
+.retag-upload input[type="file"] {
+	color: var(--ink-soft);
+	font-size: 0.9rem;
+}
+
+.retag-confirm,
+.retag-done {
+	display: grid;
+	gap: 1rem;
+}
+
+.retag-candidates {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	gap: 0.5rem;
+}
+
+.retag-candidate {
+	display: flex;
+	gap: 0.85rem;
+	align-items: center;
+	width: 100%;
+	text-align: left;
+	padding: 0.55rem 0.65rem;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: rgba(27, 27, 27, 0.85);
+	color: var(--ink);
+	cursor: pointer;
+	transition: border-color 160ms ease, background 160ms ease;
+}
+
+.retag-candidate:hover {
+	border-color: rgba(201, 150, 62, 0.45);
+}
+
+.retag-candidate.active {
+	border-color: var(--bronze);
+	background: var(--accent-soft);
+}
+
+.retag-candidate img,
+.retag-art-fallback {
+	width: 72px;
+	height: 72px;
+	border-radius: 4px;
+	object-fit: cover;
+	flex-shrink: 0;
+	background: rgba(92, 92, 92, 0.35);
+}
+
+.retag-candidate span {
+	display: grid;
+	gap: 0.2rem;
+	min-width: 0;
+}
+
+.retag-candidate strong {
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+
+.retag-candidate em {
+	font-style: normal;
+	color: var(--muted);
+	font-size: 0.9rem;
+}
+
+.retag-actions {
+	display: flex;
+	gap: 0.6rem;
+	flex-wrap: wrap;
+}
+
+.retag-done .btn {
+	justify-self: start;
+}
+
 @keyframes rise {
 	from {
 		opacity: 0;

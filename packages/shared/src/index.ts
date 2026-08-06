@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const AudioFormatSchema = z.enum(["flac", "wav", "alac"]);
+export const AudioFormatSchema = z.enum(["flac", "wav", "alac", "aiff"]);
 export type AudioFormat = z.infer<typeof AudioFormatSchema>;
 
 export const DeliveryDestinationSchema = z.enum(["browser", "drive", "both"]);
@@ -70,7 +70,7 @@ export const CreateJobInputSchema = z.object({
   //
   // Caveat worth knowing: ALAC and FLAC both need CDJ-2000NXS2 or newer. On
   // older club gear only WAV/AIFF/MP3/AAC will load.
-  audioFormat: AudioFormatSchema.default("alac"),
+  audioFormat: z.enum(["flac", "wav", "alac"]).default("alac"),
   destination: DeliveryDestinationSchema.default("browser"),
   titleHint: z.string().optional(),
   artistHint: z.string().optional(),
@@ -85,7 +85,7 @@ export const DownloadJobPayloadSchema = z.object({
   userId: z.string().min(1),
   /** URL to download (YouTube/SoundCloud). For Spotify parents this is the Spotify URL. */
   url: z.string().url(),
-  audioFormat: AudioFormatSchema,
+  audioFormat: z.enum(["flac", "wav", "alac"]),
   destination: DeliveryDestinationSchema,
   titleHint: z.string().optional(),
   artistHint: z.string().optional(),
@@ -99,6 +99,26 @@ export const DownloadJobPayloadSchema = z.object({
   driveFolderId: z.string().min(1).optional(),
 });
 export type DownloadJobPayload = z.infer<typeof DownloadJobPayloadSchema>;
+
+export const RetagJobPayloadSchema = z.object({
+  jobId: z.string().uuid(),
+  userId: z.string().min(1),
+  /** Storage key for the uploaded WAV (Blob or DATA_DIR). */
+  inputStorageKey: z.string().min(1),
+  /** SoundCloud or Spotify URL used for tags + artwork. */
+  metadataUrl: z.string().url(),
+  titleHint: z.string().optional(),
+  artistHint: z.string().optional(),
+});
+export type RetagJobPayload = z.infer<typeof RetagJobPayloadSchema>;
+
+export const CreateRetagJobInputSchema = z.object({
+  inputStorageKey: z.string().min(1),
+  metadataUrl: z.string().url(),
+  titleHint: z.string().optional(),
+  artistHint: z.string().optional(),
+});
+export type CreateRetagJobInput = z.infer<typeof CreateRetagJobInputSchema>;
 
 export function detectSourceKind(url: string): SourceKind | null {
   try {

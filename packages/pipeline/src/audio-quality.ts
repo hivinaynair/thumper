@@ -1,4 +1,4 @@
-export type AudioTargetFormat = "wav" | "flac" | "alac";
+export type AudioTargetFormat = "wav" | "flac" | "alac" | "aiff";
 
 /**
  * Format preference chain, tried left to right. yt-dlp picks the first group
@@ -131,6 +131,7 @@ export const audioQualityLabel = (
   if (lossless) {
     const sameFormat =
       (target === "wav" && isPcmSource(codec, filePath)) ||
+      (target === "aiff" && isPcmSource(codec, filePath)) ||
       (target === "flac" && lowerCodec === "flac") ||
       (target === "alac" && lowerCodec === "alac");
     return sameFormat

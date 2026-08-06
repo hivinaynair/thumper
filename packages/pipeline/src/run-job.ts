@@ -85,6 +85,9 @@ export type ProgressUpdater = (patch: {
      * (`format_id=download`), not a streamed AAC/Opus transcode.
      */
     soundcloudOriginal?: boolean;
+    /** True when this job retagged an uploaded WAV → AIFF. */
+    retag?: boolean;
+    inputStorageKey?: string;
   };
 }) => Promise<void>;
 
@@ -112,6 +115,7 @@ function extFor(format: AudioFormat): string {
 function mimeFor(format: AudioFormat): string {
   if (format === "flac") return "audio/flac";
   if (format === "wav") return "audio/wav";
+  if (format === "aiff") return "audio/aiff";
   return "audio/mp4";
 }
 
