@@ -405,7 +405,21 @@ Import `isClubReady` and `QualityGateError` from `./audio-verify` in the existin
 
 `trySoundCloudViaYoutubeFirst` (~line 675) already catches every non-cancel error and returns `"youtube_failed"`, so a mirror that flunks the gate falls through to the SoundCloud stream attempt on its own. Confirm by reading it; do not change it.
 
-**Step 5: Surface the rejection on the job row**
+**Step 5: Widen the `update` callback's result type**
+
+The `update` callback declares its own inline `result` shape at `run-job.ts:71-103`, a third copy of the result type that Task 3 did not touch. Add to it, beside `gateEmail` / `gateName`:
+
+```ts
+    freeDownloadsOnly?: boolean;
+    clubReadyOnly?: boolean;
+    qualityRejected?: boolean;
+```
+
+`freeDownloadsOnly` is included because `run-job.ts:964` already writes it, and the type has been silently tolerating it.
+
+**Step 6: Surface the rejection on the job row**
+
+**Critical, and not obvious:** result writes *overwrite*, they do not merge — `apps/worker/src/process-one.ts:63` is `values.result = patch.result`. So the `clubReadyOnly: true` seeded at enqueue is gone the moment the pipeline writes its first result. Every terminal write must therefore be self-contained and re-state the mode.
 
 In the outer `catch` of `runDownloadJob` (~line 1001), add a branch before the generic handler, after the `isManualDownloadRequiredError` one:
 
@@ -416,6 +430,9 @@ In the outer `catch` of `runDownloadJob` (~line 1001), add a branch before the g
         stage: "error",
         error: err.message,
         result: {
+          // Re-stated because result writes overwrite rather than merge; the
+          // flag seeded at enqueue is long gone by now.
+          clubReadyOnly: true,
           qualityRejected: true,
           ...(err.tier != null ? { djTier: err.tier } : {}),
           ...(err.cutoffHz != null ? { cutoffHz: err.cutoffHz } : {}),
@@ -423,6 +440,12 @@ In the outer `catch` of `runDownloadJob` (~line 1001), add a branch before the g
       });
       throw err;
     }
+```
+
+Also add to the **success** result write at `run-job.ts:525`, so a completed job still shows the mode it ran under:
+
+```ts
+      ...(payload.clubReadyOnly ? { clubReadyOnly: true } : {}),
 ```
 
 Add `isQualityGateError` to the `./audio-verify` import.

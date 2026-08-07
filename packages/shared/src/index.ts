@@ -75,8 +75,9 @@ export const CreateJobInputSchema = z.object({
    */
   freeDownloadsOnly: z.boolean().optional().default(false),
   /**
-   * Reject any track whose measured audio does not reach 19 kHz, after trying
-   * alternate sources. Applies to every source kind, not just SoundCloud.
+   * Reject any track whose measured tier is not club-ready (see `isClubReady`),
+   * after trying alternate sources. Applies to every source kind, not just
+   * SoundCloud — a YouTube-only job can flunk the bar just as easily.
    */
   clubReadyOnly: z.boolean().optional().default(false),
 });
