@@ -14,6 +14,19 @@ describe("aiffPcmCodec", () => {
     expect(aiffPcmCodec("", "s16")).toBe("pcm_s16be");
   });
 
+  it("does not treat ffmpeg's padded s32 sample_fmt as real 32-bit", () => {
+    // 24-bit WAV commonly probes as codec=pcm_s24le + sample_fmt=s32.
+    expect(aiffPcmCodec("pcm_s24le", "s32")).toBe("pcm_s24be");
+    // Or codec=pcm_s32le with bits_per_raw_sample=24 (zero-padded container).
+    expect(aiffPcmCodec("pcm_s32le", "s32", 24)).toBe("pcm_s24be");
+    // Bare sample_fmt=s32 alone → assume 24-bit producer master, not 32-bit.
+    expect(aiffPcmCodec("", "s32")).toBe("pcm_s24be");
+  });
+
+  it("still writes 32-bit when the source is actually 32-bit", () => {
+    expect(aiffPcmCodec("pcm_s32le", "s32", 32)).toBe("pcm_s32be");
+  });
+
   it("defaults to 24-bit when nothing is known", () => {
     expect(aiffPcmCodec("")).toBe("pcm_s24be");
   });

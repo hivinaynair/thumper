@@ -33,21 +33,58 @@ export type AudioProbe = {
   bitRate: string;
   /** e.g. s16, s24, s32, flt — used to pick a matching AIFF PCM codec. */
   sampleFmt: string;
+  /**
+   * Meaningful sample width from the container (e.g. 24), when present.
+   * Prefer this over sample_fmt — ffmpeg often decodes 24-bit PCM as s32
+   * with 8 bits of zero padding.
+   */
+  bitsPerRawSample: number | null;
 };
 
 /**
  * AIFF stores PCM big-endian. Map a probed WAV/PCM codec (or sample_fmt) to
  * the matching AIFF encoder so bit depth is preserved — only endianness changes.
+ *
+ * Do not trust sample_fmt=s32 alone: ffmpeg unpacks 24-bit WAV into 32-bit
+ * slots. Prefer codec name / bits_per_raw_sample so we write real 24-bit AIFF
+ * instead of padded pcm_s32be that tools mislabel as "32-bit".
  */
-export function aiffPcmCodec(codec: string, sampleFmt = ""): string {
+export function aiffPcmCodec(
+  codec: string,
+  sampleFmt = "",
+  bitsPerRawSample: number | null = null,
+): string {
   const c = codec.toLowerCase();
   const fmt = sampleFmt.toLowerCase();
-  // Float before int32 — "pcm_f32le" also contains "32".
-  if (c.includes("f32") || fmt.includes("flt") || fmt === "flt") return "pcm_f32be";
-  if (c.includes("32") || fmt.includes("s32") || fmt === "s32") return "pcm_s32be";
-  if (c.includes("24") || fmt.includes("s24") || fmt === "s24") return "pcm_s24be";
-  if (c.includes("16") || fmt.includes("s16") || fmt === "s16") return "pcm_s16be";
-  // Producer masters are usually 24-bit when the probe is vague.
+  const bits =
+    typeof bitsPerRawSample === "number" &&
+    Number.isFinite(bitsPerRawSample) &&
+    bitsPerRawSample > 0
+      ? bitsPerRawSample
+      : null;
+
+  // Float before int — "pcm_f32le" also contains "32".
+  if (c.includes("f32") || fmt.includes("flt") || fmt === "flt") {
+    return "pcm_f32be";
+  }
+
+  // Explicit codec bit depth wins over sample_fmt (see padded s32 note above).
+  if (c.includes("s24") || c.includes("24")) return "pcm_s24be";
+  if (c.includes("s16") || c.includes("16")) return "pcm_s16be";
+  if (c.includes("s32") || c.includes("32")) {
+    if (bits === 24) return "pcm_s24be";
+    if (bits === 16) return "pcm_s16be";
+    return "pcm_s32be";
+  }
+
+  if (bits === 24) return "pcm_s24be";
+  if (bits === 16) return "pcm_s16be";
+  if (bits === 32) return "pcm_s32be";
+
+  if (fmt.includes("s24") || fmt === "s24") return "pcm_s24be";
+  if (fmt.includes("s16") || fmt === "s16") return "pcm_s16be";
+  // sample_fmt=s32 alone usually means padded 24-bit, not a 32-bit master.
+  // Producer downloads are almost always 24-bit when the probe is vague.
   return "pcm_s24be";
 }
 
@@ -74,7 +111,7 @@ export async function probeAudio(
         "-select_streams",
         "a:0",
         "-show_entries",
-        "stream=codec_name,channels,sample_rate,bit_rate,sample_fmt",
+        "stream=codec_name,channels,sample_rate,bit_rate,sample_fmt,bits_per_raw_sample,bits_per_coded_sample",
         "-of",
         "json",
         filePath,
@@ -82,12 +119,23 @@ export async function probeAudio(
       options,
     );
     const stream = JSON.parse(stdout).streams?.[0] ?? {};
+    const rawBits = Number.parseInt(String(stream.bits_per_raw_sample ?? ""), 10);
+    const codedBits = Number.parseInt(
+      String(stream.bits_per_coded_sample ?? ""),
+      10,
+    );
+    const bitsPerRawSample = Number.isFinite(rawBits) && rawBits > 0
+      ? rawBits
+      : Number.isFinite(codedBits) && codedBits > 0
+        ? codedBits
+        : null;
     return {
       codec: stream.codec_name || "",
       channels: stream.channels || 2,
       sampleRate: stream.sample_rate || "48000",
       bitRate: stream.bit_rate || "",
       sampleFmt: stream.sample_fmt || "",
+      bitsPerRawSample,
     };
   } catch {
     return {
@@ -96,6 +144,7 @@ export async function probeAudio(
       sampleRate: "48000",
       bitRate: "",
       sampleFmt: "",
+      bitsPerRawSample: null,
     };
   }
 }
@@ -185,7 +234,11 @@ export async function convertAudio(params: {
   } else if (params.target === "aiff") {
     // Lossless PCM remux into AIFF. Preserve bit depth; AIFF wants big-endian.
     // ID3v2 carries text tags + cover art (Rekordbox / most DJ tools read it).
-    const pcmCodec = aiffPcmCodec(info.codec, info.sampleFmt);
+    const pcmCodec = aiffPcmCodec(
+      info.codec,
+      info.sampleFmt,
+      info.bitsPerRawSample,
+    );
     if (canEmbedArt) {
       args = [
         "-y",
