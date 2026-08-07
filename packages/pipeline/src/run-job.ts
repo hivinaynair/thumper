@@ -74,6 +74,11 @@ export type ProgressUpdater = (patch: {
   artist?: string;
   matchedUrl?: string;
   error?: string;
+  /**
+   * Overwrites the job's stored result wholesale — it is not merged into what
+   * is already there. Every terminal write must therefore be self-contained,
+   * restating any flag it wants to survive.
+   */
   result?: {
     fileId?: string;
     relativePath?: string;
@@ -259,6 +264,11 @@ async function processTrack(params: {
   preferYoutube?: boolean;
   /** Prevent infinite SC→YT→… loops after a failed / skipped YT prefer. */
   allowYoutubeFallback?: boolean;
+  /**
+   * Overrides the source name in gate errors when this run is a retry of
+   * another source — otherwise a SoundCloud job fails citing "YouTube".
+   */
+  qualitySourceLabel?: string;
 }): Promise<void> {
   const { deps, soundcloud, workDir, outDir } = params;
   const { db, payload, signal, update } = deps;
@@ -303,6 +313,25 @@ async function processTrack(params: {
   }
 
   let youtubeAlreadyTried = false;
+
+  /** True when a SoundCloud failure still has an untried YouTube mirror left. */
+  const canTryYoutubeMirror = () =>
+    soundcloud && !youtubeAlreadyTried && params.allowYoutubeFallback !== false;
+
+  const tryYoutubeMirror = (reason: FallbackReason) =>
+    fallbackSoundCloudToYoutube({
+      deps,
+      trackUrl: params.trackUrl,
+      titleHint: params.titleHint,
+      artistHint: params.artistHint,
+      scCookieTmp: cookieTmp,
+      workDir,
+      outDir,
+      matchScore: params.matchScore,
+      catalogUrl: params.catalogUrl ?? params.trackUrl,
+      reason,
+    });
+
   if (soundcloud && params.preferYoutube !== false) {
     await update({ stage: "resolving", progress: 18 });
     const hasFreeDownload = await probeSoundCloudFreeDownload(
@@ -361,24 +390,10 @@ async function processTrack(params: {
       }
     }
   } catch (err) {
-    if (
-      soundcloud &&
-      !youtubeAlreadyTried &&
-      params.allowYoutubeFallback !== false &&
-      isSoundCloudUnavailableError(err)
-    ) {
-      await fallbackSoundCloudToYoutube({
-        deps,
-        trackUrl: params.trackUrl,
-        titleHint: params.titleHint,
-        artistHint: params.artistHint,
-        scCookieTmp: cookieTmp,
-        workDir,
-        outDir,
-        matchScore: params.matchScore,
-        catalogUrl: params.catalogUrl ?? params.trackUrl,
-        reason: isSoundCloudPreviewError(err) ? "preview-only" : "blocked",
-      });
+    if (canTryYoutubeMirror() && isSoundCloudUnavailableError(err)) {
+      await tryYoutubeMirror(
+        isSoundCloudPreviewError(err) ? "preview-only" : "blocked",
+      );
       return;
     }
     throw err;
@@ -401,50 +416,37 @@ async function processTrack(params: {
   // Verify the *downloaded source*, before conversion. Once it has been
   // rewrapped as ALAC/FLAC every container-level check says "lossless", so this
   // is the last moment the truth is visible.
-  const sourceLabel = soundcloud ? "SoundCloud" : "YouTube";
+  const sourceLabel =
+    params.qualitySourceLabel ??
+    (soundcloud ? "SoundCloud’s stream" : "The YouTube audio");
   let verdict: DjVerdict | null = null;
   try {
     verdict = await verifyForDj(downloaded.filePath, { signal });
   } catch (err) {
     if (err instanceof ProcessCancelledError) throw err;
     // Verification is advisory — never fail a job because analysis broke.
-    // Except in club-ready-only mode: a file we could not measure is not
-    // evidence of a good file, and the switch promises a floor.
-    if (payload.clubReadyOnly) {
-      await fs.unlink(downloaded.filePath).catch(() => undefined);
-      throw new QualityGateError({ tier: null, source: sourceLabel });
-    }
+    // A null verdict falls through to the gate below, which only reacts to it
+    // in club-ready-only mode.
   }
 
-  if (payload.clubReadyOnly && verdict && !isClubReady(verdict.tier)) {
+  // Both "measured and too lossy" and "could not measure at all" are rejections
+  // here: an unmeasurable file is not evidence of a good one, and the switch
+  // promises a floor. Both take the same road — mirror first, then fail.
+  if (payload.clubReadyOnly && (!verdict || !isClubReady(verdict.tier))) {
     await fs.unlink(downloaded.filePath).catch(() => undefined);
-    // A SoundCloud stream that flunks is often fine on YouTube (Premium Opus
-    // beats SC's AAC). The mirror attempt runs with allowYoutubeFallback:false,
-    // so this recurses at most one hop.
-    if (
-      soundcloud &&
-      !youtubeAlreadyTried &&
-      params.allowYoutubeFallback !== false
-    ) {
-      await fallbackSoundCloudToYoutube({
-        deps,
-        trackUrl: params.trackUrl,
-        titleHint: params.titleHint,
-        artistHint: params.artistHint,
-        scCookieTmp: cookieTmp,
-        workDir,
-        outDir,
-        matchScore: params.matchScore,
-        catalogUrl: params.catalogUrl ?? params.trackUrl,
-        reason: "low-quality",
-      });
+    // A SoundCloud stream that flunks is often fine on YouTube: Premium Opus
+    // beats SC's AAC, and an unreadable SC stream is often just broken.
+    if (canTryYoutubeMirror()) {
+      await tryYoutubeMirror("low-quality");
       return;
     }
-    throw new QualityGateError({
-      tier: verdict.tier,
-      cutoffHz: verdict.analysis.cutoffHz,
-      source: `${sourceLabel} audio`,
-    });
+    throw verdict
+      ? new QualityGateError({
+          tier: verdict.tier,
+          cutoffHz: verdict.analysis.cutoffHz,
+          source: sourceLabel,
+        })
+      : new QualityGateError({ tier: null, source: sourceLabel });
   }
 
   const warnings = [...(verdict?.warnings ?? [])];
@@ -729,6 +731,16 @@ async function trySoundCloudViaYoutubeFirst(params: {
   }
 }
 
+/** Why SoundCloud couldn't serve usable audio — used only for the error text. */
+type FallbackReason = "preview-only" | "blocked" | "low-quality";
+
+/**
+ * Retry a SoundCloud track from its YouTube mirror.
+ *
+ * The inner `processTrack` runs with `allowYoutubeFallback: false`, which is
+ * what bounds this to a single hop — every caller relies on that, so it must
+ * stay.
+ */
 async function fallbackSoundCloudToYoutube(params: {
   deps: RunJobDeps;
   trackUrl: string;
@@ -739,8 +751,7 @@ async function fallbackSoundCloudToYoutube(params: {
   outDir: string;
   matchScore?: number;
   catalogUrl?: string | null;
-  /** Why SoundCloud couldn't serve the audio — used only for the error text. */
-  reason: "preview-only" | "blocked" | "low-quality";
+  reason: FallbackReason;
 }): Promise<void> {
   const { deps, workDir, outDir } = params;
   const { payload, signal, update } = deps;
@@ -806,6 +817,10 @@ async function fallbackSoundCloudToYoutube(params: {
       catalogUrl: params.catalogUrl ?? params.trackUrl,
       preferYoutube: false,
       allowYoutubeFallback: false,
+      qualitySourceLabel:
+        params.reason === "low-quality"
+          ? "The YouTube mirror of this SoundCloud track"
+          : undefined,
     });
   } finally {
     await fs.unlink(ytCookieTmp).catch(() => undefined);
