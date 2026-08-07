@@ -534,29 +534,6 @@ main.main-flush {
 	gap: 0.75rem;
 }
 
-.check-row {
-	display: flex;
-	align-items: flex-start;
-	gap: 0.65rem;
-	margin: 0.35rem 0 0.15rem;
-	font-size: 0.92rem;
-	line-height: 1.35;
-	cursor: pointer;
-}
-
-.check-row input {
-	margin-top: 0.2rem;
-	flex-shrink: 0;
-}
-
-.check-row-hint {
-	display: block;
-	margin-top: 0.2rem;
-	font-size: 0.8rem;
-	color: var(--muted, #8a9680);
-	font-weight: 400;
-}
-
 .panel-note {
 	margin: 0;
 	color: var(--muted);
@@ -585,6 +562,45 @@ textarea {
 	transition:
 		border-color 140ms ease,
 		box-shadow 140ms ease;
+}
+
+/* After global label/input rules so checkbox rows don't inherit width:100% / grid. */
+label.check-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.65rem;
+	width: 100%;
+	min-width: 0;
+	margin: 0.35rem 0 0.15rem;
+	font-size: 0.92rem;
+	line-height: 1.35;
+	font-weight: 500;
+	color: var(--ink);
+	cursor: pointer;
+}
+
+label.check-row input[type="checkbox"] {
+	width: auto;
+	margin: 0.2rem 0 0;
+	padding: 0;
+	flex-shrink: 0;
+	border: none;
+	background: transparent;
+	box-shadow: none;
+	accent-color: var(--accent);
+}
+
+label.check-row > span {
+	min-width: 0;
+	flex: 1;
+}
+
+.check-row-hint {
+	display: block;
+	margin-top: 0.2rem;
+	font-size: 0.8rem;
+	color: var(--muted);
+	font-weight: 400;
 }
 
 input:focus,
