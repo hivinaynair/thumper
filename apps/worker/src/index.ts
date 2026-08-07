@@ -145,7 +145,7 @@ async function main() {
         status: "queued",
         stage: "queued",
         progress: 0,
-        ...((parent.gateEmail || parent.freeDownloadsOnly)
+        ...((parent.gateEmail || parent.freeDownloadsOnly || parent.clubReadyOnly)
           ? {
               result: {
                 ...(parent.gateEmail
@@ -157,6 +157,7 @@ async function main() {
                 ...(parent.freeDownloadsOnly
                   ? { freeDownloadsOnly: true }
                   : {}),
+                ...(parent.clubReadyOnly ? { clubReadyOnly: true } : {}),
               },
             }
           : {}),
@@ -178,6 +179,7 @@ async function main() {
       gateEmail: parent.gateEmail,
       gateName: parent.gateName,
       freeDownloadsOnly: parent.freeDownloadsOnly,
+      clubReadyOnly: parent.clubReadyOnly,
     } satisfies DownloadJobPayload);
 
     await db

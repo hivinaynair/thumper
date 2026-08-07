@@ -74,6 +74,11 @@ export const CreateJobInputSchema = z.object({
    * Download gates are unlocked and retagged to AIFF; other tracks fail.
    */
   freeDownloadsOnly: z.boolean().optional().default(false),
+  /**
+   * Reject any track whose measured audio does not reach 19 kHz, after trying
+   * alternate sources. Applies to every source kind, not just SoundCloud.
+   */
+  clubReadyOnly: z.boolean().optional().default(false),
 });
 export type CreateJobInput = z.infer<typeof CreateJobInputSchema>;
 
@@ -105,6 +110,8 @@ export const DownloadJobPayloadSchema = z.object({
   gateName: z.string().min(1).optional(),
   /** When true, SoundCloud jobs only take Hypeddit Free Downloads. */
   freeDownloadsOnly: z.boolean().optional().default(false),
+  /** When true, only club-ready sources are delivered; the rest fail. */
+  clubReadyOnly: z.boolean().optional().default(false),
 });
 export type DownloadJobPayload = z.infer<typeof DownloadJobPayloadSchema>;
 

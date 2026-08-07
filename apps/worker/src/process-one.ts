@@ -149,6 +149,7 @@ export async function processJobById(jobId: string): Promise<void> {
         gateEmail?: string;
         gateName?: string;
         freeDownloadsOnly?: boolean;
+        clubReadyOnly?: boolean;
       }
     | null
     | undefined;
@@ -164,6 +165,7 @@ export async function processJobById(jobId: string): Promise<void> {
     gateEmail: gateMeta?.gateEmail,
     gateName: gateMeta?.gateName,
     freeDownloadsOnly: Boolean(gateMeta?.freeDownloadsOnly),
+    clubReadyOnly: Boolean(gateMeta?.clubReadyOnly),
   };
 
   async function runOne(p: DownloadJobPayload): Promise<void> {
@@ -218,7 +220,7 @@ export async function processJobById(jobId: string): Promise<void> {
                 status: "queued",
                 stage: "queued",
                 progress: 0,
-                ...((p.gateEmail || p.freeDownloadsOnly)
+                ...((p.gateEmail || p.freeDownloadsOnly || p.clubReadyOnly)
                   ? {
                       result: {
                         ...(p.gateEmail
@@ -227,6 +229,7 @@ export async function processJobById(jobId: string): Promise<void> {
                         ...(p.freeDownloadsOnly
                           ? { freeDownloadsOnly: true }
                           : {}),
+                        ...(p.clubReadyOnly ? { clubReadyOnly: true } : {}),
                       },
                     }
                   : {}),
@@ -246,6 +249,7 @@ export async function processJobById(jobId: string): Promise<void> {
                   ? { gateEmail: p.gateEmail, gateName: p.gateName }
                   : {}),
                 ...(p.freeDownloadsOnly ? { freeDownloadsOnly: true } : {}),
+                ...(p.clubReadyOnly ? { clubReadyOnly: true } : {}),
               },
             });
 
@@ -267,6 +271,7 @@ export async function processJobById(jobId: string): Promise<void> {
                 gateEmail: p.gateEmail,
                 gateName: p.gateName,
                 freeDownloadsOnly: p.freeDownloadsOnly,
+                clubReadyOnly: p.clubReadyOnly,
               });
             } catch (err) {
               if (

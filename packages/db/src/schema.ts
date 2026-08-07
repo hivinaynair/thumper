@@ -96,6 +96,10 @@ export const jobs = pgTable("jobs", {
     gateName?: string;
     /** SoundCloud: Hypeddit Free Downloads only (no stream / YT fallback). */
     freeDownloadsOnly?: boolean;
+    /** Club-ready-only mode was on for this job. */
+    clubReadyOnly?: boolean;
+    /** Set when the club-ready gate rejected every source. */
+    qualityRejected?: boolean;
   }>(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()

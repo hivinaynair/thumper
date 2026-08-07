@@ -202,10 +202,14 @@ export async function POST(req: Request) {
     sourceKind === "soundcloud" ? await clerkGateIdentity(userId) : {};
   const freeDownloadsOnly =
     sourceKind === "soundcloud" && Boolean(input.freeDownloadsOnly);
+  // Unlike freeDownloadsOnly this is not SoundCloud-specific — a YouTube-only
+  // job can flunk the bar just as easily.
+  const clubReadyOnly = Boolean(input.clubReadyOnly);
 
   const jobResult = {
     ...gateIdentity,
     ...(freeDownloadsOnly ? { freeDownloadsOnly: true } : {}),
+    ...(clubReadyOnly ? { clubReadyOnly: true } : {}),
   };
 
   const [job] = await db
@@ -271,6 +275,7 @@ export async function POST(req: Request) {
         titleHint: input.titleHint,
         artistHint: input.artistHint,
         freeDownloadsOnly,
+        clubReadyOnly,
         ...gateIdentity,
       })) ?? null;
 
