@@ -14,7 +14,13 @@ import {
   type DeliveryDestination,
   type DownloadJobPayload,
 } from "@thumper/shared";
-import { verifyForDj, type DjVerdict } from "./audio-verify";
+import {
+  isClubReady,
+  isQualityGateError,
+  QualityGateError,
+  verifyForDj,
+  type DjVerdict,
+} from "./audio-verify";
 import { FILE_TTL_MS } from "./cleanup";
 import { convertAudio } from "./convert";
 import { materializeCookieFile } from "./cookies";
@@ -100,6 +106,9 @@ export type ProgressUpdater = (patch: {
     manualDownloadTitle?: string | null;
     gateEmail?: string;
     gateName?: string;
+    freeDownloadsOnly?: boolean;
+    clubReadyOnly?: boolean;
+    qualityRejected?: boolean;
   };
 }) => Promise<void>;
 
@@ -392,12 +401,50 @@ async function processTrack(params: {
   // Verify the *downloaded source*, before conversion. Once it has been
   // rewrapped as ALAC/FLAC every container-level check says "lossless", so this
   // is the last moment the truth is visible.
+  const sourceLabel = soundcloud ? "SoundCloud" : "YouTube";
   let verdict: DjVerdict | null = null;
   try {
     verdict = await verifyForDj(downloaded.filePath, { signal });
   } catch (err) {
     if (err instanceof ProcessCancelledError) throw err;
     // Verification is advisory — never fail a job because analysis broke.
+    // Except in club-ready-only mode: a file we could not measure is not
+    // evidence of a good file, and the switch promises a floor.
+    if (payload.clubReadyOnly) {
+      await fs.unlink(downloaded.filePath).catch(() => undefined);
+      throw new QualityGateError({ tier: null, source: sourceLabel });
+    }
+  }
+
+  if (payload.clubReadyOnly && verdict && !isClubReady(verdict.tier)) {
+    await fs.unlink(downloaded.filePath).catch(() => undefined);
+    // A SoundCloud stream that flunks is often fine on YouTube (Premium Opus
+    // beats SC's AAC). The mirror attempt runs with allowYoutubeFallback:false,
+    // so this recurses at most one hop.
+    if (
+      soundcloud &&
+      !youtubeAlreadyTried &&
+      params.allowYoutubeFallback !== false
+    ) {
+      await fallbackSoundCloudToYoutube({
+        deps,
+        trackUrl: params.trackUrl,
+        titleHint: params.titleHint,
+        artistHint: params.artistHint,
+        scCookieTmp: cookieTmp,
+        workDir,
+        outDir,
+        matchScore: params.matchScore,
+        catalogUrl: params.catalogUrl ?? params.trackUrl,
+        reason: "low-quality",
+      });
+      return;
+    }
+    throw new QualityGateError({
+      tier: verdict.tier,
+      cutoffHz: verdict.analysis.cutoffHz,
+      source: `${sourceLabel} audio`,
+    });
   }
 
   const warnings = [...(verdict?.warnings ?? [])];
@@ -537,6 +584,7 @@ async function processTrack(params: {
       cutoffHz: verdict?.analysis.cutoffHz,
       sourceFormatId,
       soundcloudOriginal: soundcloudOriginal || undefined,
+      ...(payload.clubReadyOnly ? { clubReadyOnly: true } : {}),
     },
   });
 }
@@ -692,7 +740,7 @@ async function fallbackSoundCloudToYoutube(params: {
   matchScore?: number;
   catalogUrl?: string | null;
   /** Why SoundCloud couldn't serve the audio — used only for the error text. */
-  reason: "preview-only" | "blocked";
+  reason: "preview-only" | "blocked" | "low-quality";
 }): Promise<void> {
   const { deps, workDir, outDir } = params;
   const { payload, signal, update } = deps;
@@ -721,7 +769,9 @@ async function fallbackSoundCloudToYoutube(params: {
     const because =
       params.reason === "preview-only"
         ? "SoundCloud only has a preview (often geo-blocked or Go+)"
-        : "SoundCloud audio is unavailable (DRM or region-locked)";
+        : params.reason === "low-quality"
+          ? "SoundCloud's audio isn't club-ready"
+          : "SoundCloud audio is unavailable (DRM or region-locked)";
     throw new Error(
       `${because} and no confident YouTube mirror found for “${meta.artists[0] ?? "?"} – ${meta.title}”`,
     );
@@ -1006,6 +1056,22 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
         result: {
           manualDownloadUrl: err.manualDownloadUrl,
           manualDownloadTitle: err.purchaseTitle,
+        },
+      });
+      throw err;
+    }
+    if (isQualityGateError(err)) {
+      await update({
+        status: "failed",
+        stage: "error",
+        error: err.message,
+        result: {
+          // Re-stated because result writes overwrite rather than merge; the
+          // flag seeded at enqueue is long gone by now.
+          clubReadyOnly: true,
+          qualityRejected: true,
+          ...(err.tier != null ? { djTier: err.tier } : {}),
+          ...(err.cutoffHz != null ? { cutoffHz: err.cutoffHz } : {}),
         },
       });
       throw err;
