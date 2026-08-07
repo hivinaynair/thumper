@@ -69,6 +69,11 @@ export const CreateJobInputSchema = z.object({
   destination: DeliveryDestinationSchema.default("browser"),
   titleHint: z.string().optional(),
   artistHint: z.string().optional(),
+  /**
+   * SoundCloud only: skip streams / YouTube mirrors. Only Hypeddit Free
+   * Download gates are unlocked and retagged to AIFF; other tracks fail.
+   */
+  freeDownloadsOnly: z.boolean().optional().default(false),
 });
 export type CreateJobInput = z.infer<typeof CreateJobInputSchema>;
 
@@ -98,6 +103,8 @@ export const DownloadJobPayloadSchema = z.object({
    */
   gateEmail: z.string().email().optional(),
   gateName: z.string().min(1).optional(),
+  /** When true, SoundCloud jobs only take Hypeddit Free Downloads. */
+  freeDownloadsOnly: z.boolean().optional().default(false),
 });
 export type DownloadJobPayload = z.infer<typeof DownloadJobPayloadSchema>;
 

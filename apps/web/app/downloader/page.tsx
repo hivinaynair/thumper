@@ -38,6 +38,7 @@ type Job = {
 		/** Non-Hypeddit purchase link — open and download manually. */
 		manualDownloadUrl?: string;
 		manualDownloadTitle?: string | null;
+		freeDownloadsOnly?: boolean;
 	} | null;
 };
 
@@ -276,6 +277,7 @@ export default function DownloaderPage() {
 	const [url, setUrl] = useState("");
 	const [audioFormat, setAudioFormat] = useState("aiff");
 	const [destination, setDestination] = useState("browser");
+	const [freeDownloadsOnly, setFreeDownloadsOnly] = useState(false);
 	const [jobs, setJobs] = useState<Job[]>([]);
 	const [cookies, setCookies] = useState<CookieStatus | null>(null);
 	const [busy, setBusy] = useState(false);
@@ -367,7 +369,12 @@ export default function DownloaderPage() {
 			const res = await fetch("/api/jobs", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ url, audioFormat, destination }),
+				body: JSON.stringify({
+					url,
+					audioFormat,
+					destination,
+					freeDownloadsOnly,
+				}),
 			});
 			const data = await res.json();
 			if (!res.ok) throw new Error(data.error ?? "Failed");
@@ -565,6 +572,20 @@ export default function DownloaderPage() {
 							your account menu, reconnect Google, then queue again.
 						</p>
 					) : null}
+					<label className="check-row">
+						<input
+							type="checkbox"
+							checked={freeDownloadsOnly}
+							onChange={(e) => setFreeDownloadsOnly(e.target.checked)}
+						/>
+						<span>
+							Free downloads only (Hypeddit)
+							<span className="check-row-hint">
+								Skip streams and YouTube mirrors. Tracks without a Hypeddit
+								Free Download fail so playlist fills stay masters-only.
+							</span>
+						</span>
+					</label>
 					<div>
 						<button className="btn" type="submit" disabled={!canQueue}>
 							{busy ? "Queuing…" : "Queue download"}
@@ -610,6 +631,9 @@ export default function DownloaderPage() {
 									</div>
 									<div className="job-meta">
 										{job.stage} · {job.audioFormat} · {job.destination}
+										{job.result?.freeDownloadsOnly
+											? " · free downloads only"
+											: ""}
 										{job.result?.playlist
 											? ` · playlist (${job.result.trackCount ?? "?"} tracks${
 													job.result.unmatchedCount
@@ -634,7 +658,7 @@ export default function DownloaderPage() {
 									{job.result?.hypedditOriginal ? (
 										<div className="quality-badge original">
 											<strong>Hypeddit original</strong>
-											{" — Free Download gate → tagged AIFF"}
+											{" — Free Download (WAV or MP3) → tagged AIFF"}
 										</div>
 									) : null}
 									{job.result?.soundcloudOriginal ? (

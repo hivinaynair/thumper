@@ -90,6 +90,56 @@ function extFromNameOrType(name: string, mime: string | null): string {
   return "bin";
 }
 
+/**
+ * Prefer real container over Hypeddit's claimed `ext` (gates ship WAV or MP3).
+ * Wrong `.wav` labels would make isLosslessSource skip peak-normalize.
+ */
+export function sniffAudioExt(bytes: Uint8Array): string | null {
+  if (bytes.length < 3) return null;
+  // ID3… or MPEG frame sync (common for Hypeddit MP3 masters)
+  if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return "mp3";
+  if (bytes.length >= 2 && bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) {
+    return "mp3";
+  }
+  if (bytes.length < 12) return null;
+  // RIFF....WAVE
+  if (
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x41 &&
+    bytes[10] === 0x56 &&
+    bytes[11] === 0x45
+  ) {
+    return "wav";
+  }
+  // FORM....AIFF / AIFC
+  if (
+    bytes[0] === 0x46 &&
+    bytes[1] === 0x4f &&
+    bytes[2] === 0x52 &&
+    bytes[3] === 0x4d &&
+    bytes[8] === 0x41 &&
+    bytes[9] === 0x49 &&
+    bytes[10] === 0x46 &&
+    (bytes[11] === 0x46 || bytes[11] === 0x43)
+  ) {
+    return "aiff";
+  }
+  // fLaC
+  if (
+    bytes[0] === 0x66 &&
+    bytes[1] === 0x4c &&
+    bytes[2] === 0x61 &&
+    bytes[3] === 0x43
+  ) {
+    return "flac";
+  }
+  return null;
+}
+
 class CookieJar {
   private cookies = new Map<string, string>();
 
@@ -285,16 +335,22 @@ export async function downloadHypedditGate(params: {
     (urlName ? decodeURIComponent(urlName) : null) ||
     (unlockJson.name ? `${unlockJson.name}.${unlockJson.ext || "bin"}` : null) ||
     `hypeddit-${gate.uid}`;
-  const ext =
-    unlockJson.ext?.toLowerCase() ||
-    extFromNameOrType(baseName, unlockJson.type ?? fileRes.headers.get("content-type"));
-  const safeBase = baseName.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").trim();
-  const filename = safeBase.toLowerCase().endsWith(`.${ext}`)
-    ? safeBase
-    : `${safeBase}.${ext}`;
-  const filePath = path.join(workDir, `hypeddit_${randomUUID()}.${ext}`);
 
   const bytes = Buffer.from(await fileRes.arrayBuffer());
+  const claimedExt =
+    unlockJson.ext?.toLowerCase() ||
+    extFromNameOrType(
+      baseName,
+      unlockJson.type ?? fileRes.headers.get("content-type"),
+    );
+  const ext = sniffAudioExt(bytes) ?? claimedExt;
+  const safeBase = baseName
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+    .replace(/\.[a-z0-9]{2,5}$/i, "")
+    .trim();
+  const filename = `${safeBase || `hypeddit-${gate.uid}`}.${ext}`;
+  const filePath = path.join(workDir, `hypeddit_${randomUUID()}.${ext}`);
+
   await fs.mkdir(workDir, { recursive: true });
   await fs.writeFile(filePath, bytes);
 

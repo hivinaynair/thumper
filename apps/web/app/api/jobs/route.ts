@@ -200,6 +200,13 @@ export async function POST(req: Request) {
 
   const gateIdentity =
     sourceKind === "soundcloud" ? await clerkGateIdentity(userId) : {};
+  const freeDownloadsOnly =
+    sourceKind === "soundcloud" && Boolean(input.freeDownloadsOnly);
+
+  const jobResult = {
+    ...gateIdentity,
+    ...(freeDownloadsOnly ? { freeDownloadsOnly: true } : {}),
+  };
 
   const [job] = await db
     .insert(jobs)
@@ -214,14 +221,7 @@ export async function POST(req: Request) {
       status: "queued",
       stage: "queued",
       progress: 0,
-      ...(gateIdentity.gateEmail
-        ? {
-            result: {
-              gateEmail: gateIdentity.gateEmail,
-              gateName: gateIdentity.gateName,
-            },
-          }
-        : {}),
+      ...(Object.keys(jobResult).length > 0 ? { result: jobResult } : {}),
     })
     .returning();
 
@@ -270,6 +270,7 @@ export async function POST(req: Request) {
         destination: input.destination,
         titleHint: input.titleHint,
         artistHint: input.artistHint,
+        freeDownloadsOnly,
         ...gateIdentity,
       })) ?? null;
 

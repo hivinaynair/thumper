@@ -94,6 +94,8 @@ export const jobs = pgTable("jobs", {
     /** Clerk identity for Hypeddit email gates (set at job create). */
     gateEmail?: string;
     gateName?: string;
+    /** SoundCloud: Hypeddit Free Downloads only (no stream / YT fallback). */
+    freeDownloadsOnly?: boolean;
   }>(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()

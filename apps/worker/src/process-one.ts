@@ -145,7 +145,11 @@ export async function processJobById(jobId: string): Promise<void> {
   }
 
   const gateMeta = row.result as
-    | { gateEmail?: string; gateName?: string }
+    | {
+        gateEmail?: string;
+        gateName?: string;
+        freeDownloadsOnly?: boolean;
+      }
     | null
     | undefined;
 
@@ -159,6 +163,7 @@ export async function processJobById(jobId: string): Promise<void> {
     artistHint: row.artist ?? undefined,
     gateEmail: gateMeta?.gateEmail,
     gateName: gateMeta?.gateName,
+    freeDownloadsOnly: Boolean(gateMeta?.freeDownloadsOnly),
   };
 
   async function runOne(p: DownloadJobPayload): Promise<void> {
@@ -213,11 +218,15 @@ export async function processJobById(jobId: string): Promise<void> {
                 status: "queued",
                 stage: "queued",
                 progress: 0,
-                ...(p.gateEmail
+                ...((p.gateEmail || p.freeDownloadsOnly)
                   ? {
                       result: {
-                        gateEmail: p.gateEmail,
-                        gateName: p.gateName,
+                        ...(p.gateEmail
+                          ? { gateEmail: p.gateEmail, gateName: p.gateName }
+                          : {}),
+                        ...(p.freeDownloadsOnly
+                          ? { freeDownloadsOnly: true }
+                          : {}),
                       },
                     }
                   : {}),
@@ -236,6 +245,7 @@ export async function processJobById(jobId: string): Promise<void> {
                 ...(p.gateEmail
                   ? { gateEmail: p.gateEmail, gateName: p.gateName }
                   : {}),
+                ...(p.freeDownloadsOnly ? { freeDownloadsOnly: true } : {}),
               },
             });
 
@@ -256,6 +266,7 @@ export async function processJobById(jobId: string): Promise<void> {
                 driveFolderId: context?.driveFolderId,
                 gateEmail: p.gateEmail,
                 gateName: p.gateName,
+                freeDownloadsOnly: p.freeDownloadsOnly,
               });
             } catch (err) {
               if (

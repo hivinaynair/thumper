@@ -145,11 +145,18 @@ async function main() {
         status: "queued",
         stage: "queued",
         progress: 0,
-        ...(parent.gateEmail
+        ...((parent.gateEmail || parent.freeDownloadsOnly)
           ? {
               result: {
-                gateEmail: parent.gateEmail,
-                gateName: parent.gateName,
+                ...(parent.gateEmail
+                  ? {
+                      gateEmail: parent.gateEmail,
+                      gateName: parent.gateName,
+                    }
+                  : {}),
+                ...(parent.freeDownloadsOnly
+                  ? { freeDownloadsOnly: true }
+                  : {}),
               },
             }
           : {}),
@@ -170,6 +177,7 @@ async function main() {
       driveFolderId: context?.driveFolderId,
       gateEmail: parent.gateEmail,
       gateName: parent.gateName,
+      freeDownloadsOnly: parent.freeDownloadsOnly,
     } satisfies DownloadJobPayload);
 
     await db

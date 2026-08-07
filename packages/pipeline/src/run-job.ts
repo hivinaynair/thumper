@@ -286,6 +286,11 @@ async function processTrack(params: {
       });
       return;
     }
+    if (payload.freeDownloadsOnly) {
+      throw new Error(
+        "No Hypeddit Free Download on this track (free-downloads-only mode). Turn the switch off to allow streams.",
+      );
+    }
   }
 
   let youtubeAlreadyTried = false;
@@ -947,6 +952,10 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
             playlist: true,
             trackCount: childJobIds.length,
             childJobIds,
+            ...(payload.gateEmail
+              ? { gateEmail: payload.gateEmail, gateName: payload.gateName }
+              : {}),
+            ...(payload.freeDownloadsOnly ? { freeDownloadsOnly: true } : {}),
           },
         });
         return;
