@@ -95,46 +95,56 @@ function extFromNameOrType(name: string, mime: string | null): string {
  * Wrong `.wav` labels would make isLosslessSource skip peak-normalize.
  */
 export function sniffAudioExt(bytes: Uint8Array): string | null {
-  if (bytes.length < 3) return null;
+  const b0 = bytes[0];
+  const b1 = bytes[1];
+  const b2 = bytes[2];
+  if (b0 === undefined || b1 === undefined || b2 === undefined) return null;
   // ID3… or MPEG frame sync (common for Hypeddit MP3 masters)
-  if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return "mp3";
-  if (bytes.length >= 2 && bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) {
-    return "mp3";
-  }
+  if (b0 === 0x49 && b1 === 0x44 && b2 === 0x33) return "mp3";
+  if (b0 === 0xff && (b1 & 0xe0) === 0xe0) return "mp3";
   if (bytes.length < 12) return null;
+  const b3 = bytes[3];
+  const b8 = bytes[8];
+  const b9 = bytes[9];
+  const b10 = bytes[10];
+  const b11 = bytes[11];
+  if (
+    b3 === undefined ||
+    b8 === undefined ||
+    b9 === undefined ||
+    b10 === undefined ||
+    b11 === undefined
+  ) {
+    return null;
+  }
   // RIFF....WAVE
   if (
-    bytes[0] === 0x52 &&
-    bytes[1] === 0x49 &&
-    bytes[2] === 0x46 &&
-    bytes[3] === 0x46 &&
-    bytes[8] === 0x57 &&
-    bytes[9] === 0x41 &&
-    bytes[10] === 0x56 &&
-    bytes[11] === 0x45
+    b0 === 0x52 &&
+    b1 === 0x49 &&
+    b2 === 0x46 &&
+    b3 === 0x46 &&
+    b8 === 0x57 &&
+    b9 === 0x41 &&
+    b10 === 0x56 &&
+    b11 === 0x45
   ) {
     return "wav";
   }
   // FORM....AIFF / AIFC
   if (
-    bytes[0] === 0x46 &&
-    bytes[1] === 0x4f &&
-    bytes[2] === 0x52 &&
-    bytes[3] === 0x4d &&
-    bytes[8] === 0x41 &&
-    bytes[9] === 0x49 &&
-    bytes[10] === 0x46 &&
-    (bytes[11] === 0x46 || bytes[11] === 0x43)
+    b0 === 0x46 &&
+    b1 === 0x4f &&
+    b2 === 0x52 &&
+    b3 === 0x4d &&
+    b8 === 0x41 &&
+    b9 === 0x49 &&
+    b10 === 0x46 &&
+    (b11 === 0x46 || b11 === 0x43)
   ) {
     return "aiff";
   }
   // fLaC
-  if (
-    bytes[0] === 0x66 &&
-    bytes[1] === 0x4c &&
-    bytes[2] === 0x61 &&
-    bytes[3] === 0x43
-  ) {
+  if (b0 === 0x66 && b1 === 0x4c && b2 === 0x61 && b3 === 0x43) {
     return "flac";
   }
   return null;
