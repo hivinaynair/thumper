@@ -39,6 +39,8 @@ type Job = {
 		manualDownloadUrl?: string;
 		manualDownloadTitle?: string | null;
 		freeDownloadsOnly?: boolean;
+		clubReadyOnly?: boolean;
+		qualityRejected?: boolean;
 	} | null;
 };
 
@@ -278,6 +280,7 @@ export default function DownloaderPage() {
 	const [audioFormat, setAudioFormat] = useState("aiff");
 	const [destination, setDestination] = useState("browser");
 	const [freeDownloadsOnly, setFreeDownloadsOnly] = useState(false);
+	const [clubReadyOnly, setClubReadyOnly] = useState(false);
 	const [jobs, setJobs] = useState<Job[]>([]);
 	const [cookies, setCookies] = useState<CookieStatus | null>(null);
 	const [busy, setBusy] = useState(false);
@@ -291,6 +294,21 @@ export default function DownloaderPage() {
 	useEffect(() => {
 		extensionReadyRef.current = extensionReady;
 	}, [extensionReady]);
+
+	// Read after mount, not in the initializer: this page renders on the server
+	// and touching localStorage during render would break hydration.
+	useEffect(() => {
+		setClubReadyOnly(
+			window.localStorage.getItem("thumper.clubReadyOnly") === "true",
+		);
+	}, []);
+
+	useEffect(() => {
+		window.localStorage.setItem(
+			"thumper.clubReadyOnly",
+			String(clubReadyOnly),
+		);
+	}, [clubReadyOnly]);
 
 	const refreshJobs = useCallback(async () => {
 		const res = await fetch("/api/jobs");
@@ -374,6 +392,7 @@ export default function DownloaderPage() {
 					audioFormat,
 					destination,
 					freeDownloadsOnly,
+					clubReadyOnly,
 				}),
 			});
 			const data = await res.json();
@@ -586,6 +605,21 @@ export default function DownloaderPage() {
 							</span>
 						</span>
 					</label>
+					<label className="check-row">
+						<input
+							type="checkbox"
+							checked={clubReadyOnly}
+							onChange={(e) => setClubReadyOnly(e.target.checked)}
+						/>
+						<span>
+							Club-ready only
+							<span className="check-row-hint">
+								Measures the downloaded audio and rejects anything that
+								doesn’t reach 19 kHz. Tries a YouTube mirror before giving
+								up, so a rejected track can cost two downloads.
+							</span>
+						</span>
+					</label>
 					<div>
 						<button className="btn" type="submit" disabled={!canQueue}>
 							{busy ? "Queuing…" : "Queue download"}
@@ -634,6 +668,7 @@ export default function DownloaderPage() {
 										{job.result?.freeDownloadsOnly
 											? " · free downloads only"
 											: ""}
+										{job.result?.clubReadyOnly ? " · club-ready only" : ""}
 										{job.result?.playlist
 											? ` · playlist (${job.result.trackCount ?? "?"} tracks${
 													job.result.unmatchedCount
@@ -681,7 +716,19 @@ export default function DownloaderPage() {
 											{", then use WAV → AIFF to tag."}
 										</div>
 									) : null}
-									{job.result?.djTier && job.result.djTier !== "master" ? (
+									{job.result?.qualityRejected ? (
+										<div className="quality-badge unsuitable">
+											<strong>Rejected — not club-ready</strong>
+											{job.result.cutoffHz
+												? ` — audio stopped at ${(
+														job.result.cutoffHz / 1000
+													).toFixed(1)} kHz`
+												: " — quality could not be verified"}
+										</div>
+									) : null}
+									{job.result?.djTier &&
+									job.result.djTier !== "master" &&
+									!job.result.qualityRejected ? (
 										<QualityBadge
 											tier={job.result.djTier}
 											headline={job.result.djHeadline}
