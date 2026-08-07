@@ -137,6 +137,7 @@ export const RetagJobPayloadSchema = z.object({
   destination: DeliveryDestinationSchema.default("browser"),
   /** Set when the input came from a Hypeddit Free Download gate. */
   hypedditOriginal: z.boolean().optional(),
+  clubReadyOnly: z.boolean().optional().default(false),
 });
 export type RetagJobPayload = z.infer<typeof RetagJobPayloadSchema>;
 

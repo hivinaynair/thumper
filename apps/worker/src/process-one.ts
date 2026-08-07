@@ -75,7 +75,7 @@ export async function processJobById(jobId: string): Promise<void> {
   if (!row) throw new Error(`Job not found: ${jobId}`);
 
   const retagMeta = row.result as
-    | { retag?: boolean; inputStorageKey?: string }
+    | { retag?: boolean; inputStorageKey?: string; clubReadyOnly?: boolean }
     | null
     | undefined;
   const isRetag = Boolean(retagMeta?.retag && retagMeta.inputStorageKey);
@@ -127,6 +127,7 @@ export async function processJobById(jobId: string): Promise<void> {
       titleHint: row.title ?? undefined,
       artistHint: row.artist ?? undefined,
       destination: row.destination,
+      clubReadyOnly: Boolean(retagMeta?.clubReadyOnly),
     };
     try {
       log.info({ jobId }, "Retag job started");

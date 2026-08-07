@@ -210,6 +210,7 @@ export async function runRetagJob(deps: RunRetagJobDeps): Promise<void> {
         driveUrl,
         qualityLabel,
         ...(payload.hypedditOriginal ? { hypedditOriginal: true } : {}),
+        ...(payload.clubReadyOnly ? { clubReadyOnly: true } : {}),
       },
     });
   } catch (err) {

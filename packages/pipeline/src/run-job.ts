@@ -206,6 +206,33 @@ async function processHypedditRetag(params: {
     signal,
   });
 
+  // No alternate source here — unlike the main path there is no YouTube mirror
+  // to fall back to, so a rejection fails outright. Hypeddit free downloads are
+  // frequently 320 kbps MP3s about to be rewrapped as AIFF.
+  if (payload.clubReadyOnly) {
+    let hypedditVerdict: DjVerdict | null = null;
+    try {
+      hypedditVerdict = await verifyForDj(downloaded.filePath, { signal });
+    } catch (err) {
+      if (err instanceof ProcessCancelledError) throw err;
+    }
+    if (!hypedditVerdict || !isClubReady(hypedditVerdict.tier)) {
+      await fs.unlink(downloaded.filePath).catch(() => undefined);
+      // Split rather than `tier ?? null`: QualityGateError's constructor is a
+      // discriminated union, so a known tier must carry its measurement.
+      throw hypedditVerdict
+        ? new QualityGateError({
+            tier: hypedditVerdict.tier,
+            cutoffHz: hypedditVerdict.analysis.cutoffHz,
+            source: "The Hypeddit Free Download",
+          })
+        : new QualityGateError({
+            tier: null,
+            source: "The Hypeddit Free Download",
+          });
+    }
+  }
+
   const contentType =
     downloaded.ext === "wav"
       ? "audio/wav"
@@ -237,6 +264,7 @@ async function processHypedditRetag(params: {
       artistHint: params.artistHint,
       destination: payload.destination,
       hypedditOriginal: true,
+      clubReadyOnly: payload.clubReadyOnly,
     },
     signal,
     update,
