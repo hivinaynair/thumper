@@ -417,8 +417,8 @@ In the outer `catch` of `runDownloadJob` (~line 1001), add a branch before the g
         error: err.message,
         result: {
           qualityRejected: true,
-          ...(err.tier ? { djTier: err.tier } : {}),
-          ...(err.cutoffHz ? { cutoffHz: err.cutoffHz } : {}),
+          ...(err.tier != null ? { djTier: err.tier } : {}),
+          ...(err.cutoffHz != null ? { cutoffHz: err.cutoffHz } : {}),
         },
       });
       throw err;
@@ -464,11 +464,18 @@ After `downloadHypedditGate` returns and before the `contentType` block:
     }
     if (!hypedditVerdict || !isClubReady(hypedditVerdict.tier)) {
       await fs.unlink(downloaded.filePath).catch(() => undefined);
-      throw new QualityGateError({
-        tier: hypedditVerdict?.tier ?? null,
-        cutoffHz: hypedditVerdict?.analysis.cutoffHz,
-        source: "This Hypeddit Free Download",
-      });
+      // Split rather than `tier ?? null`: QualityGateError's constructor is a
+      // discriminated union, so a known tier must carry its measurement.
+      throw hypedditVerdict
+        ? new QualityGateError({
+            tier: hypedditVerdict.tier,
+            cutoffHz: hypedditVerdict.analysis.cutoffHz,
+            source: "This Hypeddit Free Download",
+          })
+        : new QualityGateError({
+            tier: null,
+            source: "This Hypeddit Free Download",
+          });
     }
   }
 ```
