@@ -632,7 +632,11 @@ Then guard the existing `QualityBadge` so a rejected job does not show two badge
 									!job.result.qualityRejected ? (
 ```
 
-**Step 5b: Known gap, do not try to fix here**
+The `cutoffHz` ternary is load-bearing, not defensive: a `tier: null` rejection ("couldn't measure it") writes no `cutoffHz` at all, and rendering it unguarded would print "undefined kHz".
+
+**Step 5b: Known gaps, do not try to fix here**
+
+The `· club-ready only` meta line is driven by `result.clubReadyOnly`, which is only present on quality rejections and successes. A Hypeddit job that dies during convert or upload writes an `error` with no `result`, so the line will blink out on those. Accept it — making it stable means reading the job's request flag rather than its result, which is a wider change than this task.
 
 The manual-download failure branch (`run-job.ts`, `isManualDownloadRequiredError`) writes a `result` containing only its two manual-download fields, discarding the enqueue-seeded `clubReadyOnly`. `freeDownloadsOnly` already has this hole and the existing UI already reads through it. Leave it; just don't expect the "club-ready only" meta line on a manual-download failure.
 
