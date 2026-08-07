@@ -4,6 +4,8 @@ import {
   fetchSoundCloudOEmbed,
   soundCloudOEmbedTarget,
   stripFreeDownloadLabel,
+  isMusicEntry,
+  pillarboxColumns,
   stripTopicSuffix,
   youtubeMusicTagsFromInfo,
 } from "./metadata";
@@ -146,5 +148,63 @@ describe("youtubeMusicTagsFromInfo", () => {
     const tags = youtubeMusicTagsFromInfo({ uploader: "MPH - Topic" });
     expect(tags?.artist).toBe("MPH");
     expect(tags?.title).toBeUndefined();
+  });
+});
+
+describe("isMusicEntry", () => {
+  it("accepts a Topic channel", () => {
+    expect(isMusicEntry({ uploader: "MPH - Topic" })).toBe(true);
+  });
+
+  it("accepts an Official Artist Channel carrying release metadata", () => {
+    // These were silently skipped and came out with no artwork at all.
+    expect(
+      isMusicEntry({ uploader: "Oppidan", album: "Gravity" }),
+    ).toBe(true);
+    expect(
+      isMusicEntry({ uploader: "Oppidan", artists: ["Oppidan"] }),
+    ).toBe(true);
+  });
+
+  it("refuses an ordinary upload", () => {
+    expect(isMusicEntry({ uploader: "Some Guy", title: "my dj set" })).toBe(
+      false,
+    );
+  });
+});
+
+describe("pillarboxColumns", () => {
+  const W = 64;
+  const H = 36;
+
+  function raster(fill: (x: number, y: number) => number): Uint8Array {
+    const out = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) out[y * W + x] = fill(x, y);
+    return out;
+  }
+
+  it("measures the flat border of pillarboxed cover art", () => {
+    // Square art centred on 16:9 leaves ~14 flat columns each side.
+    const bars = raster((x, y) =>
+      x < 14 || x >= W - 14 ? 49 : 60 + ((x * 7 + y * 13) % 150),
+    );
+    expect(pillarboxColumns(bars, W, H)).toBeGreaterThanOrEqual(13);
+  });
+
+  it("reports none for a real video frame", () => {
+    expect(
+      pillarboxColumns(
+        raster((x, y) => 40 + ((x * 11 + y * 17) % 180)),
+        W,
+        H,
+      ),
+    ).toBe(0);
+  });
+
+  it("ignores a flat edge on only one side", () => {
+    // A dark scene edge is not a pillarbox; cropping it would cut the image.
+    const oneSide = raster((x, y) => (x < 14 ? 49 : 60 + ((x * 7 + y * 13) % 150)));
+    expect(pillarboxColumns(oneSide, W, H)).toBe(0);
   });
 });

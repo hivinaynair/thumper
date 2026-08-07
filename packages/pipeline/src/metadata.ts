@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { detectSourceKind } from "@thumper/shared";
 import { dumpJson } from "./download";
-import { runCommandOk } from "./process";
+import { runCommand, runCommandOk } from "./process";
 import {
   fetchSpotifyCatalog,
   fetchSpotifyTrackArtworkUrl,
@@ -21,8 +21,9 @@ export type TrackTags = {
   artworkUrl?: string;
   source: "spotify" | "soundcloud" | "youtube-music" | "hint";
   /**
-   * YouTube pads square cover art onto a 16:9 canvas. Set when the artwork
-   * needs the padding cropped back off before it becomes an APIC frame.
+   * YouTube pads square cover art onto a 16:9 canvas. Set when the artwork must
+   * be pillarbox-cropped before it becomes an APIC frame — and dropped if no
+   * pillarbox is found, since that means a video frame rather than a cover.
    */
   artworkNeedsSquareCrop?: boolean;
 };
@@ -81,11 +82,6 @@ export function splitArtistNames(raw: string | null | undefined): string[] {
 }
 
 /**
- * Artist names out of a yt-dlp info dict. Prefers the real credit (`artists`)
- * over the channel that uploaded it, since a label or aggregator account says
- * nothing useful about who made the track.
- */
-/**
  * YouTube's auto-generated artist channels are named "<artist> - Topic". That
  * suffix is a YouTube implementation detail, not part of anyone's name, and it
  * reached both the AIFF artist tag and the filename.
@@ -94,6 +90,11 @@ export function stripTopicSuffix(name: string): string {
   return name.replace(/\s*[-–—]\s*Topic\s*$/i, "").trim();
 }
 
+/**
+ * Artist names out of a yt-dlp info dict. Prefers the real credit (`artists`)
+ * over the channel that uploaded it, since a label or aggregator account says
+ * nothing useful about who made the track.
+ */
 export function artistNamesFromInfo(info: Record<string, unknown>): string[] {
   const credited = Array.isArray(info.artists)
     ? info.artists.flatMap((a) =>
@@ -109,19 +110,26 @@ export function artistNamesFromInfo(info: Record<string, unknown>): string[] {
 }
 
 /**
- * Tags for a YouTube Music release. Deliberately narrower than "any YouTube
- * URL": a Topic channel is an auto-generated artist page whose info dict is
- * label-supplied — `track`, `artists`, `album` and `release_date` are the real
- * credits. A normal YouTube upload has none of that, and its thumbnail is a
- * video frame, which is why `resolveTrackTags` still refuses those.
+ * True when a YouTube entry is a music release rather than a video upload.
+ *
+ * A `- Topic` channel is the clearest signal, but not the only one: labels also
+ * publish to Official Artist Channels, which carry the same label-supplied
+ * `album` / `artists` fields under the artist's own name. Gating on the channel
+ * suffix alone silently skipped those — they came out with no artwork at all.
  */
-export function youtubeMusicTagsFromInfo(
-  info: Record<string, unknown>,
-): TrackTags | null {
+export function isMusicEntry(info: Record<string, unknown>): boolean {
   const channel = [info.uploader, info.channel].find(
     (v): v is string => typeof v === "string" && v.length > 0,
   );
-  if (!channel || !/\s[-–—]\s*Topic\s*$/i.test(channel)) return null;
+  if (channel && /\s[-–—]\s*Topic\s*$/i.test(channel)) return true;
+  if (Array.isArray(info.artists) && info.artists.length > 0) return true;
+  return typeof info.album === "string" && info.album.trim().length > 0;
+}
+
+export function youtubeMusicTagsFromInfo(
+  info: Record<string, unknown>,
+): TrackTags | null {
+  if (!isMusicEntry(info)) return null;
 
   const title =
     [info.track, info.title].find(
@@ -384,14 +392,90 @@ export async function resolveTrackTags(params: {
   };
 }
 
+/** Probe raster size. Small enough to be cheap, wide enough to resolve borders. */
+const PROBE_W = 64;
+const PROBE_H = 36;
+/** A pillarbox is a flat fill, so its columns have essentially no variation. */
+const FLAT_STDDEV = 1.5;
+
 /**
- * Crop a padded 16:9 cover back to the square art at its centre. Best effort:
- * a failed crop yields the original file rather than losing the artwork.
+ * Width of the uniform border on each side of a greyscale raster, in columns.
+ *
+ * Pure so it can be tested without ffmpeg. Returns 0 when the edges carry
+ * detail, which is what a real 16:9 video frame looks like.
  */
-async function cropToSquare(
+export function pillarboxColumns(
+  gray: Uint8Array,
+  width = PROBE_W,
+  height = PROBE_H,
+): number {
+  const stats = (x: number) => {
+    let sum = 0;
+    for (let y = 0; y < height; y++) sum += gray[y * width + x]!;
+    const mean = sum / height;
+    let acc = 0;
+    for (let y = 0; y < height; y++) acc += (gray[y * width + x]! - mean) ** 2;
+    return { mean, sd: Math.sqrt(acc / height) };
+  };
+
+  const first = stats(0);
+  if (first.sd > FLAT_STDDEV) return 0;
+
+  const flatRun = (from: number, step: number) => {
+    let n = 0;
+    for (let x = from; x >= 0 && x < width; x += step) {
+      const s = stats(x);
+      if (s.sd > FLAT_STDDEV || Math.abs(s.mean - first.mean) > 2) break;
+      n++;
+    }
+    return n;
+  };
+
+  const left = flatRun(0, 1);
+  const right = flatRun(width - 1, -1);
+  // Both sides must match: a single flat edge is a dark scene, not a pillarbox.
+  return Math.min(left, right);
+}
+
+/**
+ * Square cover art padded onto a 16:9 canvas, cropped back — or null when the
+ * image is a real video frame, which is not cover art and should not be tagged
+ * as one.
+ *
+ * ffmpeg's own `cropdetect` cannot do this: it only strips borders darker than
+ * a luma threshold, and YouTube pads with a colour sampled from the artwork.
+ */
+async function cropPillarboxedSquare(
   filePath: string,
   signal?: AbortSignal,
-): Promise<string> {
+): Promise<string | null> {
+  // Via a temp file rather than stdout: runCommand decodes stdout as text,
+  // which mangles raw pixel bytes.
+  const rasterPath = `${filePath}.gray`;
+  let gray: Buffer;
+  try {
+    await runCommandOk(
+      "ffmpeg",
+      [
+        "-v", "error",
+        "-i", filePath,
+        "-vf", `scale=${PROBE_W}:${PROBE_H}`,
+        "-pix_fmt", "gray",
+        "-frames:v", "1",
+        "-f", "rawvideo",
+        "-y", rasterPath,
+      ],
+      { signal },
+    );
+    gray = await fs.readFile(rasterPath);
+  } catch {
+    return null;
+  } finally {
+    await fs.unlink(rasterPath).catch(() => undefined);
+  }
+  if (gray.length < PROBE_W * PROBE_H) return null;
+  if (pillarboxColumns(new Uint8Array(gray)) < 2) return null;
+
   const out = filePath.replace(/(\.[^.]+)$/, "_sq$1");
   try {
     await runCommandOk(
@@ -402,7 +486,7 @@ async function cropToSquare(
     await fs.unlink(filePath).catch(() => undefined);
     return out;
   } catch {
-    return filePath;
+    return null;
   }
 }
 
@@ -431,9 +515,10 @@ export async function downloadArtworkFile(params: {
       `cover_${randomUUID()}.${ext}`,
     );
     await fs.writeFile(filePath, buf);
-    return params.squareCrop
-      ? await cropToSquare(filePath, params.signal)
-      : filePath;
+    if (!params.squareCrop) return filePath;
+    const square = await cropPillarboxedSquare(filePath, params.signal);
+    if (!square) await fs.unlink(filePath).catch(() => undefined);
+    return square;
   } catch {
     return null;
   }
