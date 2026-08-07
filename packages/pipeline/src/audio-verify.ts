@@ -350,8 +350,9 @@ export function classifyForDj(analysis: AudioAnalysis): DjVerdict {
  * whatever the container claims. Deliberately a tier check rather than a raw
  * cutoff comparison so the threshold lives in exactly one place.
  */
-export const isClubReady = (tier: DjTier): boolean =>
-  tier === "master" || tier === "club";
+export function isClubReady(tier: DjTier): boolean {
+  return tier === "master" || tier === "club";
+}
 
 /**
  * Thrown when club-ready-only mode rejects a downloaded source.
@@ -363,22 +364,27 @@ export class QualityGateError extends Error {
   readonly tier: DjTier | null;
   readonly cutoffHz: number | null;
 
-  constructor(params: {
-    tier: DjTier | null;
-    cutoffHz?: number;
-    /** Human name of the attempted source, e.g. "SoundCloud stream". */
-    source: string;
-  }) {
+  /**
+   * A union rather than an optional `cutoffHz`, so a known tier cannot be
+   * reported without the measurement that produced it — "audio stops at
+   * 0.0 kHz" reads as a corrupt file and sends the user after the wrong bug.
+   */
+  constructor(
+    params:
+      /** `source` is the human name of the attempt, e.g. "SoundCloud stream". */
+      | { tier: DjTier; cutoffHz: number; source: string }
+      | { tier: null; source: string },
+  ) {
     super(
       params.tier === null
-        ? `${params.source} could not be verified, and club-ready-only mode does not ship unverified audio. Turn the switch off to download it anyway.`
+        ? `${params.source} could not be verified, and club-ready-only mode does not ship unverified audio. Turn off Club-ready only to download it anyway.`
         : `${params.source} is not club-ready — audio stops at ${kHz(
-            params.cutoffHz ?? 0,
-          )}. Turn the switch off to download it anyway.`,
+            params.cutoffHz,
+          )}. Turn off Club-ready only to download it anyway.`,
     );
     this.name = "QualityGateError";
     this.tier = params.tier;
-    this.cutoffHz = params.cutoffHz ?? null;
+    this.cutoffHz = params.tier === null ? null : params.cutoffHz;
   }
 }
 

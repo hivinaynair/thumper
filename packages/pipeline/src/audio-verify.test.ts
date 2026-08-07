@@ -278,12 +278,22 @@ describe("QualityGateError", () => {
     expect(err.message).toContain("16.2 kHz");
     expect(err.message).toContain("SoundCloud stream");
     expect(err.tier).toBe("marginal");
+    expect(err.cutoffHz).toBe(16200);
     expect(isQualityGateError(err)).toBe(true);
   });
 
   it("says so plainly when the audio could not be measured", () => {
     const err = new QualityGateError({ tier: null, source: "YouTube mirror" });
     expect(err.message).toContain("could not be verified");
+    // No frequency may be claimed when none was measured.
+    expect(err.message).not.toContain("kHz");
+    expect(err.cutoffHz).toBeNull();
+    expect(isQualityGateError(err)).toBe(true);
+  });
+
+  it("will not compile a known tier without its measurement", () => {
+    // @ts-expect-error cutoffHz is required whenever the tier is known.
+    const err = new QualityGateError({ tier: "marginal", source: "Bandcamp" });
     expect(isQualityGateError(err)).toBe(true);
   });
 
