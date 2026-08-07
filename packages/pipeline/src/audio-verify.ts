@@ -353,6 +353,39 @@ export function classifyForDj(analysis: AudioAnalysis): DjVerdict {
 export const isClubReady = (tier: DjTier): boolean =>
   tier === "master" || tier === "club";
 
+/**
+ * Thrown when club-ready-only mode rejects a downloaded source.
+ *
+ * `tier: null` means the analysis itself failed — an unmeasurable file is not
+ * evidence of a good one, so the gate treats it as a rejection.
+ */
+export class QualityGateError extends Error {
+  readonly tier: DjTier | null;
+  readonly cutoffHz: number | null;
+
+  constructor(params: {
+    tier: DjTier | null;
+    cutoffHz?: number;
+    /** Human name of the attempted source, e.g. "SoundCloud stream". */
+    source: string;
+  }) {
+    super(
+      params.tier === null
+        ? `${params.source} could not be verified, and club-ready-only mode does not ship unverified audio. Turn the switch off to download it anyway.`
+        : `${params.source} is not club-ready — audio stops at ${kHz(
+            params.cutoffHz ?? 0,
+          )}. Turn the switch off to download it anyway.`,
+    );
+    this.name = "QualityGateError";
+    this.tier = params.tier;
+    this.cutoffHz = params.cutoffHz ?? null;
+  }
+}
+
+export function isQualityGateError(err: unknown): err is QualityGateError {
+  return err instanceof QualityGateError;
+}
+
 export async function verifyForDj(
   filePath: string,
   options: SpawnOptions = {},

@@ -4,6 +4,8 @@ import {
   impliedBitrateKbps,
   isClubReady,
   isLosslessCodec,
+  isQualityGateError,
+  QualityGateError,
   type AudioAnalysis,
 } from "./audio-verify";
 import { averageSpectrumDb, estimateCutoff, SPECTRUM_FFT_SIZE } from "./spectrum";
@@ -263,5 +265,29 @@ describe("isClubReady", () => {
       analysis({ codec: "flac", cutoffHz: 16000, cutoffRatio: 16000 / (SR / 2) }),
     ).tier;
     expect(isClubReady(tier)).toBe(false);
+  });
+});
+
+describe("QualityGateError", () => {
+  it("names the tier and where the audio stops", () => {
+    const err = new QualityGateError({
+      tier: "marginal",
+      cutoffHz: 16200,
+      source: "SoundCloud stream",
+    });
+    expect(err.message).toContain("16.2 kHz");
+    expect(err.message).toContain("SoundCloud stream");
+    expect(err.tier).toBe("marginal");
+    expect(isQualityGateError(err)).toBe(true);
+  });
+
+  it("says so plainly when the audio could not be measured", () => {
+    const err = new QualityGateError({ tier: null, source: "YouTube mirror" });
+    expect(err.message).toContain("could not be verified");
+    expect(isQualityGateError(err)).toBe(true);
+  });
+
+  it("does not match unrelated errors", () => {
+    expect(isQualityGateError(new Error("nope"))).toBe(false);
   });
 });
