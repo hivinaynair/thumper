@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type DjTier = "master" | "club" | "marginal" | "unsuitable";
 
+const CLUB_READY_KEY = "thumper.clubReadyOnly";
+
 type Job = {
 	id: string;
 	status: string;
@@ -298,17 +300,8 @@ export default function DownloaderPage() {
 	// Read after mount, not in the initializer: this page renders on the server
 	// and touching localStorage during render would break hydration.
 	useEffect(() => {
-		setClubReadyOnly(
-			window.localStorage.getItem("thumper.clubReadyOnly") === "true",
-		);
+		setClubReadyOnly(window.localStorage.getItem(CLUB_READY_KEY) === "true");
 	}, []);
-
-	useEffect(() => {
-		window.localStorage.setItem(
-			"thumper.clubReadyOnly",
-			String(clubReadyOnly),
-		);
-	}, [clubReadyOnly]);
 
 	const refreshJobs = useCallback(async () => {
 		const res = await fetch("/api/jobs");
@@ -609,14 +602,19 @@ export default function DownloaderPage() {
 						<input
 							type="checkbox"
 							checked={clubReadyOnly}
-							onChange={(e) => setClubReadyOnly(e.target.checked)}
+							onChange={(e) => {
+								setClubReadyOnly(e.target.checked);
+								window.localStorage.setItem(
+									CLUB_READY_KEY,
+									String(e.target.checked),
+								);
+							}}
 						/>
 						<span>
 							Club-ready only
 							<span className="check-row-hint">
-								Measures the downloaded audio and rejects anything that
-								doesn’t reach 19 kHz. Tries a YouTube mirror before giving
-								up, so a rejected track can cost two downloads.
+								Rejects anything whose audio stops short of 19 kHz — a lossy
+								stream, whatever the file says it is.
 							</span>
 						</span>
 					</label>
@@ -718,12 +716,7 @@ export default function DownloaderPage() {
 									) : null}
 									{job.result?.qualityRejected ? (
 										<div className="quality-badge unsuitable">
-											<strong>Rejected — not club-ready</strong>
-											{job.result.cutoffHz
-												? ` — audio stopped at ${(
-														job.result.cutoffHz / 1000
-													).toFixed(1)} kHz`
-												: " — quality could not be verified"}
+											<strong>Not club-ready</strong>
 										</div>
 									) : null}
 									{job.result?.djTier &&
