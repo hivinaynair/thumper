@@ -141,13 +141,51 @@ export type CutoffEstimate = {
  */
 const MIN_RUN_BINS = 4;
 
+/** Midband reference window — loud in every genre, never touched by a lowpass. */
+const REF_LO_HZ = 1000;
+const REF_HI_HZ = 5000;
+
+/**
+ * How far under the midband a band may sit and still count as music.
+ *
+ * Generous on purpose. It is not trying to find the lowpass — it only has to
+ * exclude the dead zone a lossy encoder leaves behind, which sits 70-100 dB
+ * down. A dark master measures ~57 dB below midband at 20 kHz and must stay
+ * on the music side of this line.
+ */
+const PRESENCE_DB = 65;
+
+/**
+ * Total energy in a band, as dB. Deliberately not a median of the bin dBs: on
+ * sparse, tonal material most bins sit in the gaps between partials, so a
+ * median measures the space between the notes rather than the music.
+ */
+function bandEnergyDb(spectrumDb: Float64Array, lo: number, hi: number): number {
+  let sum = 0;
+  let count = 0;
+  for (let i = lo; i <= hi; i++) {
+    const v = spectrumDb[i]!;
+    if (!Number.isFinite(v)) continue;
+    sum += 10 ** (v / 10);
+    count++;
+  }
+  return count === 0 ? -Infinity : 10 * Math.log10(sum / count + 1e-30);
+}
+
 /**
  * Find where content stops.
  *
- * Self-calibrating rather than a fixed dB threshold: a 16-bit dithered master
- * and a 24-bit one have wildly different noise floors, so we measure the floor
- * from the top few percent of the band and look for the highest *run* of bins
- * that rises meaningfully above it, scanning downward from Nyquist.
+ * Measures each band against the track's *own midband level*, not against the
+ * top of the spectrum. The previous approach estimated a noise floor from the
+ * top 4% of bins, which broke in both directions and shipped: MP3 output is
+ * exactly zero above its ~20.5 kHz band limit, so the floor came out around
+ * −127 dB and numerical residue at the codec's band edge read as content —
+ * every MP3 scored ~20.7 kHz whether it was 320 kbps or 64. And for genuinely
+ * full-band audio the top 4% *is* signal, so the floor was measured inside the
+ * music and nothing cleared it, reporting a nonsense cutoff or none at all.
+ *
+ * The midband is immune to both: a lowpass never touches 1-5 kHz, and it is
+ * loud in every genre.
  */
 export function estimateCutoff(
   spectrumDb: Float64Array,
@@ -157,16 +195,14 @@ export function estimateCutoff(
   const nyquist = sampleRate / 2;
   const binHz = nyquist / (n - 1);
 
-  const tail = Array.from(spectrumDb.slice(Math.floor(n * 0.96))).sort(
-    (a, b) => a - b,
-  );
-  const floorDb = tail.length
-    ? (tail[Math.floor(tail.length / 2)] ?? -120)
-    : -120;
+  const binAt = (hz: number) =>
+    Math.max(0, Math.min(n - 1, Math.round(hz / binHz)));
+  const refDb = bandEnergyDb(spectrumDb, binAt(REF_LO_HZ), binAt(REF_HI_HZ));
+  if (!Number.isFinite(refDb)) {
+    return { cutoffHz: 0, ratio: 0, floorDb: -Infinity, detected: false };
+  }
 
-  // 12 dB clear of the floor: comfortably above dither and analysis leakage,
-  // well below the ~25 dB cliff a lossy encoder's lowpass leaves behind.
-  const threshold = floorDb + 12;
+  const threshold = refDb - PRESENCE_DB;
 
   let cutoffHz = 0;
   let detected = false;
@@ -192,7 +228,7 @@ export function estimateCutoff(
   return {
     cutoffHz,
     ratio: nyquist > 0 ? cutoffHz / nyquist : 0,
-    floorDb,
+    floorDb: threshold,
     detected,
   };
 }
