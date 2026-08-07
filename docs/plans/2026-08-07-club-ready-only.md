@@ -591,9 +591,8 @@ After the free-downloads-only `label.check-row` (~line 586):
 						<span>
 							Club-ready only
 							<span className="check-row-hint">
-								Measures the downloaded audio and rejects anything that
-								doesn’t reach 19 kHz. Tries a YouTube mirror before giving
-								up, so a rejected track can cost two downloads.
+								Rejects anything whose audio stops short of 19 kHz — a
+								lossy stream, whatever the file says it is.
 							</span>
 						</span>
 					</label>
@@ -614,12 +613,7 @@ Before the existing `QualityBadge` block (~line 684), add the rejection chip:
 ```tsx
 									{job.result?.qualityRejected ? (
 										<div className="quality-badge unsuitable">
-											<strong>Rejected — not club-ready</strong>
-											{job.result.cutoffHz
-												? ` — audio stopped at ${(
-														job.result.cutoffHz / 1000
-													).toFixed(1)} kHz`
-												: " — quality could not be verified"}
+											<strong>Not club-ready</strong>
 										</div>
 									) : null}
 ```
@@ -632,7 +626,7 @@ Then guard the existing `QualityBadge` so a rejected job does not show two badge
 									!job.result.qualityRejected ? (
 ```
 
-The `cutoffHz` ternary is load-bearing, not defensive: a `tier: null` rejection ("couldn't measure it") writes no `cutoffHz` at all, and rendering it unguarded would print "undefined kHz".
+The chip carries no measurement on purpose. `job.error` already renders the full `QualityGateError` message — which names *which* source failed, gives the kHz figure, and says how to override — so repeating it here would state one fact three times alongside the `failed` status badge. Keep the chip a short noun phrase, matching every neighbouring badge ("Hypeddit original", "Download manually").
 
 **Step 5b: Known gaps, do not try to fix here**
 
