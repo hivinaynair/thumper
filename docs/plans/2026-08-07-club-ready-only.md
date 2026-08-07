@@ -503,7 +503,17 @@ After `downloadHypedditGate` returns and before the `contentType` block:
   }
 ```
 
-There is no alternate source here — the gate link is the only route — so this fails outright rather than falling back.
+There is no alternate source here — the gate link is the only route — so this fails outright rather than falling back. Use `source: "The Hypeddit Free Download"` to match the source-naming convention Task 4 established.
+
+**Step 1b: Keep the flag alive through the retag handoff**
+
+Hypeddit successes are written by `runRetagJob` in a different module, which knows nothing about `clubReadyOnly`. Because result writes overwrite rather than merge, a Hypeddit-delivered track would come back with the flag absent — no badge on exactly the highest-quality path.
+
+Thread it the same way `hypedditOriginal` is already threaded:
+
+- `packages/shared/src/index.ts` — add `clubReadyOnly: z.boolean().optional().default(false),` to `RetagJobPayloadSchema`.
+- `run-job.ts` — pass `clubReadyOnly: payload.clubReadyOnly` in the `runRetagJob` call inside `processHypedditRetag`.
+- `packages/pipeline/src/retag-job.ts` — add `...(payload.clubReadyOnly ? { clubReadyOnly: true } : {}),` to the completion `result`, beside the existing `hypedditOriginal` spread.
 
 **Step 2: Verify**
 
@@ -621,6 +631,10 @@ Then guard the existing `QualityBadge` so a rejected job does not show two badge
 									job.result.djTier !== "master" &&
 									!job.result.qualityRejected ? (
 ```
+
+**Step 5b: Known gap, do not try to fix here**
+
+The manual-download failure branch (`run-job.ts`, `isManualDownloadRequiredError`) writes a `result` containing only its two manual-download fields, discarding the enqueue-seeded `clubReadyOnly`. `freeDownloadsOnly` already has this hole and the existing UI already reads through it. Leave it; just don't expect the "club-ready only" meta line on a manual-download failure.
 
 **Step 6: CSS**
 
