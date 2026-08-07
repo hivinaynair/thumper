@@ -171,6 +171,36 @@ async function ensureNotCancelled(
 }
 
 /**
+ * Verification is advisory — never fail a job because analysis broke. A null
+ * verdict means "could not measure", which only the club-ready-only gate reacts
+ * to. Cancellation still propagates.
+ */
+async function safeVerifyForDj(
+  filePath: string,
+  signal: AbortSignal,
+): Promise<DjVerdict | null> {
+  try {
+    return await verifyForDj(filePath, { signal });
+  } catch (err) {
+    if (err instanceof ProcessCancelledError) throw err;
+    return null;
+  }
+}
+
+function qualityGateError(
+  verdict: DjVerdict | null,
+  source: string,
+): QualityGateError {
+  return verdict
+    ? new QualityGateError({
+        tier: verdict.tier,
+        cutoffHz: verdict.analysis.cutoffHz,
+        source,
+      })
+    : new QualityGateError({ tier: null, source });
+}
+
+/**
  * Unlock a Hypeddit Free Download gate, store the file, then retag → AIFF
  * using the SoundCloud track URL for metadata/artwork.
  */
@@ -206,30 +236,16 @@ async function processHypedditRetag(params: {
     signal,
   });
 
-  // No alternate source here — unlike the main path there is no YouTube mirror
-  // to fall back to, so a rejection fails outright. Hypeddit free downloads are
-  // frequently 320 kbps MP3s about to be rewrapped as AIFF.
+  // This path returns before processTrack's gate ever runs, so club-ready-only
+  // has to be enforced here or Hypeddit tracks ship unchecked. Verify now:
+  // these are frequently 320 kbps MP3s about to be rewrapped as AIFF, after
+  // which every container-level check will happily report "lossless".
+  // Unlike the main path there is no YouTube mirror, so a rejection fails outright.
   if (payload.clubReadyOnly) {
-    let hypedditVerdict: DjVerdict | null = null;
-    try {
-      hypedditVerdict = await verifyForDj(downloaded.filePath, { signal });
-    } catch (err) {
-      if (err instanceof ProcessCancelledError) throw err;
-    }
-    if (!hypedditVerdict || !isClubReady(hypedditVerdict.tier)) {
+    const verdict = await safeVerifyForDj(downloaded.filePath, signal);
+    if (!verdict || !isClubReady(verdict.tier)) {
       await fs.unlink(downloaded.filePath).catch(() => undefined);
-      // Split rather than `tier ?? null`: QualityGateError's constructor is a
-      // discriminated union, so a known tier must carry its measurement.
-      throw hypedditVerdict
-        ? new QualityGateError({
-            tier: hypedditVerdict.tier,
-            cutoffHz: hypedditVerdict.analysis.cutoffHz,
-            source: "The Hypeddit Free Download",
-          })
-        : new QualityGateError({
-            tier: null,
-            source: "The Hypeddit Free Download",
-          });
+      throw qualityGateError(verdict, "The Hypeddit Free Download");
     }
   }
 
@@ -447,15 +463,7 @@ async function processTrack(params: {
   const sourceLabel =
     params.qualitySourceLabel ??
     (soundcloud ? "SoundCloud’s stream" : "The YouTube audio");
-  let verdict: DjVerdict | null = null;
-  try {
-    verdict = await verifyForDj(downloaded.filePath, { signal });
-  } catch (err) {
-    if (err instanceof ProcessCancelledError) throw err;
-    // Verification is advisory — never fail a job because analysis broke.
-    // A null verdict falls through to the gate below, which only reacts to it
-    // in club-ready-only mode.
-  }
+  const verdict = await safeVerifyForDj(downloaded.filePath, signal);
 
   // Both "measured and too lossy" and "could not measure at all" are rejections
   // here: an unmeasurable file is not evidence of a good one, and the switch
@@ -468,13 +476,7 @@ async function processTrack(params: {
       await tryYoutubeMirror("low-quality");
       return;
     }
-    throw verdict
-      ? new QualityGateError({
-          tier: verdict.tier,
-          cutoffHz: verdict.analysis.cutoffHz,
-          source: sourceLabel,
-        })
-      : new QualityGateError({ tier: null, source: sourceLabel });
+    throw qualityGateError(verdict, sourceLabel);
   }
 
   const warnings = [...(verdict?.warnings ?? [])];
