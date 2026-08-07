@@ -445,7 +445,9 @@ async function processTrack(params: {
 
   const tags = await resolveTrackTags({
     catalogUrl: params.catalogUrl,
-    downloadUrl: soundcloud ? params.trackUrl : null,
+    // YouTube is consulted last and only answers for Topic channels, so a
+    // Spotify/SoundCloud catalogUrl still wins whenever we have one.
+    downloadUrl: params.trackUrl,
     titleHint: params.titleHint ?? downloaded.title,
     artistHint: params.artistHint,
     cookiePath: cookieTmp,
