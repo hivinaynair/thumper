@@ -64,7 +64,13 @@ export function aiffPcmCodec(
       : null;
 
   // Float before int — "pcm_f32le" also contains "32".
-  if (c.includes("f32") || fmt.includes("flt") || fmt === "flt") {
+  //
+  // Only a genuine float PCM *codec* earns float output. sample_fmt is not
+  // evidence: every lossy decoder reports fltp (Opus and AAC both do), so
+  // trusting it wrote 32-bit float AIFF for every YouTube and SoundCloud
+  // stream — a third larger than 24-bit, carrying no extra information, in a
+  // format CDJs and Rekordbox handle poorly. Those fall through to 24-bit.
+  if (c.includes("f32")) {
     return "pcm_f32be";
   }
 

@@ -30,6 +30,15 @@ describe("aiffPcmCodec", () => {
   it("defaults to 24-bit when nothing is known", () => {
     expect(aiffPcmCodec("")).toBe("pcm_s24be");
   });
+
+  it("does not write float AIFF just because a lossy decoder reports fltp", () => {
+    // Opus and AAC both decode to fltp. Honouring that made every YouTube and
+    // SoundCloud download a 32-bit float AIFF for no gain in information.
+    expect(aiffPcmCodec("opus", "fltp")).toBe("pcm_s24be");
+    expect(aiffPcmCodec("aac", "fltp")).toBe("pcm_s24be");
+    // A real float PCM master still round-trips as float.
+    expect(aiffPcmCodec("pcm_f32le", "flt")).toBe("pcm_f32be");
+  });
 });
 
 describe("headroomGainDb", () => {
