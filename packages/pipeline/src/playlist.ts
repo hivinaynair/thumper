@@ -2,6 +2,7 @@ import { MAX_PLAYLIST_TRACKS } from "@thumper/shared";
 import { fetchSoundCloudOEmbed } from "./metadata";
 import { getYtDlpPath } from "./paths";
 import { runCommandOk, type SpawnOptions } from "./process";
+import { soundcloudExtractorArgs } from "./soundcloud-client";
 
 export type PlaylistEntry = {
   url: string;
@@ -26,6 +27,12 @@ export async function expandPlaylistEntries(
     "--print",
     "%(webpage_url)s\t%(title)s\t%(uploader)s\t%(playlist_title)s",
   ];
+  if (/soundcloud\.com/i.test(url)) {
+    args.push(
+      "--extractor-args",
+      await soundcloudExtractorArgs(options.signal),
+    );
+  }
   if (options.cookiePath) {
     args.push("--cookies", options.cookiePath);
   }

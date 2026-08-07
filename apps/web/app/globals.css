@@ -840,6 +840,8 @@ textarea {
 .job-error {
 	color: var(--danger);
 	font-size: 0.85rem;
+	overflow-wrap: anywhere;
+	word-break: break-word;
 }
 
 .quality-badge {

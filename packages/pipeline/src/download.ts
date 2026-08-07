@@ -13,6 +13,7 @@ import {
   runCommandOk,
   type SpawnOptions,
 } from "./process";
+import { soundcloudExtractorArgs } from "./soundcloud-client";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -136,6 +137,8 @@ export async function downloadMedia(params: {
 
   if (params.soundcloud) {
     args.push("--add-header", "Referer:https://soundcloud.com/");
+    // yt-dlp's homepage scrape often fails in datacenter images; inject id.
+    args.push("--extractor-args", await soundcloudExtractorArgs(params.signal));
   } else {
     // Premium itags (141 / 774) are only listed for certain player clients.
     args.push("--extractor-args", youtubeExtractorArgs());
@@ -388,6 +391,9 @@ export async function dumpJson(
     "--user-agent",
     UA,
   ];
+  if (/soundcloud\.com/i.test(url)) {
+    args.push("--extractor-args", await soundcloudExtractorArgs(signal));
+  }
   if (cookiePath) args.push("--cookies", cookiePath);
   args.push(url);
   const { stdout } = await runCommandOk(getYtDlpPath(), args, { signal });

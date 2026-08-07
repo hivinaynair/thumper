@@ -905,7 +905,13 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
     let titleHint = payload.titleHint;
     let artistHint = payload.artistHint;
 
-    if (!payload.parentJobId && deps.enqueueChildTracks) {
+    // Single tracks skip yt-dlp expand so Hypeddit / purchase_url resolution
+    // is not blocked by SoundCloud client_id scrape failures in the worker.
+    if (
+      !payload.parentJobId &&
+      deps.enqueueChildTracks &&
+      isPlaylistUrl(payload.url)
+    ) {
       // yt-dlp raises SoundCloud's DRM / geo errors during extraction, so they
       // land here rather than in processTrack's catch. Swallow those and carry
       // on: processTrack will hit the same error inside its own try, where the
@@ -961,21 +967,13 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
         return;
       }
 
-      // A playlist URL that expands to one entry means the expansion was
+      // A playlist URL that expands to ≤1 entry means the expansion was
       // throttled or blocked, not that the playlist has a single track.
       // Downloading it anyway silently delivers only the first video, so fail
       // loudly instead.
-      if (isPlaylistUrl(payload.url) && expanded.entries.length <= 1) {
-        throw new Error(
-          "Could not read this playlist — YouTube returned no track list. Try again in a minute, or queue the tracks individually.",
-        );
-      }
-
-      if (expanded.entries[0]) {
-        trackUrl = expanded.entries[0].url;
-        titleHint = titleHint ?? expanded.entries[0].title;
-        artistHint = artistHint ?? expanded.entries[0].artist;
-      }
+      throw new Error(
+        "Could not read this playlist — YouTube returned no track list. Try again in a minute, or queue the tracks individually.",
+      );
     }
 
     await processTrack({

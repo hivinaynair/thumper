@@ -15,5 +15,6 @@ export * from "./retag-job";
 export * from "./retag-search";
 export * from "./run-job";
 export * from "./similarity";
+export * from "./soundcloud-client";
 export * from "./soundcloud-purchase";
 export * from "./spotify";

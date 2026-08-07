@@ -1,4 +1,7 @@
 import fs from "node:fs/promises";
+import { resolveSoundCloudClientId } from "./soundcloud-client";
+
+export { resolveSoundCloudClientId } from "./soundcloud-client";
 
 export type SoundCloudPurchaseKind = "hypeddit" | "other" | "none";
 
@@ -7,8 +10,6 @@ export type SoundCloudPurchase = {
   url?: string;
   title?: string | null;
 };
-
-const DEFAULT_CLIENT_ID = "f17476445ba4b72bc5760aa679820d27";
 
 function oauthTokenFromNetscape(cookieText: string): string | null {
   for (const line of cookieText.split(/\r?\n/)) {
@@ -33,35 +34,6 @@ export function classifySoundCloudPurchaseUrl(
     /* treat unparseable as other store link */
   }
   return "other";
-}
-
-let cachedClientId: string | null = null;
-
-/** Best-effort SoundCloud web client_id (rotates; homepage scrape as fallback). */
-export async function resolveSoundCloudClientId(
-  signal?: AbortSignal,
-): Promise<string> {
-  if (cachedClientId) return cachedClientId;
-  try {
-    const res = await fetch("https://soundcloud.com/", {
-      signal,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-      },
-    });
-    const html = await res.text();
-    const match =
-      html.match(/client_id["']?\s*:\s*["']([a-zA-Z0-9]+)["']/) ??
-      html.match(/client_id=([a-zA-Z0-9]+)/);
-    if (match?.[1]) {
-      cachedClientId = match[1];
-      return cachedClientId;
-    }
-  } catch {
-    /* fall through */
-  }
-  return DEFAULT_CLIENT_ID;
 }
 
 /**
