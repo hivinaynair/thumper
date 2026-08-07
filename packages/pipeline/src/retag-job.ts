@@ -112,6 +112,7 @@ export async function runRetagJob(deps: RunRetagJobDeps): Promise<void> {
       artworkPath = await downloadArtworkFile({
         artworkUrl: tags.artworkUrl,
         workDir,
+        squareCrop: tags.artworkNeedsSquareCrop,
         signal,
       });
     }

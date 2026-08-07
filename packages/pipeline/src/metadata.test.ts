@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
+  artistNamesFromInfo,
   fetchSoundCloudOEmbed,
   soundCloudOEmbedTarget,
   stripFreeDownloadLabel,
+  stripTopicSuffix,
+  youtubeMusicTagsFromInfo,
 } from "./metadata";
 
 const realFetch = globalThis.fetch;
@@ -83,5 +86,65 @@ describe("fetchSoundCloudOEmbed", () => {
     expect(
       await fetchSoundCloudOEmbed("https://api-v2.soundcloud.com/tracks/1"),
     ).toBeNull();
+  });
+});
+
+describe("stripTopicSuffix", () => {
+  it("removes YouTube's auto-generated channel suffix", () => {
+    expect(stripTopicSuffix("MPH - Topic")).toBe("MPH");
+    expect(stripTopicSuffix("Lou Nour – Topic")).toBe("Lou Nour");
+  });
+
+  it("leaves a real name containing the word alone", () => {
+    expect(stripTopicSuffix("Topic")).toBe("Topic");
+    expect(stripTopicSuffix("Topic - Breaking Me")).toBe("Topic - Breaking Me");
+  });
+});
+
+describe("artistNamesFromInfo", () => {
+  it("strips the Topic suffix off the uploader fallback", () => {
+    expect(artistNamesFromInfo({ uploader: "MPH - Topic" })).toEqual(["MPH"]);
+  });
+});
+
+describe("youtubeMusicTagsFromInfo", () => {
+  // Fields copied from a real yt-dlp dump of a Topic-channel upload.
+  const topic = {
+    title: "Shoot To Kill",
+    track: "Shoot To Kill",
+    artists: ["MPH"],
+    uploader: "MPH - Topic",
+    album: "Refraction",
+    release_date: "20240823",
+    thumbnail: "https://i.ytimg.com/vi/YYK_nRLiutM/maxresdefault.jpg",
+  };
+
+  it("reads the label-supplied credits off a Topic upload", () => {
+    const tags = youtubeMusicTagsFromInfo(topic);
+    expect(tags).toMatchObject({
+      title: "Shoot To Kill",
+      artist: "MPH",
+      album: "Refraction",
+      date: "2024-08-23",
+      source: "youtube-music",
+      artworkNeedsSquareCrop: true,
+    });
+  });
+
+  it("refuses a normal YouTube upload", () => {
+    // A video frame is not cover art, so these must keep falling through.
+    expect(
+      youtubeMusicTagsFromInfo({
+        title: "my dj set at the beach",
+        uploader: "Some Guy",
+        thumbnail: "https://i.ytimg.com/vi/abc/maxresdefault.jpg",
+      }),
+    ).toBeNull();
+  });
+
+  it("leaves the title unset when the dump has none, so the hint wins", () => {
+    const tags = youtubeMusicTagsFromInfo({ uploader: "MPH - Topic" });
+    expect(tags?.artist).toBe("MPH");
+    expect(tags?.title).toBeUndefined();
   });
 });

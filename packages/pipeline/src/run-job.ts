@@ -491,6 +491,7 @@ async function processTrack(params: {
     artworkPath = await downloadArtworkFile({
       artworkUrl: tags.artworkUrl,
       workDir,
+      squareCrop: tags.artworkNeedsSquareCrop,
       signal,
     });
   }

@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { detectSourceKind } from "@thumper/shared";
 import { dumpJson } from "./download";
+import { runCommandOk } from "./process";
 import {
   fetchSpotifyCatalog,
   fetchSpotifyTrackArtworkUrl,
@@ -18,7 +19,12 @@ export type TrackTags = {
   genre?: string;
   date?: string;
   artworkUrl?: string;
-  source: "spotify" | "soundcloud" | "hint";
+  source: "spotify" | "soundcloud" | "youtube-music" | "hint";
+  /**
+   * YouTube pads square cover art onto a 16:9 canvas. Set when the artwork
+   * needs the padding cropped back off before it becomes an APIC frame.
+   */
+  artworkNeedsSquareCrop?: boolean;
 };
 
 type SoundCloudOEmbed = {
@@ -79,6 +85,15 @@ export function splitArtistNames(raw: string | null | undefined): string[] {
  * over the channel that uploaded it, since a label or aggregator account says
  * nothing useful about who made the track.
  */
+/**
+ * YouTube's auto-generated artist channels are named "<artist> - Topic". That
+ * suffix is a YouTube implementation detail, not part of anyone's name, and it
+ * reached both the AIFF artist tag and the filename.
+ */
+export function stripTopicSuffix(name: string): string {
+  return name.replace(/\s*[-–—]\s*Topic\s*$/i, "").trim();
+}
+
 export function artistNamesFromInfo(info: Record<string, unknown>): string[] {
   const credited = Array.isArray(info.artists)
     ? info.artists.flatMap((a) =>
@@ -90,7 +105,79 @@ export function artistNamesFromInfo(info: Record<string, unknown>): string[] {
   const fallback = [info.artist, info.uploader, info.creator].find(
     (v): v is string => typeof v === "string" && v.trim().length > 0,
   );
-  return splitArtistNames(fallback);
+  return splitArtistNames(fallback).map(stripTopicSuffix).filter(Boolean);
+}
+
+/**
+ * Tags for a YouTube Music release. Deliberately narrower than "any YouTube
+ * URL": a Topic channel is an auto-generated artist page whose info dict is
+ * label-supplied — `track`, `artists`, `album` and `release_date` are the real
+ * credits. A normal YouTube upload has none of that, and its thumbnail is a
+ * video frame, which is why `resolveTrackTags` still refuses those.
+ */
+export function youtubeMusicTagsFromInfo(
+  info: Record<string, unknown>,
+): TrackTags | null {
+  const channel = [info.uploader, info.channel].find(
+    (v): v is string => typeof v === "string" && v.length > 0,
+  );
+  if (!channel || !/\s[-–—]\s*Topic\s*$/i.test(channel)) return null;
+
+  const title =
+    [info.track, info.title].find(
+      (v): v is string => typeof v === "string" && v.trim().length > 0,
+    )?.trim() ?? undefined;
+  const artist = artistNamesFromInfo(info).join(", ") || undefined;
+  if (!title && !artist) return null;
+
+  const album =
+    typeof info.album === "string" && info.album.trim()
+      ? info.album.trim()
+      : undefined;
+  const genre =
+    typeof info.genre === "string" && info.genre.trim()
+      ? info.genre.trim()
+      : undefined;
+  const release = info.release_date ?? info.upload_date;
+  const date =
+    typeof release === "string" && /^\d{8}$/.test(release)
+      ? `${release.slice(0, 4)}-${release.slice(4, 6)}-${release.slice(6, 8)}`
+      : undefined;
+
+  // maxresdefault is the square cover centred on a 16:9 canvas; the smaller
+  // presets are re-encodes of the same padded frame, so take the biggest.
+  const thumb =
+    (typeof info.thumbnail === "string" && info.thumbnail) ||
+    (Array.isArray(info.thumbnails) &&
+      [...info.thumbnails].reverse().find((t) => typeof t?.url === "string")
+        ?.url) ||
+    null;
+
+  return {
+    title,
+    artist,
+    album,
+    genre,
+    date,
+    artworkUrl:
+      typeof thumb === "string" && thumb
+        ? thumb.replace(/^http:\/\//i, "https://")
+        : undefined,
+    artworkNeedsSquareCrop: true,
+    source: "youtube-music",
+  };
+}
+
+export async function fetchYouTubeMusicTags(
+  url: string,
+  options: { cookiePath?: string | null; signal?: AbortSignal } = {},
+): Promise<TrackTags | null> {
+  try {
+    const info = await dumpJson(url, options.cookiePath ?? null, options.signal);
+    return youtubeMusicTagsFromInfo(info);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -271,18 +358,58 @@ export async function resolveTrackTags(params: {
         };
       }
     }
+    if (kind === "youtube") {
+      // Only Topic channels answer here; a normal upload falls through to the
+      // hints, keeping the "never YouTube" rule where it earns its keep.
+      const tags = await fetchYouTubeMusicTags(url, {
+        cookiePath: params.cookiePath,
+        signal: params.signal,
+      });
+      if (tags) {
+        return {
+          ...tags,
+          title: tags.title ?? params.titleHint,
+          artist: tags.artist ?? params.artistHint,
+        };
+      }
+    }
   }
 
   return {
     title: params.titleHint,
-    artist: params.artistHint,
+    artist: params.artistHint
+      ? stripTopicSuffix(params.artistHint) || params.artistHint
+      : undefined,
     source: "hint",
   };
+}
+
+/**
+ * Crop a padded 16:9 cover back to the square art at its centre. Best effort:
+ * a failed crop yields the original file rather than losing the artwork.
+ */
+async function cropToSquare(
+  filePath: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const out = filePath.replace(/(\.[^.]+)$/, "_sq$1");
+  try {
+    await runCommandOk(
+      "ffmpeg",
+      ["-v", "error", "-i", filePath, "-vf", "crop=ih:ih", "-y", out],
+      { signal },
+    );
+    await fs.unlink(filePath).catch(() => undefined);
+    return out;
+  } catch {
+    return filePath;
+  }
 }
 
 export async function downloadArtworkFile(params: {
   artworkUrl: string;
   workDir: string;
+  squareCrop?: boolean;
   signal?: AbortSignal;
 }): Promise<string | null> {
   try {
@@ -304,7 +431,9 @@ export async function downloadArtworkFile(params: {
       `cover_${randomUUID()}.${ext}`,
     );
     await fs.writeFile(filePath, buf);
-    return filePath;
+    return params.squareCrop
+      ? await cropToSquare(filePath, params.signal)
+      : filePath;
   } catch {
     return null;
   }
