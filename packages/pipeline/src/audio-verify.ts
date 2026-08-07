@@ -345,6 +345,14 @@ export function classifyForDj(analysis: AudioAnalysis): DjVerdict {
   return { tier, headline, warnings, analysis };
 }
 
+/**
+ * The bar for "club-ready only" mode: measured content reaching CLUB_HZ,
+ * whatever the container claims. Deliberately a tier check rather than a raw
+ * cutoff comparison so the threshold lives in exactly one place.
+ */
+export const isClubReady = (tier: DjTier): boolean =>
+  tier === "master" || tier === "club";
+
 export async function verifyForDj(
   filePath: string,
   options: SpawnOptions = {},

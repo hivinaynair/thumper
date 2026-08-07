@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   classifyForDj,
   impliedBitrateKbps,
+  isClubReady,
   isLosslessCodec,
   type AudioAnalysis,
 } from "./audio-verify";
@@ -242,5 +243,25 @@ describe("impliedBitrateKbps", () => {
     expect(impliedBitrateKbps(16134)).toBe(128);
     expect(impliedBitrateKbps(19500)).toBe(256);
     expect(impliedBitrateKbps(21000)).toBeNull();
+  });
+});
+
+describe("isClubReady", () => {
+  it("accepts master and club", () => {
+    expect(isClubReady("master")).toBe(true);
+    expect(isClubReady("club")).toBe(true);
+  });
+
+  it("rejects marginal and unsuitable", () => {
+    expect(isClubReady("marginal")).toBe(false);
+    expect(isClubReady("unsuitable")).toBe(false);
+  });
+
+  it("rejects a lossless container carrying lossy audio", () => {
+    // The case the whole module exists for: FLAC wrapper, 16 kHz content.
+    const tier = classifyForDj(
+      analysis({ codec: "flac", cutoffHz: 16000, cutoffRatio: 16000 / (SR / 2) }),
+    ).tier;
+    expect(isClubReady(tier)).toBe(false);
   });
 });
