@@ -43,6 +43,13 @@
       "when": 1786165361501,
       "tag": "0005_thin_loners",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786167929177,
+      "tag": "0006_sharp_king_bedlam",
+      "breakpoints": true
     }
   ]
 }
