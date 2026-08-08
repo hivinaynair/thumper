@@ -19,7 +19,7 @@ export type TrackTags = {
   genre?: string;
   date?: string;
   artworkUrl?: string;
-  source: "spotify" | "soundcloud" | "youtube-music" | "hint";
+  source: "spotify" | "soundcloud" | "youtube-music" | "bandcamp" | "hint";
   /**
    * YouTube pads square cover art onto a 16:9 canvas. Set when the artwork must
    * be pillarbox-cropped before it becomes an APIC frame — and dropped if no
@@ -174,6 +174,58 @@ export function youtubeMusicTagsFromInfo(
     artworkNeedsSquareCrop: true,
     source: "youtube-music",
   };
+}
+
+/**
+ * Bandcamp tags. Its info dict is artist-entered rather than scraped, and the
+ * thumbnail is already square cover art (700x700), so unlike YouTube there is
+ * no pillarbox to crop.
+ */
+export function bandcampTagsFromInfo(
+  info: Record<string, unknown>,
+): TrackTags | null {
+  const title =
+    [info.track, info.title].find(
+      (v): v is string => typeof v === "string" && v.trim().length > 0,
+    )?.trim() ?? undefined;
+  const artist = artistNamesFromInfo(info).join(", ") || undefined;
+  if (!title && !artist) return null;
+
+  const album =
+    typeof info.album === "string" && info.album.trim()
+      ? info.album.trim()
+      : undefined;
+  const genre =
+    typeof info.genre === "string" && info.genre.trim()
+      ? info.genre.trim()
+      : undefined;
+  const release = info.release_date ?? info.upload_date;
+  const date =
+    typeof release === "string" && /^\d{8}$/.test(release)
+      ? `${release.slice(0, 4)}-${release.slice(4, 6)}-${release.slice(6, 8)}`
+      : undefined;
+  const thumb = typeof info.thumbnail === "string" ? info.thumbnail : null;
+
+  return {
+    title,
+    artist,
+    album,
+    genre,
+    date,
+    artworkUrl: thumb ? thumb.replace(/^http:\/\//i, "https://") : undefined,
+    source: "bandcamp",
+  };
+}
+
+export async function fetchBandcampTags(
+  url: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<TrackTags | null> {
+  try {
+    return bandcampTagsFromInfo(await dumpJson(url, null, options.signal));
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchYouTubeMusicTags(
@@ -358,6 +410,16 @@ export async function resolveTrackTags(params: {
         cookiePath: params.cookiePath,
         signal: params.signal,
       });
+      if (tags) {
+        return {
+          ...tags,
+          title: tags.title ?? params.titleHint,
+          artist: tags.artist ?? params.artistHint,
+        };
+      }
+    }
+    if (kind === "bandcamp") {
+      const tags = await fetchBandcampTags(url, { signal: params.signal });
       if (tags) {
         return {
           ...tags,

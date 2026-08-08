@@ -11,7 +11,7 @@ export async function GET(req: Request) {
 
   if (!isSupportedSource(url)) {
     return NextResponse.json(
-      { error: "Only YouTube, SoundCloud, or Spotify are supported" },
+      { error: "Only YouTube, SoundCloud, Bandcamp, or Spotify are supported" },
       { status: 400 },
     );
   }

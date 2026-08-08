@@ -109,7 +109,8 @@ async function main() {
     const childIds: string[] = [];
     for (const track of tracks) {
       const kind = detectSourceKind(track.url) ?? detectSourceKind(parent.url);
-      if (kind !== "youtube" && kind !== "soundcloud") continue;
+      if (kind !== "youtube" && kind !== "soundcloud" && kind !== "bandcamp")
+        continue;
 
       try {
         childIds.push(await enqueueChildTrack(parent, track, kind, context));
@@ -128,7 +129,7 @@ async function main() {
   async function enqueueChildTrack(
     parent: DownloadJobPayload,
     track: PlaylistEntry,
-    kind: "youtube" | "soundcloud",
+    kind: "youtube" | "soundcloud" | "bandcamp",
     context?: { driveFolderId?: string },
   ): Promise<string> {
     const [child] = await db

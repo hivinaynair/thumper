@@ -138,7 +138,7 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         error:
-          "Only YouTube, SoundCloud, or Spotify (mirrored via YT/SC) URLs are supported",
+          "Only YouTube, SoundCloud, Bandcamp, or Spotify (mirrored via YT/SC) URLs are supported",
       },
       { status: 400 },
     );
@@ -148,7 +148,8 @@ export async function POST(req: Request) {
   if (
     sourceKind !== "youtube" &&
     sourceKind !== "soundcloud" &&
-    sourceKind !== "spotify"
+    sourceKind !== "spotify" &&
+    sourceKind !== "bandcamp"
   ) {
     return NextResponse.json({ error: "Unsupported URL" }, { status: 400 });
   }

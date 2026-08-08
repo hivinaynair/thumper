@@ -551,7 +551,7 @@ export default function DownloaderPage() {
 						<input
 							value={url}
 							onChange={(e) => setUrl(e.target.value)}
-							placeholder="YouTube, SoundCloud, or Spotify"
+							placeholder="YouTube, SoundCloud, Bandcamp, or Spotify"
 							required
 						/>
 					</label>

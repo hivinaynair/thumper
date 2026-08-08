@@ -910,9 +910,14 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
     await fs.mkdir(outDir, { recursive: true });
 
     const kind = detectSourceKind(payload.url);
-    if (kind !== "youtube" && kind !== "soundcloud" && kind !== "spotify") {
+    if (
+      kind !== "youtube" &&
+      kind !== "soundcloud" &&
+      kind !== "spotify" &&
+      kind !== "bandcamp"
+    ) {
       throw new Error(
-        "Only YouTube, SoundCloud, and Spotify (mirror) URLs are supported",
+        "Only YouTube, SoundCloud, Bandcamp, and Spotify (mirror) URLs are supported",
       );
     }
 
@@ -1010,11 +1015,16 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
       return;
     }
 
-    // ——— YouTube / SoundCloud ———
-    cookieTmp = await materializeCookieFile(
-      payload.userId,
-      kind === "soundcloud" ? "soundcloud" : "youtube",
-    );
+    // ——— YouTube / SoundCloud / Bandcamp ———
+    // Bandcamp serves its lossless formats to anonymous requests, and we hold
+    // no Bandcamp cookies, so don't hand it another site's jar.
+    cookieTmp =
+      kind === "bandcamp"
+        ? null
+        : await materializeCookieFile(
+            payload.userId,
+            kind === "soundcloud" ? "soundcloud" : "youtube",
+          );
     await ensureNotCancelled(signal, db, payload.jobId, payload.parentJobId);
 
     let trackUrl = payload.url;

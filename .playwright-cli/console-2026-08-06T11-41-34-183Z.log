@@ -1,0 +1,9 @@
+[    5129ms] [ERROR] Permissions policy violation: encrypted-media is not allowed in this document. @ https://widget.sndcdn.com/widget-9-95db8791ed05.js:54
+[    5130ms] [WARNING] Encrypted Media access has been blocked because of a Feature Policy applied to the current document. See https://crbug.com/414348233 for more details. @ https://widget.sndcdn.com/widget-9-95db8791ed05.js:54
+[    5130ms] [ERROR] Permissions policy violation: encrypted-media is not allowed in this document. @ https://widget.sndcdn.com/widget-9-95db8791ed05.js:54
+[    5130ms] [WARNING] Encrypted Media access has been blocked because of a Feature Policy applied to the current document. See https://crbug.com/414348233 for more details. @ https://widget.sndcdn.com/widget-9-95db8791ed05.js:54
+[    5130ms] [ERROR] Permissions policy violation: encrypted-media is not allowed in this document. @ https://widget.sndcdn.com/widget-9-95db8791ed05.js:54
+[    5130ms] [WARNING] Encrypted Media access has been blocked because of a Feature Policy applied to the current document. See https://crbug.com/414348233 for more details. @ https://widget.sndcdn.com/widget-9-95db8791ed05.js:54
+[    5508ms] [WARNING] invalid params passed into zE.identify {name: , email: } @ https://static.zdassets.com/web_widget/classic/latest/web-widget-main-d1a415e.js:1
+[   44186ms] TypeError: webAudioContext.createBuffer is not a function
+    at HTMLBodyElement.<anonymous> (https://hypeddit.com/js/multiple-player-wave.js?v=155.1.201:346:42)

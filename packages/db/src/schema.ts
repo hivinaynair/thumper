@@ -46,6 +46,7 @@ export const sourceKindEnum = pgEnum("source_kind", [
   "soundcloud",
   "spotify",
   "patreon",
+  "bandcamp",
 ]);
 
 export const jobs = pgTable("jobs", {
