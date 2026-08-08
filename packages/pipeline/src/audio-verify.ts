@@ -349,25 +349,68 @@ const MARGINAL_HZ = 17000;
 const NYQUIST_FULL_BAND_RATIO = 0.88;
 const NYQUIST_RATIO_MAX_RATE = 48000;
 
-export function classifyForDj(analysis: AudioAnalysis): DjVerdict {
+export type ClassifyOptions = {
+  /**
+   * True only when the bytes came from the artist rather than a stream: a
+   * SoundCloud free download / original upload (`format_id=download`), or a
+   * Hypeddit gate.
+   *
+   * Required for "master", because spectral analysis alone cannot earn that
+   * label. Every YouTube download is Opus, which stops at ~20.5 kHz — above
+   * FULL_BAND_HZ, so it reads as full band and gets promoted to master once
+   * rewrapped into FLAC. Provenance is the only signal that separates "this
+   * really is the artist's file" from "this is a stream in a lossless box".
+   *
+   * Defaults to false: an unstated origin is not evidence of a master.
+   */
+  artistOriginal?: boolean;
+};
+
+export function classifyForDj(
+  analysis: AudioAnalysis,
+  options: ClassifyOptions = {},
+): DjVerdict {
   const warnings: string[] = [];
   const { cutoffHz, cutoffRatio, losslessContainer, peakDb, sampleRate } =
     analysis;
+  const artistOriginal = options.artistOriginal === true;
 
-  const fullBand =
+  // Two bars, because the two decisions have opposite failure costs.
+  //
+  // Lenient (either test) guards the "laundered lossy" accusation. Calling a
+  // genuine file fake is the worse error, so a 32 kHz master reaching 15.5 kHz
+  // passes on ratio and a wide 44.1 kHz file passes on the absolute threshold.
+  const fullBandLenient =
     cutoffHz >= FULL_BAND_HZ ||
     (sampleRate <= NYQUIST_RATIO_MAX_RATE &&
       cutoffRatio >= NYQUIST_FULL_BAND_RATIO);
 
+  // Strict (ratio only, at or below 48 kHz) guards promotion to "master".
+  // Opus stops at 20.5 kHz, which clears 19.5 kHz absolutely but is only 0.854
+  // of a 48 kHz file's Nyquist — OR-ing the two is what let a YouTube download
+  // rewrapped as FLAC read as full band. Above 48 kHz the ratio is meaningless
+  // (no music has content near 48 kHz) so hi-res uses the absolute threshold.
+  const fullBandStrict =
+    sampleRate <= NYQUIST_RATIO_MAX_RATE
+      ? cutoffRatio >= NYQUIST_FULL_BAND_RATIO
+      : cutoffHz >= FULL_BAND_HZ;
+
   // A lossless container that isn't carrying a full band is a laundered lossy
   // file. This is the case that used to slip through as "Lossless" and end up
   // in a set.
-  const launderedLossy = losslessContainer && !fullBand;
+  const launderedLossy = losslessContainer && !fullBandLenient;
 
   // Note "master" also requires CLUB_HZ: a 32 kHz PCM file is full band for its
-  // own rate without being a file you want on a big system.
+  // own rate without being a file you want on a big system. And it requires
+  // artistOriginal — see ClassifyOptions. A stream rewrapped losslessly tops
+  // out at "club" however wide its spectrum looks.
   let tier: DjTier;
-  if (losslessContainer && fullBand && cutoffHz >= CLUB_HZ) {
+  if (
+    artistOriginal &&
+    losslessContainer &&
+    fullBandStrict &&
+    cutoffHz >= CLUB_HZ
+  ) {
     tier = "master";
   } else if (cutoffHz >= CLUB_HZ) {
     tier = "club";
@@ -478,7 +521,9 @@ export function isQualityGateError(err: unknown): err is QualityGateError {
 
 export async function verifyForDj(
   filePath: string,
-  options: SpawnOptions = {},
+  options: SpawnOptions & ClassifyOptions = {},
 ): Promise<DjVerdict> {
-  return classifyForDj(await analyzeAudioFile(filePath, options));
+  return classifyForDj(await analyzeAudioFile(filePath, options), {
+    artistOriginal: options.artistOriginal === true,
+  });
 }

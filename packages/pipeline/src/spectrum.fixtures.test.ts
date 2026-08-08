@@ -128,16 +128,21 @@ describe("estimateCutoff on real encodes", () => {
 describe("club-ready gate on real encodes", () => {
   function tierOf(file: string, losslessContainer: boolean) {
     const cutoffHz = cutoffHzOf(file);
-    return classifyForDj({
-      codec: losslessContainer ? "flac" : "mp3",
-      sampleRate: SAMPLE_RATE,
-      channels: 2,
-      cutoffHz,
-      cutoffRatio: cutoffHz / (SAMPLE_RATE / 2),
-      losslessContainer,
-      peakDb: -1,
-      durationSec: 6,
-    });
+    return classifyForDj(
+      {
+        codec: losslessContainer ? "flac" : "mp3",
+        sampleRate: SAMPLE_RATE,
+        channels: 2,
+        cutoffHz,
+        cutoffRatio: cutoffHz / (SAMPLE_RATE / 2),
+        losslessContainer,
+        peakDb: -1,
+        durationSec: 6,
+      },
+      // These fixtures stand in for artist-supplied files, so provenance is
+      // granted and the spectrum is left as the only thing under test.
+      { artistOriginal: true },
+    );
   }
 
   it("accepts a genuine master", () => {

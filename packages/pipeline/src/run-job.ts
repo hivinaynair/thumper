@@ -178,9 +178,10 @@ async function ensureNotCancelled(
 async function safeVerifyForDj(
   filePath: string,
   signal: AbortSignal,
+  artistOriginal = false,
 ): Promise<DjVerdict | null> {
   try {
-    return await verifyForDj(filePath, { signal });
+    return await verifyForDj(filePath, { signal, artistOriginal });
   } catch (err) {
     if (err instanceof ProcessCancelledError) throw err;
     return null;
@@ -241,8 +242,11 @@ async function processHypedditRetag(params: {
   // these are frequently 320 kbps MP3s about to be rewrapped as FLAC, after
   // which every container-level check will happily report "lossless".
   // Unlike the main path there is no YouTube mirror, so a rejection fails outright.
+  // A Hypeddit gate is the artist handing over their own file, so it is
+  // eligible for "master" — but only eligible: the spectral checks still have
+  // to agree, which is what catches a 320 kbps MP3 dressed up as WAV.
   if (payload.clubReadyOnly) {
-    const verdict = await safeVerifyForDj(downloaded.filePath, signal);
+    const verdict = await safeVerifyForDj(downloaded.filePath, signal, true);
     if (!verdict || !isClubReady(verdict.tier)) {
       await fs.unlink(downloaded.filePath).catch(() => undefined);
       throw qualityGateError(verdict, "The Hypeddit Free Download");
@@ -485,7 +489,17 @@ async function processTrack(params: {
   const sourceLabel =
     params.qualitySourceLabel ??
     (soundcloud ? "SoundCloud’s stream" : "The YouTube audio");
-  const verdict = await safeVerifyForDj(downloaded.filePath, signal);
+  // Only the artist's own upload can be a master. `format_id=download` is the
+  // SoundCloud free download; everything else here is a stream or a mirror.
+  const isArtistOriginal =
+    soundcloud &&
+    typeof downloaded.formatId === "string" &&
+    downloaded.formatId.toLowerCase() === "download";
+  const verdict = await safeVerifyForDj(
+    downloaded.filePath,
+    signal,
+    isArtistOriginal,
+  );
 
   // Both "measured and too lossy" and "could not measure at all" are rejections
   // here: an unmeasurable file is not evidence of a good one, and the switch
