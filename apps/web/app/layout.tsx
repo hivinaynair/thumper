@@ -103,7 +103,7 @@ export default function RootLayout({
 							<nav>
 								<Show when="signed-in">
 									<Link href="/downloader">Downloader</Link>
-									<Link href="/retag">WAV → AIFF</Link>
+									<Link href="/retag">Retag</Link>
 									<UserButton
 										userProfileProps={{
 											additionalOAuthScopes: {

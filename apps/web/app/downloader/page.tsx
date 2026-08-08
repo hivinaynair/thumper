@@ -35,7 +35,7 @@ type Job = {
 		sourceFormatId?: string;
 		/** SoundCloud free-download / original upload (`format_id=download`). */
 		soundcloudOriginal?: boolean;
-		/** Hypeddit Free Download gate → tagged AIFF. */
+		/** Hypeddit Free Download gate → tagged FLAC. */
 		hypedditOriginal?: boolean;
 		/** Non-Hypeddit purchase link — open and download manually. */
 		manualDownloadUrl?: string;
@@ -680,7 +680,7 @@ export default function DownloaderPage() {
 									{job.result?.hypedditOriginal ? (
 										<div className="quality-badge original">
 											<strong>Hypeddit original</strong>
-											{" — Free Download (WAV or MP3) → tagged AIFF"}
+											{" — Free Download (WAV or MP3) → tagged FLAC"}
 										</div>
 									) : null}
 									{job.result?.soundcloudOriginal ? (
@@ -700,7 +700,7 @@ export default function DownloaderPage() {
 											>
 												Open gate
 											</a>
-											{", then use WAV → AIFF to tag."}
+											{", then use Retag to tag it."}
 										</div>
 									) : null}
 									{job.result?.qualityRejected ? (

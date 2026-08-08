@@ -329,7 +329,7 @@ export default function RetagPage() {
 		<main className="main">
 			<div className="page-head">
 				<div className="page-head-main">
-					<h1>Audio → AIFF</h1>
+					<h1>Audio → FLAC</h1>
 					<p>
 						Upload one or many SoundCloud free-download files, confirm matches,
 						convert losslessly with artwork — download or send to Drive.
@@ -523,7 +523,7 @@ export default function RetagPage() {
 							>
 								{busy
 									? "Queuing…"
-									: `Convert ${approvedCount} to AIFF`}
+									: `Convert ${approvedCount} to FLAC`}
 							</button>
 						</div>
 					</div>
@@ -560,7 +560,7 @@ export default function RetagPage() {
 										<div className="retag-actions">
 											{fileId ? (
 												<a className="btn" href={`/api/files/${fileId}`}>
-													Download AIFF
+													Download FLAC
 												</a>
 											) : null}
 											{driveUrl ? (
