@@ -116,6 +116,50 @@ export const DownloadJobPayloadSchema = z.object({
 });
 export type DownloadJobPayload = z.infer<typeof DownloadJobPayloadSchema>;
 
+/**
+ * Audio the retag flow accepts. The pipeline itself is codec-agnostic —
+ * convertAudio probes the real format and the extension is only a hint — so
+ * this list exists to reject obvious non-audio at the upload boundary, not
+ * because anything downstream needs WAV.
+ */
+export const RETAG_INPUT_EXTENSIONS = ["wav", "mp3", "m4a", "flac"] as const;
+
+export const RETAG_INPUT_CONTENT_TYPES = [
+  "audio/wav",
+  "audio/x-wav",
+  "audio/wave",
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/mp4",
+  "audio/x-m4a",
+  "audio/flac",
+  "audio/x-flac",
+  // Browsers routinely send this for audio dragged off a disk.
+  "application/octet-stream",
+] as const;
+
+/** Human list for error copy: "WAV, MP3, M4A, or FLAC". */
+export const RETAG_INPUT_LABEL = "WAV, MP3, M4A, or FLAC";
+
+export function retagInputExtension(filename: string): string | null {
+  const match = /\.([a-z0-9]+)$/i.exec(filename.trim());
+  const ext = match?.[1]?.toLowerCase();
+  return ext && (RETAG_INPUT_EXTENSIONS as readonly string[]).includes(ext)
+    ? ext
+    : null;
+}
+
+/**
+ * Content type is advisory: browsers report `application/octet-stream` for
+ * plenty of real audio, so a recognised extension alone is enough.
+ */
+export function isRetagInput(filename: string, contentType = ""): boolean {
+  if (retagInputExtension(filename)) return true;
+  const type = contentType.toLowerCase().split(";")[0]?.trim() ?? "";
+  return (RETAG_INPUT_CONTENT_TYPES as readonly string[]).includes(type)
+    && type !== "application/octet-stream";
+}
+
 export const CreateRetagJobInputSchema = z.object({
   inputStorageKey: z.string().min(1),
   metadataUrl: z.string().url(),

@@ -2,7 +2,11 @@
 
 import { upload } from "@vercel/blob/client";
 import { useAuth } from "@clerk/nextjs";
-import { trackDisplayName } from "@thumper/shared";
+import {
+	isRetagInput,
+	RETAG_INPUT_LABEL,
+	trackDisplayName,
+} from "@thumper/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 type Candidate = {
@@ -144,10 +148,10 @@ export default function RetagPage() {
 		async (fileList: FileList | null) => {
 			if (!fileList || fileList.length === 0) return;
 			const files = [...fileList].filter(
-				(f) => /\.wav$/i.test(f.name) || f.type.includes("wav"),
+				(f) => isRetagInput(f.name, f.type),
 			);
 			if (files.length === 0) {
-				setError("Select one or more WAV files");
+				setError(`Select one or more ${RETAG_INPUT_LABEL} files`);
 				return;
 			}
 
@@ -325,9 +329,9 @@ export default function RetagPage() {
 		<main className="main">
 			<div className="page-head">
 				<div className="page-head-main">
-					<h1>WAV → AIFF</h1>
+					<h1>Audio → AIFF</h1>
 					<p>
-						Upload one or many SoundCloud free-download WAVs, confirm matches,
+						Upload one or many SoundCloud free-download files, confirm matches,
 						convert losslessly with artwork — download or send to Drive.
 					</p>
 				</div>
@@ -336,7 +340,7 @@ export default function RetagPage() {
 			<section className="panel">
 				<div className="panel-head">
 					<h2>
-						{step === "upload" && "Upload WAVs"}
+						{step === "upload" && "Upload files"}
 						{step === "confirm" && "Confirm matches"}
 						{step === "converting" && "Converting"}
 						{step === "done" && "Done"}
@@ -356,7 +360,7 @@ export default function RetagPage() {
 						<input
 							ref={fileInputRef}
 							type="file"
-							accept=".wav,audio/wav,audio/x-wav"
+							accept=".wav,.mp3,.m4a,.flac,audio/wav,audio/x-wav,audio/mpeg,audio/mp4,audio/x-m4a,audio/flac"
 							multiple
 							disabled={busy}
 							onChange={(e) => void onFiles(e.target.files)}
@@ -364,7 +368,7 @@ export default function RetagPage() {
 						<p className="panel-note">
 							{busy
 								? "Working…"
-								: "Select multiple WAVs — large files upload directly to storage (up to 500 MB each)."}
+								: `Select multiple files (${RETAG_INPUT_LABEL}) — large files upload directly to storage (up to 500 MB each).`}
 						</p>
 					</div>
 				) : null}

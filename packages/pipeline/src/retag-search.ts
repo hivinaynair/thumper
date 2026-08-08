@@ -11,19 +11,19 @@ export type SoundCloudSearchHit = {
 };
 
 /**
- * Turn an uploaded WAV filename into a SoundCloud search query.
- * Handles `Artist - Title.wav`, underscores, and trailing quality tags.
+ * Turn an uploaded audio filename into a SoundCloud search query.
+ * Handles `Artist - Title.<ext>`, underscores, and trailing quality tags.
  */
-export function queryFromWavFilename(filename: string): string {
+export function queryFromAudioFilename(filename: string): string {
   const base = filename
     .replace(/^.*[/\\]/, "")
-    .replace(/\.wav$/i, "")
+    .replace(/\.(wav|mp3|m4a|flac|aiff?|ogg|opus)$/i, "")
     .replace(/_/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   // Drop common SoundCloud free-download / format suffixes that poison search.
   return stripFreeDownloadLabel(base)
-    .replace(/\s*[\(\[]?(hq|wav|aiff|flac)[\)\]]?\s*$/i, "")
+    .replace(/\s*[\(\[]?(hq|wav|aiff|flac|mp3|m4a)[\)\]]?\s*$/i, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -90,3 +90,6 @@ export async function searchSoundCloudTracks(
 
   return hits;
 }
+
+/** @deprecated Use {@link queryFromAudioFilename} — retag is no longer WAV-only. */
+export const queryFromWavFilename = queryFromAudioFilename;

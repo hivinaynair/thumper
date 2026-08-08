@@ -351,17 +351,35 @@ async function processTrack(params: {
       return;
     }
     if (payload.freeDownloadsOnly) {
-      throw new Error(
-        "No Hypeddit Free Download on this track (free-downloads-only mode). Turn the switch off to allow streams.",
+      // No Hypeddit gate, but the artist may still expose the original upload
+      // directly (`format_id=download`) — that is a free download too, and the
+      // format selector takes it ahead of any stream.
+      const hasFreeDownload = await probeSoundCloudFreeDownload(
+        params.trackUrl,
+        cookieTmp,
+        signal,
       );
+      if (!hasFreeDownload) {
+        throw new Error(
+          "No free download on this track — no Hypeddit gate and no artist original. Turn Free downloads only off to mirror it from YouTube.",
+        );
+      }
     }
   }
 
   let youtubeAlreadyTried = false;
 
-  /** True when a SoundCloud failure still has an untried YouTube mirror left. */
+  /**
+   * True when a SoundCloud failure still has an untried YouTube mirror left.
+   * Free-downloads-only excludes itself: a mirror is by definition not the
+   * artist's free download, so falling back to one would quietly deliver the
+   * thing the switch exists to refuse.
+   */
   const canTryYoutubeMirror = () =>
-    soundcloud && !youtubeAlreadyTried && params.allowYoutubeFallback !== false;
+    soundcloud &&
+    !payload.freeDownloadsOnly &&
+    !youtubeAlreadyTried &&
+    params.allowYoutubeFallback !== false;
 
   const tryYoutubeMirror = (reason: FallbackReason) =>
     fallbackSoundCloudToYoutube({
@@ -377,27 +395,29 @@ async function processTrack(params: {
       reason,
     });
 
-  if (soundcloud && params.preferYoutube !== false) {
+  // SoundCloud is worth using only when it hands over a free download — the
+  // artist's original upload or a Hypeddit gate, which is what the switch
+  // declares. Its streams top out at 128 kbps MP3 / 160 kbps AAC, strictly
+  // worse than YouTube Premium's ~280 kbps Opus, so everything else mirrors.
+  if (soundcloud && !payload.freeDownloadsOnly && params.preferYoutube !== false) {
     await update({ stage: "resolving", progress: 18 });
-    const hasFreeDownload = await probeSoundCloudFreeDownload(
-      params.trackUrl,
-      cookieTmp,
-      signal,
+    const ytResult = await trySoundCloudViaYoutubeFirst({
+      deps,
+      trackUrl: params.trackUrl,
+      titleHint: params.titleHint,
+      artistHint: params.artistHint,
+      scCookieTmp: cookieTmp,
+      workDir,
+      outDir,
+      catalogUrl: params.catalogUrl ?? params.trackUrl,
+    });
+    if (ytResult === "downloaded") return;
+    // Deliberately no SoundCloud-stream fallback: a stream would be worse than
+    // what we just failed to get, so the job fails instead of quietly
+    // delivering the lower-quality copy.
+    throw new Error(
+      "No confident YouTube mirror for this SoundCloud track, and its stream is lower quality than a mirror. Tick “Free downloads only” if the artist offers a free download.",
     );
-    if (!hasFreeDownload) {
-      const ytResult = await trySoundCloudViaYoutubeFirst({
-        deps,
-        trackUrl: params.trackUrl,
-        titleHint: params.titleHint,
-        artistHint: params.artistHint,
-        scCookieTmp: cookieTmp,
-        workDir,
-        outDir,
-        catalogUrl: params.catalogUrl ?? params.trackUrl,
-      });
-      if (ytResult === "downloaded") return;
-      if (ytResult === "youtube_failed") youtubeAlreadyTried = true;
-    }
   }
 
   await update({

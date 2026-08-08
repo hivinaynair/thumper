@@ -5,11 +5,17 @@ import {
 } from "@vercel/blob/client";
 import {
   putBytes,
-  queryFromWavFilename,
+  queryFromAudioFilename,
   safeUserId,
   useBlobStorage,
   userStorageKey,
 } from "@thumper/pipeline";
+import {
+  isRetagInput,
+  RETAG_INPUT_CONTENT_TYPES,
+  RETAG_INPUT_LABEL,
+  retagInputExtension,
+} from "@thumper/shared";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
@@ -18,11 +24,7 @@ export const maxDuration = 300;
 
 const MAX_BYTES = 500 * 1024 * 1024; // 500 MB
 
-function isWav(name: string, type: string): boolean {
-  return (
-    /\.wav$/i.test(name) || type === "audio/wav" || type === "audio/x-wav"
-  );
-}
+
 
 function sanitizeName(name: string): string {
   return name.replace(/[^\w.\- ()]+/g, "_");
@@ -78,16 +80,11 @@ export async function POST(req: Request) {
           if (!pathname.startsWith(expected) || pathname.includes("..")) {
             throw new Error("Invalid upload path");
           }
-          if (!/\.wav$/i.test(pathname)) {
-            throw new Error("Only WAV files are supported");
+          if (!retagInputExtension(pathname)) {
+            throw new Error(`Only ${RETAG_INPUT_LABEL} files are supported`);
           }
           return {
-            allowedContentTypes: [
-              "audio/wav",
-              "audio/x-wav",
-              "audio/wave",
-              "application/octet-stream",
-            ],
+            allowedContentTypes: [...RETAG_INPUT_CONTENT_TYPES],
             maximumSizeInBytes: MAX_BYTES,
             addRandomSuffix: false,
             allowOverwrite: true,
@@ -119,9 +116,9 @@ export async function POST(req: Request) {
   }
 
   const name = file.name || "upload.wav";
-  if (!isWav(name, file.type)) {
+  if (!isRetagInput(name, file.type)) {
     return NextResponse.json(
-      { error: "Only WAV files are supported" },
+      { error: `Only ${RETAG_INPUT_LABEL} files are supported` },
       { status: 400 },
     );
   }
@@ -143,12 +140,16 @@ export async function POST(req: Request) {
     randomUUID(),
     sanitizeName(name),
   );
-  await putBytes(key, buf, { contentType: "audio/wav" });
+  // Keep the browser's type when it gave a real one; the extension carries the
+  // format downstream either way.
+  await putBytes(key, buf, {
+    contentType: file.type || "application/octet-stream",
+  });
 
   return NextResponse.json({
     inputStorageKey: key,
     filename: name,
     sizeBytes: buf.byteLength,
-    searchQuery: queryFromWavFilename(name),
+    searchQuery: queryFromAudioFilename(name),
   });
 }

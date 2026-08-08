@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import {
   detectSourceKind,
+  isRetagInput,
   isSupportedSource,
+  retagInputExtension,
   looksLikePlaylistUrl,
   sanitizeFilename,
   trackDisplayName,
@@ -60,5 +62,23 @@ describe("trackDisplayName", () => {
 
   it("keeps Artist - Title when the title does not mention the artist", () => {
     expect(trackDisplayName("Oppidan", "Borne")).toBe("Oppidan - Borne");
+  });
+});
+
+describe("retag input acceptance", () => {
+  it("accepts the formats the retag flow converts", () => {
+    for (const ext of ["wav", "mp3", "m4a", "flac"]) {
+      expect(isRetagInput(`Artist - Track.${ext}`, "")).toBe(true);
+      expect(retagInputExtension(`Artist - Track.${ext}`)).toBe(ext);
+    }
+  });
+
+  it("accepts audio the browser labels only by content type", () => {
+    expect(isRetagInput("upload", "audio/mpeg")).toBe(true);
+  });
+
+  it("rejects non-audio, including a bare octet-stream with no extension", () => {
+    expect(isRetagInput("notes.txt", "text/plain")).toBe(false);
+    expect(isRetagInput("mystery", "application/octet-stream")).toBe(false);
   });
 });

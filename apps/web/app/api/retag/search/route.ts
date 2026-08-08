@@ -1,6 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import {
-  queryFromWavFilename,
+  queryFromAudioFilename,
   searchSoundCloudTracks,
 } from "@thumper/pipeline";
 import { NextResponse } from "next/server";
@@ -29,7 +29,7 @@ export async function POST(req: Request) {
 
   const query =
     (body.query?.trim() ||
-      (body.filename ? queryFromWavFilename(body.filename) : "")) ||
+      (body.filename ? queryFromAudioFilename(body.filename) : "")) ||
     "";
   if (!query) {
     return NextResponse.json(
