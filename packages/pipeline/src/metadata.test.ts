@@ -107,6 +107,34 @@ describe("artistNamesFromInfo", () => {
   it("strips the Topic suffix off the uploader fallback", () => {
     expect(artistNamesFromInfo({ uploader: "MPH - Topic" })).toEqual(["MPH"]);
   });
+
+  // Real dump: yt-dlp repeated the credit once per release, and the tag came
+  // out "Oscar Wallyn, oscar wallyn, oscar wallyn".
+  it("dedupes a credit repeated in different cases, keeping the first casing", () => {
+    expect(
+      artistNamesFromInfo({
+        artists: ["Oscar Wallyn", "oscar wallyn", "oscar wallyn"],
+      }),
+    ).toEqual(["Oscar Wallyn"]);
+  });
+
+  it("dedupes across the separator split too", () => {
+    expect(artistNamesFromInfo({ artist: "WINK, wink, borne" })).toEqual([
+      "WINK",
+      "borne",
+    ]);
+  });
+
+  it("keeps genuinely different artists in order", () => {
+    expect(artistNamesFromInfo({ artists: ["WINK", "borne"] })).toEqual([
+      "WINK",
+      "borne",
+    ]);
+  });
+
+  it("ignores surrounding whitespace when comparing", () => {
+    expect(artistNamesFromInfo({ artists: ["MPH", " mph "] })).toEqual(["MPH"]);
+  });
 });
 
 describe("youtubeMusicTagsFromInfo", () => {

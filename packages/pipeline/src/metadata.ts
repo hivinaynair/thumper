@@ -91,6 +91,22 @@ export function stripTopicSuffix(name: string): string {
 }
 
 /**
+ * Drop repeats of the same credit. yt-dlp lists `artists` once per release the
+ * track appears on, so a single artist arrives two or three times — often in
+ * different cases — and the tag came out "Oscar Wallyn, oscar wallyn, oscar
+ * wallyn". First spelling wins: it's the one with the label's own casing.
+ */
+export function dedupeArtistNames(names: string[]): string[] {
+  const seen = new Set<string>();
+  return names.filter((name) => {
+    const key = name.trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
  * Artist names out of a yt-dlp info dict. Prefers the real credit (`artists`)
  * over the channel that uploaded it, since a label or aggregator account says
  * nothing useful about who made the track.
@@ -101,12 +117,14 @@ export function artistNamesFromInfo(info: Record<string, unknown>): string[] {
         typeof a === "string" ? splitArtistNames(a) : [],
       )
     : [];
-  if (credited.length) return credited;
+  if (credited.length) return dedupeArtistNames(credited);
 
   const fallback = [info.artist, info.uploader, info.creator].find(
     (v): v is string => typeof v === "string" && v.trim().length > 0,
   );
-  return splitArtistNames(fallback).map(stripTopicSuffix).filter(Boolean);
+  return dedupeArtistNames(
+    splitArtistNames(fallback).map(stripTopicSuffix).filter(Boolean),
+  );
 }
 
 /**
