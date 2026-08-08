@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
   detectSourceKind,
-  isPlaylistUrl,
   isSupportedSource,
   looksLikePlaylistUrl,
   sanitizeFilename,
@@ -61,22 +60,5 @@ describe("trackDisplayName", () => {
 
   it("keeps Artist - Title when the title does not mention the artist", () => {
     expect(trackDisplayName("Oppidan", "Borne")).toBe("Oppidan - Borne");
-  });
-});
-
-describe("bandcamp support", () => {
-  it("detects and accepts Bandcamp URLs", () => {
-    const url = "https://inrotation.bandcamp.com/track/short-trips";
-    expect(detectSourceKind(url)).toBe("bandcamp");
-    expect(isSupportedSource(url)).toBe(true);
-  });
-
-  it("treats an album as a playlist but a track as one song", () => {
-    expect(
-      isPlaylistUrl("https://inrotation.bandcamp.com/album/short-trips-ep"),
-    ).toBe(true);
-    expect(
-      isPlaylistUrl("https://inrotation.bandcamp.com/track/short-trips"),
-    ).toBe(false);
   });
 });

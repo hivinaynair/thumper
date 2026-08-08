@@ -36,13 +36,6 @@
       "when": 1786035600000,
       "tag": "0004_aiff_default",
       "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1786640400000,
-      "tag": "0005_bandcamp_source",
-      "breakpoints": true
     }
   ]
 }

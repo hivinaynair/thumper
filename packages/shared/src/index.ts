@@ -28,20 +28,14 @@ export const SourceKindSchema = z.enum([
   "soundcloud",
   "spotify",
   "patreon",
-  "bandcamp",
 ]);
 export type SourceKind = z.infer<typeof SourceKindSchema>;
 
-/**
- * Accepted inputs. Spotify is catalog-only — audio is mirrored from YT/SC.
- * Bandcamp is the only source that routinely serves real lossless masters
- * (WAV/AIFF/FLAC/ALAC), so the format selector picks those over any stream.
- */
+/** Accepted inputs. Spotify is catalog-only — audio is mirrored from YT/SC. */
 export const SupportedSourceKindSchema = z.enum([
   "youtube",
   "soundcloud",
   "spotify",
-  "bandcamp",
 ]);
 export type SupportedSourceKind = z.infer<typeof SupportedSourceKindSchema>;
 
@@ -154,7 +148,6 @@ export function detectSourceKind(url: string): SourceKind | null {
     if (host.includes("soundcloud.com")) return "soundcloud";
     if (host.includes("spotify.com")) return "spotify";
     if (host.includes("patreon.com")) return "patreon";
-    if (host.includes("bandcamp.com")) return "bandcamp";
     return null;
   } catch {
     return null;
@@ -178,10 +171,6 @@ export function isPlaylistUrl(url: string): boolean {
     if (host.includes("spotify.com")) {
       return /\/(playlist|album)\//.test(parsed.pathname);
     }
-    // A Bandcamp /album/ is a release; /track/ is one song.
-    if (host.includes("bandcamp.com")) {
-      return parsed.pathname.startsWith("/album/");
-    }
     return false;
   } catch {
     return false;
@@ -190,12 +179,7 @@ export function isPlaylistUrl(url: string): boolean {
 
 export function isSupportedSource(url: string): boolean {
   const kind = detectSourceKind(url);
-  return (
-    kind === "youtube" ||
-    kind === "soundcloud" ||
-    kind === "spotify" ||
-    kind === "bandcamp"
-  );
+  return kind === "youtube" || kind === "soundcloud" || kind === "spotify";
 }
 
 export function looksLikePlaylistUrl(url: string): boolean {
@@ -211,7 +195,6 @@ export function looksLikePlaylistUrl(url: string): boolean {
     if (host.includes("spotify.com")) {
       if (path.includes("/playlist/") || path.includes("/album/")) return true;
     }
-    if (host.includes("bandcamp.com") && path.startsWith("/album/")) return true;
     return false;
   } catch {
     return false;

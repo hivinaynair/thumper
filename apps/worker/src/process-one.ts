@@ -190,8 +190,7 @@ export async function processJobById(jobId: string): Promise<void> {
               throw new ProcessCancelledError();
             }
             const kind = detectSourceKind(track.url) ?? detectSourceKind(p.url);
-            if (kind !== "youtube" && kind !== "soundcloud" && kind !== "bandcamp")
-        continue;
+            if (kind !== "youtube" && kind !== "soundcloud") continue;
 
             if (index > 0 && TRACK_GAP_MS > 0) {
               await new Promise<void>((resolve, reject) => {
