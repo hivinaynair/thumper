@@ -20,6 +20,7 @@
     "@thumper/pipeline": "workspace:*",
     "@thumper/shared": "workspace:*",
     "@vercel/blob": "^2.0.0",
+    "archiver": "8.0.0",
     "drizzle-orm": "^0.45.2",
     "next": "^16.2.12",
     "pg-boss": "^12.26.3",
@@ -30,12 +31,13 @@
   },
   "devDependencies": {
     "@thumper/eslint-config": "workspace:*",
-    "extension": "workspace:*",
     "@thumper/typescript-config": "workspace:*",
+    "@types/archiver": "8.0.0",
     "@types/node": "^22.15.3",
     "@types/react": "^19.2.13",
     "@types/react-dom": "^19.2.3",
     "eslint": "^9.39.1",
+    "extension": "workspace:*",
     "typescript": "^5.9.2"
   }
 }

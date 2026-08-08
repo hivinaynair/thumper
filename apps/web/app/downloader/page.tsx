@@ -369,6 +369,9 @@ export default function DownloaderPage() {
 			job.status === "failed" ||
 			job.status === "cancelled",
 	).length;
+	const downloadableCount = jobs.filter(
+		(job) => job.status === "completed" && job.result?.fileId,
+	).length;
 
 	async function createJob(e: React.FormEvent) {
 		e.preventDefault();
@@ -627,6 +630,14 @@ export default function DownloaderPage() {
 				<section className="panel">
 					<div className="panel-head">
 						<h2>Jobs</h2>
+						{downloadableCount > 0 ? (
+							// A plain <a> to a streaming API route, not a page: the browser
+							// writes it straight to disk instead of buffering in the tab.
+							// eslint-disable-next-line @next/next/no-html-link-for-pages
+							<a className="btn" href="/api/files/zip">
+								{`Download all (${downloadableCount})`}
+							</a>
+						) : null}
 						{finishedCount > 0 ? (
 							<button
 								type="button"
