@@ -6,11 +6,19 @@ import {
 } from "./convert";
 
 describe("loudnessGainDb", () => {
-  it("attenuates a hot master down to the target", () => {
-    // −5.7 LUFS is a real measurement from a crushed SoundCloud stream.
-    // Attenuation is never capped — pulling down is always safe.
-    const gain = loudnessGainDb({ integratedLufs: -5.7, truePeakDb: -0.2 });
-    expect(gain).toBeCloseTo(TARGET_LUFS - -5.7, 3);
+  it("leaves a hot master alone when it has peak headroom", () => {
+    // −5.7 LUFS is a real measurement from a crushed SoundCloud stream. It sits
+    // well above the target, but loudness gain is boost-only: electronic
+    // masters are deliberately hot and are not pulled down to match.
+    expect(loudnessGainDb({ integratedLufs: -5.7, truePeakDb: -2 })).toBeNull();
+  });
+
+  it("still attenuates a hot master whose true peak breaches the ceiling", () => {
+    // The one case allowed to reduce level, and it is not a loudness decision:
+    // writing a +2.8 dBFS overshoot to integer PCM clips it flat, adding
+    // distortion that was never in the master.
+    const gain = loudnessGainDb({ integratedLufs: -5.7, truePeakDb: 2.8 });
+    expect(gain).toBeCloseTo(TRUE_PEAK_CEILING_DB - 2.8, 3);
     expect(gain!).toBeLessThan(0);
   });
 
@@ -37,6 +45,12 @@ describe("loudnessGainDb", () => {
 
   it("skips inaudibly small corrections", () => {
     expect(loudnessGainDb({ integratedLufs: -9.05, truePeakDb: -3 })).toBeNull();
+  });
+
+  it("never returns a positive gain that would overshoot the target", () => {
+    // A track sitting exactly on target with plenty of headroom must not be
+    // pushed further just because room exists.
+    expect(loudnessGainDb({ integratedLufs: -9, truePeakDb: -12 })).toBeNull();
   });
 
   it("ignores a silent file", () => {

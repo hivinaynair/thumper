@@ -8,10 +8,8 @@ import {
 import { measureLoudness, type LoudnessMeasurement } from "./audio-verify";
 
 /**
- * Loudness target for the library, in LUFS.
- *
- * Roughly where contemporary club masters sit, so most tracks move a decibel
- * or two and the hot ones come *down* rather than everything being pushed up.
+ * Loudness a quiet track is raised *towards*, in LUFS. Not a level every track
+ * is pinned to: anything already at or above this is left where it is.
  */
 export const TARGET_LUFS = -9;
 
@@ -26,17 +24,24 @@ export const TRUE_PEAK_CEILING_DB = -1;
 const MIN_MEANINGFUL_GAIN_DB = 0.1;
 
 /**
- * Match a lossy source to the library loudness target.
+ * Bring a quiet lossy source up towards the library target, never down.
  *
- * Peak normalization cannot make a library consistent: a crushed master and an
- * airy one both peak near full scale while sitting many LU apart to the ear.
- * Gain is therefore matched on integrated loudness, then clamped so true peak
- * never crosses the ceiling.
+ * Two rules, and the order matters:
  *
- * Deliberately never limits. A quiet, dynamic track that would need +7 dB but
- * has only 0.8 dB of headroom gets +0.8 dB and stays quiet — reaching the
- * target would mean squashing the dynamic range that made it worth keeping.
- * Attenuation is unbounded; boosts are capped by real headroom.
+ * 1. Loudness gain is boost-only. A track already louder than the target keeps
+ *    its level — electronic masters are deliberately hot, and pulling them down
+ *    to match quieter material is not wanted here. The cost is accepted:
+ *    matching is one-directional, so a crushed master still sits above a
+ *    dynamic one and the library is not fully level-matched.
+ *
+ * 2. The true-peak ceiling still attenuates, and overrides rule 1. This is not
+ *    a loudness decision — lossy decoders reconstruct above ±1.0, and writing
+ *    that overshoot to integer PCM clips it flat, adding distortion that was
+ *    never in the master. Clipping the artist baked in is untouched by gain and
+ *    survives either way; this only removes the clipping *we* would introduce.
+ *
+ * Never limits: a quiet track with no headroom simply stays quiet rather than
+ * being squashed to hit the target.
  *
  * Lossless masters are never touched (caller skips this path).
  * Returns null when nothing meaningful to apply, or measurement failed.
@@ -50,10 +55,12 @@ export function loudnessGainDb(params: {
   if (integratedLufs === null || !Number.isFinite(integratedLufs)) return null;
   if (truePeakDb === null || !Number.isFinite(truePeakDb)) return null;
 
-  const wanted = TARGET_LUFS - integratedLufs;
+  // Boost-only: a track above the target asks for no loudness change at all.
+  const wantedBoost = Math.max(TARGET_LUFS - integratedLufs, 0);
+  // Negative when true peak is already over the ceiling, which is the one case
+  // allowed to pull a file down.
   const headroom = TRUE_PEAK_CEILING_DB - truePeakDb;
-  // Attenuation is always safe, so the ceiling only ever caps a boost.
-  const gain = Math.min(wanted, headroom);
+  const gain = Math.min(wantedBoost, headroom);
 
   if (Math.abs(gain) < MIN_MEANINGFUL_GAIN_DB) return null;
   return Number(gain.toFixed(3));
