@@ -14,11 +14,18 @@ import { measureLoudness, type LoudnessMeasurement } from "./audio-verify";
 export const TARGET_LUFS = -9;
 
 /**
- * True-peak ceiling in dBFS. Not 0: a file sitting exactly at full scale hands
- * the CDJ's D/A — and any downstream resampling or key lock — nothing to work
- * with, so the reconstructed waveform clips even though no sample does.
+ * Sample-peak ceiling in dBFS — the minimum reduction that avoids adding
+ * distortion, and nothing more.
+ *
+ * Deliberately not a true-peak ceiling. Holding files a full dB below full
+ * scale would protect the CDJ's D/A from inter-sample overshoot, but it costs
+ * level on tracks that would never have clipped on disk. Sample peak is the
+ * threshold where integer PCM actually clamps, so attenuating to just under it
+ * is the least we can take while still writing the decode intact.
+ *
+ * The 0.1 dB margin absorbs float rounding between measurement and encode.
  */
-export const TRUE_PEAK_CEILING_DB = -1;
+export const SAMPLE_PEAK_CEILING_DB = -0.1;
 
 /** Gains smaller than this are inaudible; skip the filter entirely. */
 const MIN_MEANINGFUL_GAIN_DB = 0.1;
@@ -34,11 +41,12 @@ const MIN_MEANINGFUL_GAIN_DB = 0.1;
  *    matching is one-directional, so a crushed master still sits above a
  *    dynamic one and the library is not fully level-matched.
  *
- * 2. The true-peak ceiling still attenuates, and overrides rule 1. This is not
- *    a loudness decision — lossy decoders reconstruct above ±1.0, and writing
- *    that overshoot to integer PCM clips it flat, adding distortion that was
- *    never in the master. Clipping the artist baked in is untouched by gain and
- *    survives either way; this only removes the clipping *we* would introduce.
+ * 2. The sample-peak ceiling still attenuates, and overrides rule 1. This is
+ *    not a loudness decision and it is not optional: a signal above 0 dBFS
+ *    cannot be represented in integer PCM at all, so the alternative is not
+ *    "louder", it is the same file with its peaks clamped flat — distortion
+ *    that was never in the master. Clipping the artist baked in is unaffected
+ *    by gain and survives either way; this removes only what *we* would add.
  *
  * Never limits: a quiet track with no headroom simply stays quiet rather than
  * being squashed to hit the target.
@@ -48,18 +56,18 @@ const MIN_MEANINGFUL_GAIN_DB = 0.1;
  */
 export function loudnessGainDb(params: {
   integratedLufs: number | null;
-  truePeakDb: number | null;
+  samplePeakDb: number | null;
 }): number | null {
-  const { integratedLufs, truePeakDb } = params;
+  const { integratedLufs, samplePeakDb } = params;
   // A failed measurement must not be read as a hot file and trigger attenuation.
   if (integratedLufs === null || !Number.isFinite(integratedLufs)) return null;
-  if (truePeakDb === null || !Number.isFinite(truePeakDb)) return null;
+  if (samplePeakDb === null || !Number.isFinite(samplePeakDb)) return null;
 
   // Boost-only: a track above the target asks for no loudness change at all.
   const wantedBoost = Math.max(TARGET_LUFS - integratedLufs, 0);
-  // Negative when true peak is already over the ceiling, which is the one case
-  // allowed to pull a file down.
-  const headroom = TRUE_PEAK_CEILING_DB - truePeakDb;
+  // Negative only when the decode would clip on write — the one case allowed
+  // to pull a file down.
+  const headroom = SAMPLE_PEAK_CEILING_DB - samplePeakDb;
   const gain = Math.min(wantedBoost, headroom);
 
   if (Math.abs(gain) < MIN_MEANINGFUL_GAIN_DB) return null;

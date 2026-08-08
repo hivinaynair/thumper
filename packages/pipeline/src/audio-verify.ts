@@ -157,9 +157,14 @@ export type LoudnessMeasurement = {
   /** Integrated loudness (EBU R128), the perceptual anchor for gain matching. */
   integratedLufs: number | null;
   /**
-   * True peak in dBFS — the reconstructed inter-sample maximum, which runs
-   * 0.5–1.5 dB above sample peak on dense, limited masters. Sample peak is the
-   * wrong ceiling: normalizing to it leaves the D/A nothing to work with.
+   * Highest single decoded sample, in dBFS. This is the one that decides
+   * whether writing to integer PCM clips: anything above 0 gets clamped flat.
+   */
+  samplePeakDb: number | null;
+  /**
+   * Reconstructed inter-sample maximum, typically 0.5–1.5 dB above sample peak
+   * on dense masters. Informational — it is what a D/A has to cope with, but
+   * holding files below it would mean attenuating for no on-disk benefit.
    */
   truePeakDb: number | null;
 };
@@ -175,7 +180,11 @@ export async function measureLoudness(
   filePath: string,
   options: SpawnOptions = {},
 ): Promise<LoudnessMeasurement> {
-  const none: LoudnessMeasurement = { integratedLufs: null, truePeakDb: null };
+  const none: LoudnessMeasurement = {
+    integratedLufs: null,
+    samplePeakDb: null,
+    truePeakDb: null,
+  };
   try {
     const { stderr, code } = await runCommandBuffer(
       "ffmpeg",
@@ -186,7 +195,7 @@ export async function measureLoudness(
         filePath,
         "-vn",
         "-af",
-        "ebur128=peak=true",
+        "ebur128=peak=sample+true",
         "-f",
         "null",
         "-",
@@ -197,17 +206,30 @@ export async function measureLoudness(
 
     // ebur128 prints per-frame lines during the decode and a Summary block at
     // the end. Match the last occurrence so a frame line can never win.
-    const lastMatch = (re: RegExp): number | null => {
-      const hits = [...stderr.matchAll(re)];
+    const lastMatch = (re: RegExp, text = stderr): number | null => {
+      const hits = [...text.matchAll(re)];
       const raw = hits.at(-1)?.[1];
       if (raw === undefined) return null;
       const value = Number.parseFloat(raw);
       return Number.isFinite(value) ? value : null;
     };
 
+    // Both peaks print under an identical "Peak:" label, distinguished only by
+    // the section heading above them — so split on the headings first.
+    const peakRe = /^\s*Peak:\s*(-?[\d.]+|-?inf)\s*dBFS/gim;
+    const trueIdx = stderr.lastIndexOf("True peak:");
+    const sampleIdx = stderr.lastIndexOf("Sample peak:");
+
     return {
       integratedLufs: lastMatch(/^\s*I:\s*(-?[\d.]+|-?inf)\s*LUFS/gim),
-      truePeakDb: lastMatch(/^\s*Peak:\s*(-?[\d.]+|-?inf)\s*dBFS/gim),
+      samplePeakDb:
+        sampleIdx === -1
+          ? null
+          : lastMatch(
+              peakRe,
+              stderr.slice(sampleIdx, trueIdx === -1 ? undefined : trueIdx),
+            ),
+      truePeakDb: trueIdx === -1 ? null : lastMatch(peakRe, stderr.slice(trueIdx)),
     };
   } catch (err) {
     if (err instanceof ProcessCancelledError) throw err;
