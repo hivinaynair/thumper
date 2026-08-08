@@ -13,6 +13,7 @@ import {
 import { FILE_TTL_MS } from "./cleanup";
 import { convertAudio } from "./convert";
 import { uploadToDrive } from "./drive";
+import { findFallbackArtworkUrl } from "./artwork-fallback";
 import { downloadArtworkFile, resolveTrackTags } from "./metadata";
 import { assertPathInside, userRoot } from "./paths";
 import { ProcessCancelledError } from "./process";
@@ -115,6 +116,25 @@ export async function runRetagJob(deps: RunRetagJobDeps): Promise<void> {
         squareCrop: tags.artworkNeedsSquareCrop,
         signal,
       });
+    }
+
+    // Hypeddit originals arrive with whatever the artist bothered to embed, and
+    // the SoundCloud page they came from often has no usable art either. Same
+    // recovery the download path uses: search SoundCloud and take the cover off
+    // a hit that clears the match scorer.
+    if (!artworkPath) {
+      const fallbackUrl = await findFallbackArtworkUrl({
+        title,
+        ...(artist ? { artist } : {}),
+        signal,
+      });
+      if (fallbackUrl) {
+        artworkPath = await downloadArtworkFile({
+          artworkUrl: fallbackUrl,
+          workDir,
+          signal,
+        });
+      }
     }
 
     const filename = `${sanitizeFilename(
