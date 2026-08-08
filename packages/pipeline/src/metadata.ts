@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { detectSourceKind } from "@thumper/shared";
 import { dumpJson } from "./download";
-import { runCommand, runCommandOk } from "./process";
+import { runCommandOk } from "./process";
 import {
   fetchSpotifyCatalog,
   fetchSpotifyTrackArtworkUrl,

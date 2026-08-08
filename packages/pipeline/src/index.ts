@@ -12,6 +12,7 @@ export * from "./paths";
 export * from "./playlist";
 export * from "./process";
 export * from "./retag-job";
+export * from "./artwork-fallback";
 export * from "./retag-search";
 export * from "./run-job";
 export * from "./similarity";

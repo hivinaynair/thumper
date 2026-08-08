@@ -14,6 +14,7 @@ import {
   type DeliveryDestination,
   type DownloadJobPayload,
 } from "@thumper/shared";
+import { findFallbackArtworkUrl } from "./artwork-fallback";
 import {
   isClubReady,
   isQualityGateError,
@@ -496,6 +497,23 @@ async function processTrack(params: {
       squareCrop: tags.artworkNeedsSquareCrop,
       signal,
     });
+  }
+  // A YouTube upload whose thumbnail turned out to be a video frame has no
+  // sleeve of its own. Look the release up on SoundCloud rather than shipping
+  // a track with no cover — the scorer there refuses a doubtful match.
+  if (!artworkPath && title) {
+    const fallbackUrl = await findFallbackArtworkUrl({
+      title,
+      ...(artist ? { artist } : {}),
+      signal,
+    });
+    if (fallbackUrl) {
+      artworkPath = await downloadArtworkFile({
+        artworkUrl: fallbackUrl,
+        workDir,
+        signal,
+      });
+    }
   }
 
   const filename = `${sanitizeFilename(
