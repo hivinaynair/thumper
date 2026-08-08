@@ -153,6 +153,68 @@ export async function measurePeakDb(
   }
 }
 
+export type LoudnessMeasurement = {
+  /** Integrated loudness (EBU R128), the perceptual anchor for gain matching. */
+  integratedLufs: number | null;
+  /**
+   * True peak in dBFS — the reconstructed inter-sample maximum, which runs
+   * 0.5–1.5 dB above sample peak on dense, limited masters. Sample peak is the
+   * wrong ceiling: normalizing to it leaves the D/A nothing to work with.
+   */
+  truePeakDb: number | null;
+};
+
+/**
+ * Integrated loudness + true peak in one decode.
+ *
+ * Peak alone cannot make a library consistent — a crushed master and an airy
+ * one both peak near full scale while sitting many LU apart perceptually.
+ * Loudness is what the ear tracks, so that is what the gain is matched on.
+ */
+export async function measureLoudness(
+  filePath: string,
+  options: SpawnOptions = {},
+): Promise<LoudnessMeasurement> {
+  const none: LoudnessMeasurement = { integratedLufs: null, truePeakDb: null };
+  try {
+    const { stderr, code } = await runCommandBuffer(
+      "ffmpeg",
+      [
+        "-hide_banner",
+        "-nostats",
+        "-i",
+        filePath,
+        "-vn",
+        "-af",
+        "ebur128=peak=true",
+        "-f",
+        "null",
+        "-",
+      ],
+      options,
+    );
+    if (code !== 0) return none;
+
+    // ebur128 prints per-frame lines during the decode and a Summary block at
+    // the end. Match the last occurrence so a frame line can never win.
+    const lastMatch = (re: RegExp): number | null => {
+      const hits = [...stderr.matchAll(re)];
+      const raw = hits.at(-1)?.[1];
+      if (raw === undefined) return null;
+      const value = Number.parseFloat(raw);
+      return Number.isFinite(value) ? value : null;
+    };
+
+    return {
+      integratedLufs: lastMatch(/^\s*I:\s*(-?[\d.]+|-?inf)\s*LUFS/gim),
+      truePeakDb: lastMatch(/^\s*Peak:\s*(-?[\d.]+|-?inf)\s*dBFS/gim),
+    };
+  } catch (err) {
+    if (err instanceof ProcessCancelledError) throw err;
+    return none;
+  }
+}
+
 export async function analyzeAudioFile(
   filePath: string,
   options: SpawnOptions = {},

@@ -552,8 +552,6 @@ async function processTrack(params: {
     date: tags.date,
     artworkPath,
     cutoffHz: verdict?.analysis.cutoffHz,
-    // Reuse the verifier's peak — same file, and the measurement is a full decode.
-    peakDb: verdict?.analysis.peakDb,
     signal,
   });
 

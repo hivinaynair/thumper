@@ -5,25 +5,58 @@ import {
   isPcmSource,
   type AudioTargetFormat,
 } from "./audio-quality";
-import { measurePeakDb } from "./audio-verify";
+import { measureLoudness, type LoudnessMeasurement } from "./audio-verify";
 
 /**
- * Peak-normalize lossy sources for DJ use.
+ * Loudness target for the library, in LUFS.
  *
- * Lossy decoders can overshoot (±1.0) — pull those back to 0 dBFS so PCM
- * doesn't clip. Quiet loudness-normalized streams (YouTube ~−14 LUFS) get
- * boosted to 0 dBFS so waveforms in Rekordbox/DJ Pro match club masters.
- * Relative dynamics within the track are unchanged; only overall gain moves.
+ * Roughly where contemporary club masters sit, so most tracks move a decibel
+ * or two and the hot ones come *down* rather than everything being pushed up.
+ */
+export const TARGET_LUFS = -9;
+
+/**
+ * True-peak ceiling in dBFS. Not 0: a file sitting exactly at full scale hands
+ * the CDJ's D/A — and any downstream resampling or key lock — nothing to work
+ * with, so the reconstructed waveform clips even though no sample does.
+ */
+export const TRUE_PEAK_CEILING_DB = -1;
+
+/** Gains smaller than this are inaudible; skip the filter entirely. */
+const MIN_MEANINGFUL_GAIN_DB = 0.1;
+
+/**
+ * Match a lossy source to the library loudness target.
+ *
+ * Peak normalization cannot make a library consistent: a crushed master and an
+ * airy one both peak near full scale while sitting many LU apart to the ear.
+ * Gain is therefore matched on integrated loudness, then clamped so true peak
+ * never crosses the ceiling.
+ *
+ * Deliberately never limits. A quiet, dynamic track that would need +7 dB but
+ * has only 0.8 dB of headroom gets +0.8 dB and stays quiet — reaching the
+ * target would mean squashing the dynamic range that made it worth keeping.
+ * Attenuation is unbounded; boosts are capped by real headroom.
  *
  * Lossless masters are never touched (caller skips this path).
- * Returns null when already at full scale or peak could not be measured.
+ * Returns null when nothing meaningful to apply, or measurement failed.
  */
-export function headroomGainDb(peakDb: number | null): number | null {
-  if (peakDb === null || !Number.isFinite(peakDb)) return null;
-  // Near full scale (±0.1 dB) — leave alone.
-  if (peakDb <= 0.1 && peakDb >= -0.1) return null;
-  // Overshoot or quiet stream → bring peak to 0 dBFS.
-  return Number((-peakDb).toFixed(3));
+export function loudnessGainDb(params: {
+  integratedLufs: number | null;
+  truePeakDb: number | null;
+}): number | null {
+  const { integratedLufs, truePeakDb } = params;
+  // A failed measurement must not be read as a hot file and trigger attenuation.
+  if (integratedLufs === null || !Number.isFinite(integratedLufs)) return null;
+  if (truePeakDb === null || !Number.isFinite(truePeakDb)) return null;
+
+  const wanted = TARGET_LUFS - integratedLufs;
+  const headroom = TRUE_PEAK_CEILING_DB - truePeakDb;
+  // Attenuation is always safe, so the ceiling only ever caps a boost.
+  const gain = Math.min(wanted, headroom);
+
+  if (Math.abs(gain) < MIN_MEANINGFUL_GAIN_DB) return null;
+  return Number(gain.toFixed(3));
 }
 
 export type AudioProbe = {
@@ -178,11 +211,10 @@ export async function convertAudio(params: {
   /** Measured spectral cutoff of the source, used for an honest quality label. */
   cutoffHz?: number;
   /**
-   * Peak already measured by the verifier for this same file. Pass it to skip a
-   * second full decode; `null` means "measured and unavailable", `undefined`
-   * means "not measured yet".
+   * Loudness already measured for this same file. Pass it to skip a second full
+   * decode; omit it and this measures its own.
    */
-  peakDb?: number | null;
+  loudness?: LoudnessMeasurement;
   signal?: AbortSignal;
 }): Promise<{ qualityLabel: string; headroomGainDb: number | null }> {
   const info = await probeAudio(params.inputPath, { signal: params.signal });
@@ -195,15 +227,15 @@ export async function convertAudio(params: {
     params.cutoffHz,
   );
 
-  // Only lossy sources overshoot; a lossless source is already integer-bounded,
-  // and touching its gain would make the "lossless" claim untrue.
+  // Only lossy sources are normalized; a lossless source is already
+  // integer-bounded, and touching its gain would make the "lossless" claim
+  // untrue — the file would no longer be the master it claims to be.
   let gainDb: number | null = null;
   if (!isLosslessSource(info.codec, params.inputPath)) {
-    const peakDb =
-      params.peakDb !== undefined
-        ? params.peakDb
-        : await measurePeakDb(params.inputPath, { signal: params.signal });
-    gainDb = headroomGainDb(peakDb);
+    const loudness =
+      params.loudness ??
+      (await measureLoudness(params.inputPath, { signal: params.signal }));
+    gainDb = loudnessGainDb(loudness);
   }
   const gain = gainDb === null ? [] : ["-af", `volume=${gainDb}dB`];
 
