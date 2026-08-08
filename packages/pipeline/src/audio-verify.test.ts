@@ -122,7 +122,7 @@ describe("isLosslessCodec", () => {
 
 describe("classifyForDj", () => {
   it("passes a real master", () => {
-    const v = classifyForDj(analysis());
+    const v = classifyForDj(analysis(), { artistOriginal: true });
     expect(v.tier).toBe("master");
     expect(v.warnings).toEqual([]);
   });
@@ -182,13 +182,16 @@ describe("classifyForDj", () => {
     // gently filtered but genuine master still reads as a master.
     const v = classifyForDj(
       analysis({ cutoffHz: 20100, cutoffRatio: 20100 / (SR / 2) }),
+      { artistOriginal: true },
     );
     expect(v.tier).toBe("master");
   });
 
-  it("passes a 48 kHz master whose content ends at 20 kHz", () => {
-    // Ratio 0.833 — below the 44.1 kHz laundering threshold, but nothing is
-    // wrong with this file. Judged on absolute bandwidth it is plainly a master.
+  it("will not call a 48 kHz file ending at 20 kHz a master", () => {
+    // Ratio 0.833. Deliberately demoted to club: at 48 kHz this is spectrally
+    // indistinguishable from Opus rewrapped as FLAC (0.854), and there is no
+    // measurement that separates them. Nothing is blocked — club still clears
+    // the club-ready gate — only the 'master' claim is withheld.
     const v = classifyForDj(
       analysis({
         codec: "pcm_s24le",
@@ -196,9 +199,11 @@ describe("classifyForDj", () => {
         cutoffHz: 20000,
         cutoffRatio: 20000 / 24000,
       }),
+      { artistOriginal: true },
     );
-    expect(v.tier).toBe("master");
-    expect(v.warnings).toEqual([]);
+    expect(v.tier).toBe("club");
+    // Still not accused of being laundered — the lenient bar covers it.
+    expect(v.warnings.join(" ")).not.toContain("not a master");
   });
 
   it("passes a 96 kHz hi-res master", () => {
@@ -212,6 +217,7 @@ describe("classifyForDj", () => {
         cutoffRatio: 24352 / 48000,
         bitrateKbps: 4608,
       }),
+      { artistOriginal: true },
     );
     expect(v.tier).toBe("master");
     expect(v.warnings.join(" ")).not.toContain("not a master");
