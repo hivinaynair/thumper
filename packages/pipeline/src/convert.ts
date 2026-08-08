@@ -74,59 +74,6 @@ export type AudioProbe = {
   bitsPerRawSample: number | null;
 };
 
-/**
- * AIFF stores PCM big-endian. Map a probed WAV/PCM codec (or sample_fmt) to
- * the matching AIFF encoder so bit depth is preserved — only endianness changes.
- *
- * Do not trust sample_fmt=s32 alone: ffmpeg unpacks 24-bit WAV into 32-bit
- * slots. Prefer codec name / bits_per_raw_sample so we write real 24-bit AIFF
- * instead of padded pcm_s32be that tools mislabel as "32-bit".
- */
-export function aiffPcmCodec(
-  codec: string,
-  sampleFmt = "",
-  bitsPerRawSample: number | null = null,
-): string {
-  const c = codec.toLowerCase();
-  const fmt = sampleFmt.toLowerCase();
-  const bits =
-    typeof bitsPerRawSample === "number" &&
-    Number.isFinite(bitsPerRawSample) &&
-    bitsPerRawSample > 0
-      ? bitsPerRawSample
-      : null;
-
-  // Float before int — "pcm_f32le" also contains "32".
-  //
-  // Only a genuine float PCM *codec* earns float output. sample_fmt is not
-  // evidence: every lossy decoder reports fltp (Opus and AAC both do), so
-  // trusting it wrote 32-bit float AIFF for every YouTube and SoundCloud
-  // stream — a third larger than 24-bit, carrying no extra information, in a
-  // format CDJs and Rekordbox handle poorly. Those fall through to 24-bit.
-  if (c.includes("f32")) {
-    return "pcm_f32be";
-  }
-
-  // Explicit codec bit depth wins over sample_fmt (see padded s32 note above).
-  if (c.includes("s24") || c.includes("24")) return "pcm_s24be";
-  if (c.includes("s16") || c.includes("16")) return "pcm_s16be";
-  if (c.includes("s32") || c.includes("32")) {
-    if (bits === 24) return "pcm_s24be";
-    if (bits === 16) return "pcm_s16be";
-    return "pcm_s32be";
-  }
-
-  if (bits === 24) return "pcm_s24be";
-  if (bits === 16) return "pcm_s16be";
-  if (bits === 32) return "pcm_s32be";
-
-  if (fmt.includes("s24") || fmt === "s24") return "pcm_s24be";
-  if (fmt.includes("s16") || fmt === "s16") return "pcm_s16be";
-  // sample_fmt=s32 alone usually means padded 24-bit, not a 32-bit master.
-  // Producer downloads are almost always 24-bit when the probe is vague.
-  return "pcm_s24be";
-}
-
 export type ConvertMetadata = {
   title?: string;
   artist?: string;
@@ -242,9 +189,7 @@ export async function convertAudio(params: {
   const meta = buildMetadataArgs(params);
   const canEmbedArt =
     Boolean(params.artworkPath) &&
-    (params.target === "flac" ||
-      params.target === "alac" ||
-      params.target === "aiff");
+    (params.target === "flac" || params.target === "alac");
 
   let args: string[];
 
@@ -265,60 +210,6 @@ export async function convertAudio(params: {
         "pcm_s16le",
         "-ac",
         String(channels),
-        ...meta,
-        params.outputPath,
-      ];
-    }
-  } else if (params.target === "aiff") {
-    // Lossless PCM remux into AIFF. Preserve bit depth; AIFF wants big-endian.
-    // ID3v2 carries text tags + cover art (Rekordbox / most DJ tools read it).
-    const pcmCodec = aiffPcmCodec(
-      info.codec,
-      info.sampleFmt,
-      info.bitsPerRawSample,
-    );
-    if (canEmbedArt) {
-      args = [
-        "-y",
-        "-i",
-        params.inputPath,
-        "-i",
-        params.artworkPath!,
-        "-map",
-        "0:a:0",
-        "-map",
-        "1:0",
-        ...gain,
-        "-c:a",
-        pcmCodec,
-        "-ar",
-        String(sampleRate),
-        "-ac",
-        String(channels),
-        "-c:v",
-        "mjpeg",
-        "-disposition:v:0",
-        "attached_pic",
-        "-write_id3v2",
-        "1",
-        ...meta,
-        params.outputPath,
-      ];
-    } else {
-      args = [
-        "-y",
-        "-i",
-        params.inputPath,
-        "-vn",
-        ...gain,
-        "-c:a",
-        pcmCodec,
-        "-ar",
-        String(sampleRate),
-        "-ac",
-        String(channels),
-        "-write_id3v2",
-        "1",
         ...meta,
         params.outputPath,
       ];

@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-export const AudioFormatSchema = z.enum(["flac", "wav", "alac", "aiff"]);
+/**
+ * Output formats. FLAC only: it stores bit-identical PCM in ~60% of AIFF's
+ * space with native, extensible tagging. AIFF stays a recognised *input*.
+ */
+export const AudioFormatSchema = z.enum(["flac"]);
 export type AudioFormat = z.infer<typeof AudioFormatSchema>;
 
 export const DeliveryDestinationSchema = z.enum(["browser", "drive", "both"]);
@@ -63,9 +67,7 @@ export type JobStage = z.infer<typeof JobStageSchema>;
 
 export const CreateJobInputSchema = z.object({
   url: z.string().url(),
-  // AIFF for Rekordbox / older CDJs (PCM + ID3 artwork). FLAC when you want
-  // a smaller lossless file on newer players.
-  audioFormat: z.enum(["aiff", "flac"]).default("aiff"),
+  audioFormat: AudioFormatSchema.default("flac"),
   destination: DeliveryDestinationSchema.default("browser"),
   titleHint: z.string().optional(),
   artistHint: z.string().optional(),

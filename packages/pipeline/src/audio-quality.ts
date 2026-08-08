@@ -1,4 +1,10 @@
-export type AudioTargetFormat = "wav" | "flac" | "alac" | "aiff";
+/**
+ * Output containers. AIFF is deliberately absent — FLAC holds bit-identical
+ * PCM in ~60% of the space with better tagging, so it is the only target.
+ * AIFF remains a recognised *source* format: SoundCloud originals and retag
+ * uploads still arrive as AIFF.
+ */
+export type AudioTargetFormat = "wav" | "flac" | "alac";
 
 /**
  * Format preference chain, tried left to right. yt-dlp picks the first group
@@ -131,7 +137,6 @@ export const audioQualityLabel = (
   if (lossless) {
     const sameFormat =
       (target === "wav" && isPcmSource(codec, filePath)) ||
-      (target === "aiff" && isPcmSource(codec, filePath)) ||
       (target === "flac" && lowerCodec === "flac") ||
       (target === "alac" && lowerCodec === "alac");
     return sameFormat

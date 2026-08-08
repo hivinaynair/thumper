@@ -139,13 +139,13 @@ export async function runRetagJob(deps: RunRetagJobDeps): Promise<void> {
 
     const filename = `${sanitizeFilename(
       trackDisplayName(artist, title),
-    )}.aiff`;
+    )}.flac`;
     const outPath = assertPathInside(outDir, path.join(outDir, filename));
 
     const { qualityLabel } = await convertAudio({
       inputPath,
       outputPath: outPath,
-      target: "aiff",
+      target: "flac",
       title,
       artist,
       album: tags.album,
@@ -170,7 +170,7 @@ export async function runRetagJob(deps: RunRetagJobDeps): Promise<void> {
         randomUUID(),
         filename,
       );
-      await putLocalFile(key, outPath, { contentType: "audio/aiff" });
+      await putLocalFile(key, outPath, { contentType: "audio/flac" });
       relativePath = key;
     }
 
@@ -183,7 +183,7 @@ export async function runRetagJob(deps: RunRetagJobDeps): Promise<void> {
             jobId: payload.jobId,
             relativePath,
             filename,
-            mime: "audio/aiff",
+            mime: "audio/flac",
             sizeBytes: Number(stat.size),
             expiresAt: new Date(Date.now() + FILE_TTL_MS),
           })
@@ -199,7 +199,7 @@ export async function runRetagJob(deps: RunRetagJobDeps): Promise<void> {
         accessToken: token,
         filePath: outPath,
         filename,
-        mimeType: "audio/aiff",
+        mimeType: "audio/flac",
       });
       driveFileId = uploaded.fileId;
       driveUrl = uploaded.webViewLink;

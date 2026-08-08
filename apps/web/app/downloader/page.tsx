@@ -279,7 +279,6 @@ function requestExtensionSync(timeoutMs = 45000): Promise<SyncResult> {
 
 export default function DownloaderPage() {
 	const [url, setUrl] = useState("");
-	const [audioFormat, setAudioFormat] = useState("aiff");
 	const [destination, setDestination] = useState("browser");
 	const [freeDownloadsOnly, setFreeDownloadsOnly] = useState(false);
 	const [clubReadyOnly, setClubReadyOnly] = useState(false);
@@ -382,7 +381,7 @@ export default function DownloaderPage() {
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					url,
-					audioFormat,
+					audioFormat: "flac",
 					destination,
 					freeDownloadsOnly,
 					clubReadyOnly,
@@ -556,16 +555,6 @@ export default function DownloaderPage() {
 						/>
 					</label>
 					<div className="row">
-						<label>
-							Format
-							<select
-								value={audioFormat}
-								onChange={(e) => setAudioFormat(e.target.value)}
-							>
-								<option value="aiff">AIFF</option>
-								<option value="flac">FLAC</option>
-							</select>
-						</label>
 						<label>
 							Destination
 							<select

@@ -1,50 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import {
-  aiffPcmCodec,
   loudnessGainDb,
   TARGET_LUFS,
   TRUE_PEAK_CEILING_DB,
 } from "./convert";
-
-describe("aiffPcmCodec", () => {
-  it("maps common WAV codecs to matching big-endian AIFF PCM", () => {
-    expect(aiffPcmCodec("pcm_s16le")).toBe("pcm_s16be");
-    expect(aiffPcmCodec("pcm_s24le")).toBe("pcm_s24be");
-    expect(aiffPcmCodec("pcm_s32le")).toBe("pcm_s32be");
-    expect(aiffPcmCodec("pcm_f32le")).toBe("pcm_f32be");
-  });
-
-  it("uses sample_fmt when codec name has no bit depth", () => {
-    expect(aiffPcmCodec("", "s24")).toBe("pcm_s24be");
-    expect(aiffPcmCodec("", "s16")).toBe("pcm_s16be");
-  });
-
-  it("does not treat ffmpeg's padded s32 sample_fmt as real 32-bit", () => {
-    // 24-bit WAV commonly probes as codec=pcm_s24le + sample_fmt=s32.
-    expect(aiffPcmCodec("pcm_s24le", "s32")).toBe("pcm_s24be");
-    // Or codec=pcm_s32le with bits_per_raw_sample=24 (zero-padded container).
-    expect(aiffPcmCodec("pcm_s32le", "s32", 24)).toBe("pcm_s24be");
-    // Bare sample_fmt=s32 alone → assume 24-bit producer master, not 32-bit.
-    expect(aiffPcmCodec("", "s32")).toBe("pcm_s24be");
-  });
-
-  it("still writes 32-bit when the source is actually 32-bit", () => {
-    expect(aiffPcmCodec("pcm_s32le", "s32", 32)).toBe("pcm_s32be");
-  });
-
-  it("defaults to 24-bit when nothing is known", () => {
-    expect(aiffPcmCodec("")).toBe("pcm_s24be");
-  });
-
-  it("does not write float AIFF just because a lossy decoder reports fltp", () => {
-    // Opus and AAC both decode to fltp. Honouring that made every YouTube and
-    // SoundCloud download a 32-bit float AIFF for no gain in information.
-    expect(aiffPcmCodec("opus", "fltp")).toBe("pcm_s24be");
-    expect(aiffPcmCodec("aac", "fltp")).toBe("pcm_s24be");
-    // A real float PCM master still round-trips as float.
-    expect(aiffPcmCodec("pcm_f32le", "flt")).toBe("pcm_f32be");
-  });
-});
 
 describe("loudnessGainDb", () => {
   it("attenuates a hot master down to the target", () => {

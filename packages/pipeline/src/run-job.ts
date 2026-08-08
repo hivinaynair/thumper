@@ -104,7 +104,7 @@ export type ProgressUpdater = (patch: {
      * (`format_id=download`), not a streamed AAC/Opus transcode.
      */
     soundcloudOriginal?: boolean;
-    /** True when this job retagged an uploaded WAV → AIFF. */
+    /** True when this job retagged an uploaded audio file → FLAC. */
     retag?: boolean;
     inputStorageKey?: string;
     hypedditOriginal?: boolean;
@@ -135,15 +135,14 @@ export type RunJobDeps = {
   ) => Promise<string[]>;
 };
 
+// FLAC is the only output format; both stay parameterised so adding another
+// target later is a one-line change rather than a hunt through call sites.
 function extFor(format: AudioFormat): string {
-  return format === "alac" ? "m4a" : format;
+  return format;
 }
 
-function mimeFor(format: AudioFormat): string {
-  if (format === "flac") return "audio/flac";
-  if (format === "wav") return "audio/wav";
-  if (format === "aiff") return "audio/aiff";
-  return "audio/mp4";
+function mimeFor(_format: AudioFormat): string {
+  return "audio/flac";
 }
 
 async function ensureNotCancelled(
@@ -202,7 +201,7 @@ function qualityGateError(
 }
 
 /**
- * Unlock a Hypeddit Free Download gate, store the file, then retag → AIFF
+ * Unlock a Hypeddit Free Download gate, store the file, then retag → FLAC
  * using the SoundCloud track URL for metadata/artwork.
  */
 async function processHypedditRetag(params: {
@@ -239,7 +238,7 @@ async function processHypedditRetag(params: {
 
   // This path returns before processTrack's gate ever runs, so club-ready-only
   // has to be enforced here or Hypeddit tracks ship unchecked. Verify now:
-  // these are frequently 320 kbps MP3s about to be rewrapped as AIFF, after
+  // these are frequently 320 kbps MP3s about to be rewrapped as FLAC, after
   // which every container-level check will happily report "lossless".
   // Unlike the main path there is no YouTube mirror, so a rejection fails outright.
   if (payload.clubReadyOnly) {

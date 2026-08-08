@@ -159,7 +159,10 @@ export async function processJobById(jobId: string): Promise<void> {
     jobId: row.id,
     userId: row.userId,
     url: row.matchedUrl ?? row.sourceUrl,
-    audioFormat: row.audioFormat,
+    // The DB enum still carries the retired values ("aiff", "wav", "alac") for
+    // rows written before FLAC became the only output. Retrying one of those
+    // now produces FLAC.
+    audioFormat: "flac",
     destination: row.destination,
     titleHint: row.title ?? undefined,
     artistHint: row.artist ?? undefined,

@@ -77,7 +77,7 @@ export async function POST(req: Request) {
       userId,
       sourceUrl: input.metadataUrl,
       sourceKind: kind,
-      audioFormat: "aiff",
+      audioFormat: "flac",
       destination: input.destination,
       title: input.titleHint,
       artist: input.artistHint,
