@@ -329,9 +329,9 @@ async function processTrack(params: {
   // 2) confident YouTube mirror (Premium Opus beats SC AAC stream)
   // 3) SoundCloud stream (remixes/bootlegs with no YT upload)
   //
-  // YouTube is loudness-normalized (~−14 LUFS), so peaks look quieter than
-  // club masters — convert.ts peak-normalizes lossy sources to 0 dBFS so DJ
-  // waveforms stay full-height without giving up YT's better stream quality.
+  // Lossy stream decodes can overshoot integer full scale. convert.ts keeps
+  // their loudness and catches only those overshooting peaks when writing the
+  // CDJ-compatible lossless output, rather than lowering the whole track.
   if (soundcloud) {
     await update({ stage: "resolving", progress: 12 });
     const purchase = await resolveSoundCloudPurchase({
@@ -565,6 +565,7 @@ async function processTrack(params: {
     date: tags.date,
     artworkPath,
     cutoffHz: verdict?.analysis.cutoffHz,
+    peakLimitLossy: true,
     signal,
   });
 

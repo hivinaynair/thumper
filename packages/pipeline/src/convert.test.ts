@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import {
   loudnessGainDb,
+  lossyFilterArgs,
+  lossyProcessingPlan,
   TARGET_LUFS,
   SAMPLE_PEAK_CEILING_DB,
 } from "./convert";
@@ -10,7 +12,9 @@ describe("loudnessGainDb", () => {
     // −5.7 LUFS is a real measurement from a crushed SoundCloud stream. It sits
     // well above the target, but loudness gain is boost-only: electronic
     // masters are deliberately hot and are not pulled down to match.
-    expect(loudnessGainDb({ integratedLufs: -5.7, samplePeakDb: -2 })).toBeNull();
+    expect(
+      loudnessGainDb({ integratedLufs: -5.7, samplePeakDb: -2 }),
+    ).toBeNull();
   });
 
   it("still attenuates a hot master whose decode would clip on write", () => {
@@ -43,13 +47,17 @@ describe("loudnessGainDb", () => {
   });
 
   it("skips inaudibly small corrections", () => {
-    expect(loudnessGainDb({ integratedLufs: -9.05, samplePeakDb: -3 })).toBeNull();
+    expect(
+      loudnessGainDb({ integratedLufs: -9.05, samplePeakDb: -3 }),
+    ).toBeNull();
   });
 
   it("never returns a positive gain that would overshoot the target", () => {
     // A track sitting exactly on target with plenty of headroom must not be
     // pushed further just because room exists.
-    expect(loudnessGainDb({ integratedLufs: -9, samplePeakDb: -12 })).toBeNull();
+    expect(
+      loudnessGainDb({ integratedLufs: -9, samplePeakDb: -12 }),
+    ).toBeNull();
   });
 
   it("ignores a silent file", () => {
@@ -64,7 +72,52 @@ describe("loudnessGainDb", () => {
   it("leaves an unmeasured file alone rather than guessing", () => {
     // null means measurement failed. Treating it as a hot file would attenuate
     // every track whose analysis happened to error.
-    expect(loudnessGainDb({ integratedLufs: null, samplePeakDb: -3 })).toBeNull();
-    expect(loudnessGainDb({ integratedLufs: -9, samplePeakDb: null })).toBeNull();
+    expect(
+      loudnessGainDb({ integratedLufs: null, samplePeakDb: -3 }),
+    ).toBeNull();
+    expect(
+      loudnessGainDb({ integratedLufs: -9, samplePeakDb: null }),
+    ).toBeNull();
+  });
+});
+
+describe("lossyProcessingPlan", () => {
+  it("limits an overshooting stream instead of lowering the whole track", () => {
+    const plan = lossyProcessingPlan(
+      { integratedLufs: -7.6, samplePeakDb: 1 },
+      true,
+    );
+
+    expect(plan).toEqual({ gainDb: null, peakLimited: true });
+    expect(lossyFilterArgs(plan)).toEqual([
+      "-af",
+      "alimiter=limit=0.988553:attack=5:release=50:level=false:latency=true",
+    ]);
+  });
+
+  it("keeps clean boost below the ceiling without invoking the limiter", () => {
+    const plan = lossyProcessingPlan(
+      { integratedLufs: -14, samplePeakDb: -3 },
+      true,
+    );
+
+    expect(plan).toEqual({ gainDb: 2.9, peakLimited: false });
+    expect(lossyFilterArgs(plan)).toEqual(["-af", "volume=2.9dB"]);
+  });
+
+  it("retains whole-track safety attenuation when limiting is disabled", () => {
+    const plan = lossyProcessingPlan(
+      { integratedLufs: -7.6, samplePeakDb: 1 },
+      false,
+    );
+
+    expect(plan).toEqual({ gainDb: -1.1, peakLimited: false });
+    expect(lossyFilterArgs(plan)).toEqual(["-af", "volume=-1.1dB"]);
+  });
+
+  it("does not guess when loudness measurement failed", () => {
+    expect(
+      lossyProcessingPlan({ integratedLufs: null, samplePeakDb: 1 }, true),
+    ).toEqual({ gainDb: null, peakLimited: false });
   });
 });

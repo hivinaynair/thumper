@@ -30,6 +30,14 @@ export const SAMPLE_PEAK_CEILING_DB = -0.1;
 /** Gains smaller than this are inaudible; skip the filter entirely. */
 const MIN_MEANINGFUL_GAIN_DB = 0.1;
 
+/** Linear amplitude matching SAMPLE_PEAK_CEILING_DB for FFmpeg's limiter. */
+const SAMPLE_PEAK_CEILING_LINEAR = 10 ** (SAMPLE_PEAK_CEILING_DB / 20);
+
+export type LossyProcessingPlan = {
+  gainDb: number | null;
+  peakLimited: boolean;
+};
+
 /**
  * Bring a quiet lossy source up towards the library target, never down.
  *
@@ -72,6 +80,59 @@ export function loudnessGainDb(params: {
 
   if (Math.abs(gain) < MIN_MEANINGFUL_GAIN_DB) return null;
   return Number(gain.toFixed(3));
+}
+
+/**
+ * Build the DJ-stream processing plan.
+ *
+ * With peak limiting enabled, loudness gain remains boost-only and is still
+ * capped by clean headroom. The difference is the overshoot case: instead of
+ * lowering the entire track, the limiter catches only samples above the PCM
+ * ceiling. This is deliberately opt-in at the conversion boundary so retagged
+ * user uploads keep the conservative, dynamics-preserving behaviour.
+ */
+export function lossyProcessingPlan(
+  params: {
+    integratedLufs: number | null;
+    samplePeakDb: number | null;
+  },
+  peakLimiting: boolean,
+): LossyProcessingPlan {
+  if (!peakLimiting) {
+    return { gainDb: loudnessGainDb(params), peakLimited: false };
+  }
+
+  const { integratedLufs, samplePeakDb } = params;
+  if (integratedLufs === null || !Number.isFinite(integratedLufs)) {
+    return { gainDb: null, peakLimited: false };
+  }
+  if (samplePeakDb === null || !Number.isFinite(samplePeakDb)) {
+    return { gainDb: null, peakLimited: false };
+  }
+
+  const wantedBoost = Math.max(TARGET_LUFS - integratedLufs, 0);
+  const cleanHeadroom = Math.max(SAMPLE_PEAK_CEILING_DB - samplePeakDb, 0);
+  const rawGain = Math.min(wantedBoost, cleanHeadroom);
+  const gainDb =
+    rawGain >= MIN_MEANINGFUL_GAIN_DB ? Number(rawGain.toFixed(3)) : null;
+  const peakAfterGain = samplePeakDb + (gainDb ?? 0);
+
+  return {
+    gainDb,
+    peakLimited: peakAfterGain > SAMPLE_PEAK_CEILING_DB,
+  };
+}
+
+export function lossyFilterArgs(plan: LossyProcessingPlan): string[] {
+  const filters: string[] = [];
+  if (plan.gainDb !== null) filters.push(`volume=${plan.gainDb}dB`);
+  if (plan.peakLimited) {
+    filters.push(
+      `alimiter=limit=${SAMPLE_PEAK_CEILING_LINEAR.toFixed(6)}` +
+        ":attack=5:release=50:level=false:latency=true",
+    );
+  }
+  return filters.length === 0 ? [] : ["-af", filters.join(",")];
 }
 
 export type AudioProbe = {
@@ -177,12 +238,21 @@ export async function convertAudio(params: {
    * decode; omit it and this measures its own.
    */
   loudness?: LoudnessMeasurement;
+  /**
+   * Catch decoded lossy overshoots without lowering the whole track. Enabled
+   * by the YouTube/SoundCloud download pipeline; omitted for user retag jobs.
+   */
+  peakLimitLossy?: boolean;
   signal?: AbortSignal;
-}): Promise<{ qualityLabel: string; headroomGainDb: number | null }> {
+}): Promise<{
+  qualityLabel: string;
+  headroomGainDb: number | null;
+  peakLimited: boolean;
+}> {
   const info = await probeAudio(params.inputPath, { signal: params.signal });
   const sampleRate = Number.parseInt(info.sampleRate) || 44100;
   const channels = info.channels || 2;
-  const qualityLabel = audioQualityLabel(
+  let qualityLabel = audioQualityLabel(
     params.target,
     info.codec,
     params.inputPath,
@@ -192,14 +262,20 @@ export async function convertAudio(params: {
   // Only lossy sources are normalized; a lossless source is already
   // integer-bounded, and touching its gain would make the "lossless" claim
   // untrue — the file would no longer be the master it claims to be.
-  let gainDb: number | null = null;
+  let processing: LossyProcessingPlan = {
+    gainDb: null,
+    peakLimited: false,
+  };
   if (!isLosslessSource(info.codec, params.inputPath)) {
     const loudness =
       params.loudness ??
       (await measureLoudness(params.inputPath, { signal: params.signal }));
-    gainDb = loudnessGainDb(loudness);
+    processing = lossyProcessingPlan(loudness, params.peakLimitLossy === true);
   }
-  const gain = gainDb === null ? [] : ["-af", `volume=${gainDb}dB`];
+  const gain = lossyFilterArgs(processing);
+  if (processing.peakLimited) {
+    qualityLabel += " · peak-limited to -0.1 dBFS";
+  }
 
   const meta = buildMetadataArgs(params);
   const canEmbedArt =
@@ -321,5 +397,9 @@ export async function convertAudio(params: {
   }
 
   await runCommandOk("ffmpeg", args, { signal: params.signal });
-  return { qualityLabel, headroomGainDb: gainDb };
+  return {
+    qualityLabel,
+    headroomGainDb: processing.gainDb,
+    peakLimited: processing.peakLimited,
+  };
 }
