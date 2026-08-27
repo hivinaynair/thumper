@@ -22,10 +22,8 @@ from pathlib import Path
 import modal
 
 try:
-    from .chromium_isolation import run_chromium_isolation_smoke
     from .subprocess_retry import run_process_job_command, run_sweep_command
 except ImportError:
-    from chromium_isolation import run_chromium_isolation_smoke
     from subprocess_retry import run_process_job_command, run_sweep_command
 
 APP_NAME = "thumper-worker"
@@ -245,6 +243,11 @@ def search(item: dict):
 )
 def smoke_chromium() -> str:
     """Launch system Chromium through the uid-922 wrapper on Modal."""
+    try:
+        from .chromium_isolation import run_chromium_isolation_smoke
+    except ImportError:
+        from chromium_isolation import run_chromium_isolation_smoke
+
     return run_chromium_isolation_smoke()
 
 

@@ -80,3 +80,11 @@ class ModalChromiumPackagingTests(unittest.TestCase):
         self.assertIn("def smoke_chromium", source)
         self.assertIn("--chromium-smoke", source)
         self.assertNotIn("thumper-secrets", source.split("def smoke_chromium", 1)[1][:400])
+
+    def test_wake_module_preamble_does_not_import_chromium_isolation(self) -> None:
+        # wake() runs on endpoint_image, which does not package chromium_isolation.
+        # A module-level import crash-loops the HTTP endpoint and leaves jobs queued.
+        source = Path(__file__).with_name("thumper_worker.py").read_text()
+        preamble = source.split("APP_NAME", 1)[0]
+        self.assertNotIn("chromium_isolation", preamble)
+        self.assertIn("subprocess_retry", preamble)
