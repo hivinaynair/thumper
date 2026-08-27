@@ -1,6 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { files } from "@thumper/db";
-import { resolveDownloadTarget } from "@thumper/pipeline";
+import { resolveDownloadTarget } from "@thumper/pipeline/storage";
 import { and, eq } from "drizzle-orm";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";

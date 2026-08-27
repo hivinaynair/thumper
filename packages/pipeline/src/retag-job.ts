@@ -12,12 +12,19 @@ import {
 } from "@thumper/shared";
 import { FILE_TTL_MS } from "./cleanup";
 import { convertAudio } from "./convert";
-import { uploadToDrive } from "./drive";
+import { deleteDriveFile, uploadToDrive } from "./drive";
+import {
+  cleanupRetagPaths,
+  completeDeliveryTransaction,
+  withRetagPathCleanup,
+  withTemporaryInputCleanup,
+} from "./delivery-artifact";
 import { findFallbackArtworkUrl } from "./artwork-fallback";
 import { downloadArtworkFile, resolveTrackTags } from "./metadata";
 import { assertPathInside, userRoot } from "./paths";
 import { ProcessCancelledError } from "./process";
 import {
+  deleteObjectStrict,
   materializeObject,
   putLocalFile,
   useBlobStorage,
@@ -31,35 +38,74 @@ export type RunRetagJobDeps = {
   signal: AbortSignal;
   update: ProgressUpdater;
   getGoogleAccessToken?: (userId: string) => Promise<string | null>;
+  deleteObjectStrict?: typeof deleteObjectStrict;
 };
 
-async function ensureNotCancelled(
-  signal: AbortSignal,
-  db: Db,
-  jobId: string,
-) {
+export async function uploadRetagToDrive(params: {
+  accessToken: string;
+  filePath: string;
+  filename: string;
+  driveFolderId?: string;
+  upload?: typeof uploadToDrive;
+}): ReturnType<typeof uploadToDrive> {
+  return (params.upload ?? uploadToDrive)({
+    accessToken: params.accessToken,
+    filePath: params.filePath,
+    filename: params.filename,
+    mimeType: "audio/flac",
+    folderId: params.driveFolderId,
+  });
+}
+
+export async function materializeRetagInput(params: {
+  inputStorageKey: string;
+  inputPath: string;
+  hypedditOriginal: boolean;
+  materialize?: typeof materializeObject;
+  deleteObject?: typeof deleteObjectStrict;
+}): Promise<void> {
+  await (params.materialize ?? materializeObject)(
+    params.inputStorageKey,
+    params.inputPath,
+  );
+  if (params.hypedditOriginal) {
+    await (params.deleteObject ?? deleteObjectStrict)(params.inputStorageKey);
+  }
+}
+
+export function createRetagStagingOwner(params: {
+  temporary: boolean;
+  inputStorageKey: string;
+  deleteObject: (key: string) => Promise<void>;
+}): { delete: () => Promise<void> } {
+  let deleted = false;
+  return {
+    delete: async () => {
+      if (!params.temporary || deleted) return;
+      await params.deleteObject(params.inputStorageKey);
+      deleted = true;
+    },
+  };
+}
+
+async function ensureNotCancelled(signal: AbortSignal, db: Db, jobId: string) {
   if (signal.aborted) throw new ProcessCancelledError();
   const [row] = await db
     .select({ status: jobs.status })
     .from(jobs)
     .where(eq(jobs.id, jobId))
     .limit(1);
-  if (
-    !row ||
-    row.status === "cancelling" ||
-    row.status === "cancelled"
-  ) {
+  if (!row || row.status === "cancelling" || row.status === "cancelled") {
     throw new ProcessCancelledError();
   }
 }
 
 /**
- * Convert an already-uploaded WAV to tagged AIFF using SoundCloud/Spotify
+ * Convert an already-uploaded WAV to tagged FLAC using SoundCloud/Spotify
  * metadata. Skips yt-dlp download entirely.
  */
 export async function runRetagJob(deps: RunRetagJobDeps): Promise<void> {
-  const { db, payload, signal, update } = deps;
-  const destination = payload.destination ?? "browser";
+  const { payload } = deps;
   const workDir = assertPathInside(
     userRoot(payload.userId),
     path.join(userRoot(payload.userId), "work", payload.jobId),
@@ -68,6 +114,53 @@ export async function runRetagJob(deps: RunRetagJobDeps): Promise<void> {
     userRoot(payload.userId),
     path.join(userRoot(payload.userId), "downloads"),
   );
+  const cleanupState = {
+    outputPath: null as string | null,
+    retainOutput: false,
+    cleaned: false,
+  };
+  const stagingOwner = createRetagStagingOwner({
+    temporary: payload.hypedditOriginal === true,
+    inputStorageKey: payload.inputStorageKey,
+    deleteObject: deps.deleteObjectStrict ?? deleteObjectStrict,
+  });
+  const deleteTemporaryInput = () => stagingOwner.delete();
+  return withTemporaryInputCleanup({
+    temporary: payload.hypedditOriginal === true,
+    inputStorageKey: payload.inputStorageKey,
+    deleteObject: deleteTemporaryInput,
+    run: () =>
+      withRetagPathCleanup({
+        workDir,
+        state: cleanupState,
+        run: () =>
+          runRetagJobCore(
+            deps,
+            workDir,
+            outDir,
+            cleanupState,
+            deleteTemporaryInput,
+          ),
+        removeOutput: (filePath) => fs.rm(filePath, { force: true }),
+        removeWorkDir: (dirPath) =>
+          fs.rm(dirPath, { recursive: true, force: true }),
+      }),
+  });
+}
+
+async function runRetagJobCore(
+  deps: RunRetagJobDeps,
+  workDir: string,
+  outDir: string,
+  cleanupState: {
+    outputPath: string | null;
+    retainOutput: boolean;
+    cleaned: boolean;
+  },
+  deleteTemporaryInput: (key: string) => Promise<void>,
+): Promise<void> {
+  const { db, payload, signal, update } = deps;
+  const destination = payload.destination ?? "browser";
   await fs.mkdir(workDir, { recursive: true });
   await fs.mkdir(outDir, { recursive: true });
 
@@ -106,7 +199,12 @@ export async function runRetagJob(deps: RunRetagJobDeps): Promise<void> {
       workDir,
       `input_${randomUUID()}.${keyExt === "bin" ? "wav" : keyExt}`,
     );
-    await materializeObject(payload.inputStorageKey, inputPath);
+    await materializeRetagInput({
+      inputStorageKey: payload.inputStorageKey,
+      inputPath,
+      hypedditOriginal: payload.hypedditOriginal === true,
+      deleteObject: deleteTemporaryInput,
+    });
 
     let artworkPath: string | null = null;
     if (tags.artworkUrl) {
@@ -141,6 +239,7 @@ export async function runRetagJob(deps: RunRetagJobDeps): Promise<void> {
       trackDisplayName(artist, title),
     )}.flac`;
     const outPath = assertPathInside(outDir, path.join(outDir, filename));
+    cleanupState.outputPath = outPath;
 
     const { qualityLabel } = await convertAudio({
       inputPath,
@@ -152,86 +251,119 @@ export async function runRetagJob(deps: RunRetagJobDeps): Promise<void> {
       genre: tags.genre,
       date: tags.date,
       artworkPath,
+      peakLimitLossy: false,
       signal,
     });
 
     await update({ stage: "delivering", progress: 80 });
     await ensureNotCancelled(signal, db, payload.jobId);
 
-    const stat = await fs.stat(outPath);
-    let relativePath = path.relative(userRoot(payload.userId), outPath);
     const blobMode = useBlobStorage();
     const skipObjectStore = blobMode && destination === "drive";
+    await completeDeliveryTransaction({
+      create: async (registerCleanup) => {
+        const stat = await fs.stat(outPath);
+        let relativePath = path.relative(userRoot(payload.userId), outPath);
 
-    if (blobMode && !skipObjectStore) {
-      const key = userStorageKey(
-        payload.userId,
-        "downloads",
-        randomUUID(),
-        filename,
-      );
-      await putLocalFile(key, outPath, { contentType: "audio/flac" });
-      relativePath = key;
-    }
+        if (!blobMode) {
+          registerCleanup(() => fs.rm(outPath, { force: true }));
+        }
 
-    const [fileRow] = skipObjectStore
-      ? []
-      : await db
-          .insert(files)
-          .values({
-            userId: payload.userId,
-            jobId: payload.jobId,
-            relativePath,
+        if (blobMode && !skipObjectStore) {
+          const key = userStorageKey(
+            payload.userId,
+            "downloads",
+            randomUUID(),
             filename,
+          );
+          await putLocalFile(key, outPath, { contentType: "audio/flac" });
+          registerCleanup(() => deleteObjectStrict(key));
+          relativePath = key;
+        }
+
+        const [fileRow] = skipObjectStore
+          ? []
+          : await db
+              .insert(files)
+              .values({
+                userId: payload.userId,
+                jobId: payload.jobId,
+                relativePath,
+                filename,
+                mime: "audio/flac",
+                sizeBytes: Number(stat.size),
+                expiresAt: new Date(Date.now() + FILE_TTL_MS),
+              })
+              .returning();
+        if (fileRow) {
+          registerCleanup(async () => {
+            await db.delete(files).where(eq(files.id, fileRow.id));
+          });
+        }
+
+        let driveFileId: string | undefined;
+        let driveUrl: string | undefined;
+        const wantsDrive = destination === "drive" || destination === "both";
+        if (wantsDrive) {
+          const token = await deps.getGoogleAccessToken?.(payload.userId);
+          if (!token) throw new Error(GOOGLE_DRIVE_TOKEN_ERROR);
+          const uploaded = await uploadRetagToDrive({
+            accessToken: token,
+            filePath: outPath,
+            filename,
+            driveFolderId: payload.driveFolderId,
+          });
+          driveFileId = uploaded.fileId;
+          driveUrl = uploaded.webViewLink;
+          registerCleanup(() =>
+            deleteDriveFile({ accessToken: token, fileId: uploaded.fileId }),
+          );
+          if (fileRow) {
+            await db
+              .update(files)
+              .set({ driveFileId, driveUrl })
+              .where(eq(files.id, fileRow.id));
+          }
+        }
+
+        return {
+          fileId: fileRow?.id,
+          relativePath: skipObjectStore ? undefined : relativePath,
+          driveFileId,
+          driveUrl,
+          sizeBytes: Number(stat.size),
+        };
+      },
+      beforeComplete: async () => {
+        cleanupState.retainOutput = !blobMode;
+        await cleanupRetagPaths({
+          workDir,
+          state: cleanupState,
+          removeOutput: (filePath) => fs.rm(filePath, { force: true }),
+          removeWorkDir: (dirPath) =>
+            fs.rm(dirPath, { recursive: true, force: true }),
+        });
+        cleanupState.cleaned = true;
+      },
+      complete: async (delivered) => {
+        await update({ stage: "cleanup", progress: 95 });
+        await update({
+          status: "completed",
+          stage: "done",
+          progress: 100,
+          result: {
+            retag: true,
+            inputStorageKey: payload.inputStorageKey,
+            ...delivered,
+            qualityLabel,
+            filename,
+            extension: "flac",
             mime: "audio/flac",
-            sizeBytes: Number(stat.size),
-            expiresAt: new Date(Date.now() + FILE_TTL_MS),
-          })
-          .returning();
-
-    let driveFileId: string | undefined;
-    let driveUrl: string | undefined;
-    const wantsDrive = destination === "drive" || destination === "both";
-    if (wantsDrive) {
-      const token = await deps.getGoogleAccessToken?.(payload.userId);
-      if (!token) throw new Error(GOOGLE_DRIVE_TOKEN_ERROR);
-      const uploaded = await uploadToDrive({
-        accessToken: token,
-        filePath: outPath,
-        filename,
-        mimeType: "audio/flac",
-      });
-      driveFileId = uploaded.fileId;
-      driveUrl = uploaded.webViewLink;
-      if (fileRow) {
-        await db
-          .update(files)
-          .set({ driveFileId, driveUrl })
-          .where(eq(files.id, fileRow.id));
-      }
-    }
-
-    await update({ stage: "cleanup", progress: 95 });
-
-    if (blobMode) {
-      await fs.unlink(outPath).catch(() => undefined);
-    }
-    await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
-
-    await update({
-      status: "completed",
-      stage: "done",
-      progress: 100,
-      result: {
-        retag: true,
-        inputStorageKey: payload.inputStorageKey,
-        fileId: fileRow?.id,
-        relativePath: skipObjectStore ? undefined : relativePath,
-        driveFileId,
-        driveUrl,
-        qualityLabel,
-        ...(payload.hypedditOriginal ? { hypedditOriginal: true } : {}),
-        ...(payload.clubReadyOnly ? { clubReadyOnly: true } : {}),
+            audioConverted: true,
+            ...(payload.hypedditOriginal ? { hypedditOriginal: true } : {}),
+            ...(payload.clubReadyOnly ? { clubReadyOnly: true } : {}),
+          },
+        });
       },
     });
   } catch (err) {

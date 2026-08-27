@@ -7,6 +7,7 @@ import {
   looksLikePlaylistUrl,
   sanitizeFilename,
   trackDisplayName,
+  RetagJobPayloadSchema,
 } from "./index";
 
 describe("detectSourceKind", () => {
@@ -80,5 +81,20 @@ describe("retag input acceptance", () => {
   it("rejects non-audio, including a bare octet-stream with no extension", () => {
     expect(isRetagInput("notes.txt", "text/plain")).toBe(false);
     expect(isRetagInput("mystery", "application/octet-stream")).toBe(false);
+  });
+});
+
+describe("RetagJobPayloadSchema", () => {
+  it("preserves a playlist Drive folder through the retag handoff", () => {
+    const payload = RetagJobPayloadSchema.parse({
+      jobId: "00000000-0000-4000-8000-000000000000",
+      userId: "user-1",
+      inputStorageKey: "users/user-1/uploads/input.wav",
+      metadataUrl: "https://soundcloud.com/artist/track",
+      destination: "drive",
+      driveFolderId: "playlist-folder-123",
+    });
+
+    expect(payload.driveFolderId).toBe("playlist-folder-123");
   });
 });

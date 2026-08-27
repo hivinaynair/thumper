@@ -1,9 +1,22 @@
 export * from "./storage";
+export * from "./artist-original";
 export * from "./audio-quality";
 export * from "./cleanup";
 export * from "./convert";
 export * from "./cookies";
-export * from "./download";
+export {
+  downloadMedia,
+  dumpJson,
+  isFormatUnavailable,
+  isRateLimitError,
+  isSoundCloudPreviewError,
+  isSoundCloudUnavailableError,
+  isYoutubeBotError,
+  probeSoundCloudFreeDownload,
+  soundcloudHasFreeDownload,
+  SoundCloudPreviewError,
+  type DownloadMediaResult,
+} from "./download";
 export * from "./drive";
 export * from "./hypeddit";
 export * from "./match";

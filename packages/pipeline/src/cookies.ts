@@ -93,7 +93,7 @@ export async function getCookieStatus(
   return out;
 }
 
-/** Decrypt to a temp plaintext Netscape file for yt-dlp; caller should unlink. */
+/** Decrypt to a temp plaintext Netscape file; caller must always unlink it. */
 export async function materializeCookieFile(
   userId: string,
   provider: CookieProvider,

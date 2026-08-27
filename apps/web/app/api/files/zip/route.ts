@@ -1,6 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { files } from "@thumper/db";
-import { resolveDownloadTarget } from "@thumper/pipeline";
+import { resolveDownloadTarget } from "@thumper/pipeline/storage";
 import { ZipArchive } from "archiver";
 import { asc, eq } from "drizzle-orm";
 import { createReadStream } from "node:fs";
@@ -30,7 +30,10 @@ export async function GET() {
     .orderBy(asc(files.createdAt));
 
   if (rows.length === 0) {
-    return NextResponse.json({ error: "No files to download" }, { status: 404 });
+    return NextResponse.json(
+      { error: "No files to download" },
+      { status: 404 },
+    );
   }
 
   const names = uniqueZipNames(rows.map((row) => row.filename));

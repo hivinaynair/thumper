@@ -43,7 +43,7 @@ const ARTIST_SEPARATOR =
 
 /**
  * SoundCloud free-download titles often trail "(free DL)" / "(Free Download)".
- * Strip those so AIFF tags and filenames stay clean.
+ * Strip those so audio tags and filenames stay clean.
  */
 export function stripFreeDownloadLabel(text: string): string {
   return text
@@ -84,7 +84,7 @@ export function splitArtistNames(raw: string | null | undefined): string[] {
 /**
  * YouTube's auto-generated artist channels are named "<artist> - Topic". That
  * suffix is a YouTube implementation detail, not part of anyone's name, and it
- * reached both the AIFF artist tag and the filename.
+ * reached both the artist tag and the filename.
  */
 export function stripTopicSuffix(name: string): string {
   return name.replace(/\s*[-–—]\s*Topic\s*$/i, "").trim();

@@ -1,6 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { jobs } from "@thumper/db";
-import { headObject, safeUserId } from "@thumper/pipeline";
+import { headObject, safeUserId } from "@thumper/pipeline/storage";
 import {
   CreateRetagJobInputSchema,
   detectSourceKind,
@@ -49,7 +49,10 @@ export async function POST(req: Request) {
     !input.inputStorageKey.startsWith(expectedPrefix) ||
     input.inputStorageKey.includes("..")
   ) {
-    return NextResponse.json({ error: "Invalid inputStorageKey" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid inputStorageKey" },
+      { status: 400 },
+    );
   }
 
   const meta = await headObject(input.inputStorageKey);
@@ -92,7 +95,10 @@ export async function POST(req: Request) {
     .returning();
 
   if (!job) {
-    return NextResponse.json({ error: "Failed to create job" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to create job" },
+      { status: 500 },
+    );
   }
 
   const backend = (process.env.PROCESS_BACKEND ?? "pgboss").toLowerCase();

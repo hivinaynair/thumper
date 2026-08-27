@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./cookies": "./src/cookies.ts",
+    "./retag-search": "./src/retag-search.ts",
+    "./storage": "./src/storage.ts"
   },
   "scripts": {
     "check-types": "tsc --noEmit",
@@ -17,6 +20,7 @@
     "@vercel/blob": "^2.0.0",
     "drizzle-orm": "^0.45.2",
     "googleapis": "^173.0.0",
+    "puppeteer-core": "^25.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -147,18 +147,18 @@ export async function headObject(
   }
 }
 
-export async function deleteObject(key: string): Promise<void> {
+export async function deleteObjectStrict(key: string): Promise<void> {
   if (useBlobStorage()) {
-    try {
-      await del(key, { token: blobToken() });
-    } catch {
-      /* missing ok */
-    }
+    await del(key, { token: blobToken() });
     return;
   }
 
+  await fs.unlink(localPathFromKey(key));
+}
+
+export async function deleteObject(key: string): Promise<void> {
   try {
-    await fs.unlink(localPathFromKey(key));
+    await deleteObjectStrict(key);
   } catch {
     /* missing ok */
   }

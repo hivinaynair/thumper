@@ -83,10 +83,10 @@ export const jobs = pgTable("jobs", {
     sourceCodec?: string;
     sourceBitrateKbps?: number | null;
     cutoffHz?: number;
-    /** Retag (WAV→AIFF) jobs store the uploaded input key here. */
+    /** Retag (WAV→FLAC) jobs store the uploaded input key here. */
     retag?: boolean;
     inputStorageKey?: string;
-    /** SoundCloud Free Download via Hypeddit gate → tagged AIFF. */
+    /** SoundCloud Free Download via Hypeddit gate → preserved original or tagged FLAC. */
     hypedditOriginal?: boolean;
     /** Non-Hypeddit purchase_url — user must download manually. */
     manualDownloadUrl?: string;

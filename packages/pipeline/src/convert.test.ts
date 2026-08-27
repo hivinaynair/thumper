@@ -1,10 +1,18 @@
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "bun:test";
 import {
+  buildFfmpegArgs,
+  convertAudio,
   loudnessGainDb,
   lossyFilterArgs,
   lossyProcessingPlan,
+  probeAudio,
   TARGET_LUFS,
   SAMPLE_PEAK_CEILING_DB,
+  type AudioProbe,
 } from "./convert";
 
 describe("loudnessGainDb", () => {
@@ -138,5 +146,113 @@ describe("lossyProcessingPlan", () => {
     expect(
       lossyProcessingPlan({ integratedLufs: null, samplePeakDb: 1 }, true),
     ).toEqual({ gainDb: null, peakLimited: false });
+  });
+});
+
+describe("lossless WAV to FLAC", () => {
+  it("keeps the source layout unfiltered while mapping metadata and artwork", () => {
+    const probe: AudioProbe = {
+      codec: "pcm_s24le",
+      channels: 1,
+      sampleRate: "96000",
+      bitRate: "2304000",
+      sampleFmt: "s32",
+      bitsPerRawSample: 24,
+    };
+
+    const args = buildFfmpegArgs(
+      {
+        inputPath: "/tmp/artist-original.wav",
+        outputPath: "/tmp/artist-original.flac",
+        target: "flac",
+        title: "Original title",
+        artist: "Original artist",
+        album: "Original album",
+        genre: "Electronic",
+        date: "2026",
+        artworkPath: "/tmp/artwork.jpg",
+      },
+      probe,
+      { gainDb: null, peakLimited: false },
+    );
+
+    expect(args).toEqual([
+      "-y",
+      "-i",
+      "/tmp/artist-original.wav",
+      "-i",
+      "/tmp/artwork.jpg",
+      "-map",
+      "0:a:0",
+      "-map",
+      "1:0",
+      "-c:a",
+      "flac",
+      "-compression_level",
+      "8",
+      "-ar",
+      "96000",
+      "-ac",
+      "1",
+      "-c:v",
+      "mjpeg",
+      "-disposition:v:0",
+      "attached_pic",
+      "-metadata",
+      "title=Original title",
+      "-metadata",
+      "artist=Original artist",
+      "-metadata",
+      "album=Original album",
+      "-metadata",
+      "genre=Electronic",
+      "-metadata",
+      "date=2026",
+      "/tmp/artist-original.flac",
+    ]);
+    expect(args).not.toContain("-af");
+    expect(args.join(" ")).not.toMatch(/volume|alimiter|pcm_s16/);
+  });
+
+  it("preserves 24 meaningful bits through a real FFmpeg conversion", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "thumper-convert-"));
+    const inputPath = path.join(dir, "artist-original.wav");
+    const outputPath = path.join(dir, "artist-original.flac");
+
+    try {
+      const generated = spawnSync(
+        "ffmpeg",
+        [
+          "-v",
+          "error",
+          "-f",
+          "lavfi",
+          "-i",
+          "sine=frequency=1000:duration=0.1:sample_rate=96000",
+          "-c:a",
+          "pcm_s24le",
+          "-ac",
+          "1",
+          "-y",
+          inputPath,
+        ],
+        { encoding: "utf8" },
+      );
+      if (generated.status !== 0) {
+        throw new Error(
+          `ffmpeg failed to create 24-bit WAV: ${generated.stderr || generated.status}`,
+        );
+      }
+
+      await convertAudio({ inputPath, outputPath, target: "flac" });
+
+      const outputProbe = await probeAudio(outputPath);
+      expect(outputProbe.codec).toBe("flac");
+      expect(outputProbe.sampleRate).toBe("96000");
+      expect(outputProbe.channels).toBe(1);
+      expect(outputProbe.bitsPerRawSample).toBe(24);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

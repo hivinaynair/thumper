@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import {
   AUDIO_FORMAT_SELECTOR,
   AUDIO_FORMAT_SORT,
+  YOUTUBE_AUDIO_FORMAT_SELECTOR,
   withoutPreview,
   youtubeExtractorArgs,
 } from "./audio-quality";
@@ -46,6 +47,28 @@ export type DownloadMediaResult = {
    * the caller should say so rather than presenting the result as best-effort.
    */
   anonymousFallback?: boolean;
+};
+
+type DownloadMediaParams = {
+  url: string;
+  workDir: string;
+  cookiePath?: string | null;
+  soundcloud?: boolean;
+  signal?: AbortSignal;
+  onProgress?: (line: string) => void;
+};
+
+type DownloadCommandRunner = (
+  command: string,
+  args: string[],
+  options: SpawnOptions,
+) => Promise<{ stdout: string; stderr: string }>;
+
+type DownloadMediaDeps = {
+  runCommand?: DownloadCommandRunner;
+  mkdir?: (directory: string) => Promise<unknown>;
+  unlink?: (filePath: string) => Promise<void>;
+  randomUUID?: () => string;
 };
 
 function marker(output: string, name: string): string {
@@ -96,19 +119,26 @@ function withoutCookies(args: string[]): string[] {
   );
 }
 
-export async function downloadMedia(params: {
-  url: string;
-  workDir: string;
-  cookiePath?: string | null;
-  soundcloud?: boolean;
-  signal?: AbortSignal;
-  onProgress?: (line: string) => void;
-}): Promise<DownloadMediaResult> {
-  await fs.mkdir(params.workDir, { recursive: true });
-  const outTemplate = path.join(params.workDir, `dl_${randomUUID()}.%(ext)s`);
+export async function downloadMedia(
+  params: DownloadMediaParams,
+): Promise<DownloadMediaResult> {
+  return downloadMediaWithDeps(params);
+}
+
+export async function downloadMediaWithDeps(
+  params: DownloadMediaParams,
+  deps: DownloadMediaDeps = {},
+): Promise<DownloadMediaResult> {
+  const runDownloadCommand = deps.runCommand ?? runCommandOk;
+  const mkdir =
+    deps.mkdir ?? ((directory) => fs.mkdir(directory, { recursive: true }));
+  const unlink = deps.unlink ?? fs.unlink;
+  const createId = deps.randomUUID ?? randomUUID;
+  await mkdir(params.workDir);
+  const outTemplate = path.join(params.workDir, `dl_${createId()}.%(ext)s`);
   const selector = params.soundcloud
     ? withoutPreview(AUDIO_FORMAT_SELECTOR)
-    : AUDIO_FORMAT_SELECTOR;
+    : YOUTUBE_AUDIO_FORMAT_SELECTOR;
 
   const args = [
     "-f",
@@ -161,7 +191,7 @@ export async function downloadMedia(params: {
 
   for (let attempt = 0; attempt < RATE_LIMIT_ATTEMPTS; attempt++) {
     try {
-      ({ stdout, stderr } = await runCommandOk(
+      ({ stdout, stderr } = await runDownloadCommand(
         getYtDlpPath(),
         args,
         spawnOpts,
@@ -199,6 +229,7 @@ export async function downloadMedia(params: {
           cookiePath: params.cookiePath,
           onProgress: params.onProgress,
           initialErr: err,
+          runCommand: runDownloadCommand,
         });
         if (recovered) {
           ({ stdout, stderr, anonymousFallback } = recovered);
@@ -215,7 +246,7 @@ export async function downloadMedia(params: {
         if (isFormatUnavailable(err)) {
           throw new Error(
             params.cookiePath
-              ? "YouTube returned no playable formats (cookies may be stale, or this client is DRM-locked). Re-sync YouTube cookies from a signed-in browser and retry."
+              ? "Authenticated YouTube audio is unavailable (cookies may be stale, or this client is DRM-locked). Re-sync fresh YouTube cookies from a signed-in browser and retry."
               : "YouTube returned no playable formats. Sync YouTube cookies from a signed-in browser and retry.",
           );
         }
@@ -233,13 +264,23 @@ export async function downloadMedia(params: {
     throw new Error("yt-dlp did not report output filepath");
   }
 
+  if (
+    !params.soundcloud &&
+    (!markers.formatId || !markers.acodec || !markers.abr)
+  ) {
+    await unlink(markers.filepath).catch(() => undefined);
+    throw new Error(
+      "YouTube quality verification failed: yt-dlp did not report a real format id, audio codec, and positive audio bitrate.",
+    );
+  }
+
   // Fail closed: yt-dlp tags snipped streams in the *format id* — the output
   // template is `dl_<uuid>.<ext>`, so the filename alone never carries that.
   if (
     params.soundcloud &&
     /preview/i.test(`${markers.formatId ?? ""} ${path.basename(markers.filepath)}`)
   ) {
-    await fs.unlink(markers.filepath).catch(() => undefined);
+    await unlink(markers.filepath).catch(() => undefined);
     throw new SoundCloudPreviewError(
       "SoundCloud returned a preview-only stream. Falling back to YouTube when possible.",
     );
@@ -264,6 +305,7 @@ async function tryYoutubeRecovery(params: {
   cookiePath?: string | null;
   onProgress?: (line: string) => void;
   initialErr: unknown;
+  runCommand: DownloadCommandRunner;
 }): Promise<{
   stdout: string;
   stderr: string;
@@ -277,7 +319,7 @@ async function tryYoutubeRecovery(params: {
     params.onProgress?.(
       `Retrying YouTube ${anonymous ? "anonymously " : ""}with player_client=${clients}\n`,
     );
-    const { stdout, stderr } = await runCommandOk(
+    const { stdout, stderr } = await params.runCommand(
       getYtDlpPath(),
       withExtractorClients(args, clients),
       params.spawnOpts,
@@ -285,12 +327,12 @@ async function tryYoutubeRecovery(params: {
     return { stdout, stderr, anonymousFallback: anonymous };
   };
 
-  // Stale/rotated cookies on datacenter IPs often zero out formats for every
-  // authenticated client. Anonymous android_vr still serves public tracks —
-  // try that *before* burning time on poisoned cookie sessions.
+  // Only requests that started without cookies may use anonymous recovery.
+  // Cookie-authenticated requests must never silently downgrade in quality.
   if (
-    isFormatUnavailable(params.initialErr) ||
-    isYoutubeBotError(params.initialErr)
+    !params.cookiePath &&
+    (isFormatUnavailable(params.initialErr) ||
+      isYoutubeBotError(params.initialErr))
   ) {
     for (const clients of ["android_vr", "android"] as const) {
       try {

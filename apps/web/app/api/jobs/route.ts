@@ -1,6 +1,6 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { jobs } from "@thumper/db";
-import { getCookieStatus } from "@thumper/pipeline";
+import { getCookieStatus } from "@thumper/pipeline/cookies";
 import {
   CreateJobInputSchema,
   detectSourceKind,

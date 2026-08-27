@@ -4,6 +4,7 @@ import {
   AUDIO_FORMAT_SORT,
   audioQualityLabel,
   DEFAULT_YOUTUBE_PLAYER_CLIENTS,
+  YOUTUBE_AUDIO_FORMAT_SELECTOR,
   withoutPreview,
   youtubeExtractorArgs,
 } from "./audio-quality";
@@ -75,6 +76,17 @@ describe("AUDIO_FORMAT_SORT", () => {
   it("ranks bitrate above codec identity", () => {
     const terms = AUDIO_FORMAT_SORT.split(",");
     expect(terms.indexOf("abr")).toBeLessThan(terms.indexOf("acodec"));
+  });
+
+  it("keeps YouTube selection codec-neutral so bitrate wins", () => {
+    expect(YOUTUBE_AUDIO_FORMAT_SELECTOR).toBe("bestaudio/best");
+    expect(YOUTUBE_AUDIO_FORMAT_SELECTOR).not.toContain("acodec");
+    expect(AUDIO_FORMAT_SORT.split(",")).toEqual([
+      "abr",
+      "asr",
+      "channels",
+      "acodec",
+    ]);
   });
 });
 

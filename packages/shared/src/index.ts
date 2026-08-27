@@ -73,7 +73,7 @@ export const CreateJobInputSchema = z.object({
   artistHint: z.string().optional(),
   /**
    * SoundCloud only: skip streams / YouTube mirrors. Only Hypeddit Free
-   * Download gates are unlocked and retagged to AIFF; other tracks fail.
+   * Download gates and artist originals are delivered; other tracks fail.
    */
   freeDownloadsOnly: z.boolean().optional().default(false),
   /**
@@ -181,6 +181,7 @@ export const RetagJobPayloadSchema = z.object({
   titleHint: z.string().optional(),
   artistHint: z.string().optional(),
   destination: DeliveryDestinationSchema.default("browser"),
+  driveFolderId: z.string().optional(),
   /** Set when the input came from a Hypeddit Free Download gate. */
   hypedditOriginal: z.boolean().optional(),
   clubReadyOnly: z.boolean().optional().default(false),
@@ -281,4 +282,3 @@ export function trackDisplayName(
   }
   return `${a} - ${t}`;
 }
-

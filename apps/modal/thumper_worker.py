@@ -21,6 +21,13 @@ from pathlib import Path
 
 import modal
 
+try:
+    from .chromium_isolation import run_chromium_isolation_smoke
+    from .subprocess_retry import run_process_job_command, run_sweep_command
+except ImportError:
+    from chromium_isolation import run_chromium_isolation_smoke
+    from subprocess_retry import run_process_job_command, run_sweep_command
+
 APP_NAME = "thumper-worker"
 
 # Same Deno pin as the root Dockerfile — yt-dlp needs an external JS runtime
@@ -41,11 +48,25 @@ worker_image = (
     .apt_install(
         "ffmpeg",
         "ca-certificates",
+        "chromium",
+        "python3",
         "python3-venv",
         "curl",
         "unzip",
     )
+    .add_local_file(
+        str(REPO_ROOT / "scripts/chromium-worker"),
+        remote_path="/tmp/chromium-worker",
+        copy=True,
+    )
     .run_commands(
+        "groupadd --system --gid 922 chromium-worker",
+        "useradd --system --uid 922 --gid chromium-worker "
+        "--home-dir /var/lib/chromium --create-home "
+        "--shell /usr/sbin/nologin chromium-worker",
+        "install -m 0755 /tmp/chromium-worker /usr/local/bin/chromium-worker",
+        "install -d -o 922 -g 922 -m 0700 /var/lib/chromium/xdg /var/lib/chromium/tmp",
+        "grep -q XDG_RUNTIME_DIR /usr/local/bin/chromium-worker",
         # Deno must be on PATH so yt-dlp can run YouTube EJS challenge solvers.
         f'curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s "v{DENO_VERSION}"',
         "deno --version",
@@ -59,6 +80,9 @@ worker_image = (
             "DENO_INSTALL": "/usr/local",
             "PATH": "/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "YT_DLP_PATH": "/opt/venv/bin/yt-dlp",
+            "PUPPETEER_EXECUTABLE_PATH": "/usr/local/bin/chromium-worker",
+            "PUPPETEER_RUN_UID": "922",
+            "PUPPETEER_RUN_GID": "922",
             "DATA_DIR": "/tmp/thumper-data",
         }
     )
@@ -81,10 +105,14 @@ worker_image = (
         ],
     )
     .run_commands("cd /app && bun install --frozen-lockfile")
+    .add_local_python_source("subprocess_retry")
+    .add_local_python_source("chromium_isolation")
 )
 
-endpoint_image = modal.Image.debian_slim(python_version="3.12").pip_install(
-    "fastapi[standard]"
+endpoint_image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .pip_install("fastapi[standard]")
+    .add_local_python_source("subprocess_retry")
 )
 
 app = modal.App(APP_NAME)
@@ -93,35 +121,16 @@ secrets = modal.Secret.from_name("thumper-secrets")
 
 
 def _run_process_job(job_id: str) -> str:
+    # Bun and every child inherit root-private creation permissions. Chromium
+    # then drops to uid 922 and cannot read worker temp files or job secrets.
+    os.umask(0o077)
     env = os.environ.copy()
     env.setdefault("DATA_DIR", "/tmp/thumper-data")
     env.setdefault("YT_DLP_PATH", "/opt/venv/bin/yt-dlp")
 
     # Neon pooler can ETIMEDOUT on a cold Modal container; one quick retry
     # avoids leaving the job stuck in "queued" after a successful wake.
-    last: subprocess.CompletedProcess[str] | None = None
-    for attempt in range(2):
-        last = subprocess.run(
-            ["bun", "src/process-job.ts", f"--jobId={job_id}"],
-            cwd="/app/apps/worker",
-            env=env,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if last.returncode == 0:
-            return last.stdout[-2000:]
-        err_text = f"{last.stdout}\n{last.stderr}"
-        transient = "ETIMEDOUT" in err_text or "CONNECT_TIMEOUT" in err_text
-        if not transient or attempt == 1:
-            break
-
-    assert last is not None
-    raise RuntimeError(
-        f"process-job failed ({last.returncode})\n"
-        f"stdout:\n{last.stdout[-4000:]}\n"
-        f"stderr:\n{last.stderr[-4000:]}"
-    )
+    return run_process_job_command(job_id, env)
 
 
 @app.function(
@@ -147,21 +156,7 @@ def sweep_expired() -> str:
     env = os.environ.copy()
     env.setdefault("DATA_DIR", "/tmp/thumper-data")
 
-    result = subprocess.run(
-        ["bun", "src/sweep.ts"],
-        cwd="/app/apps/worker",
-        env=env,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"sweep failed ({result.returncode})\n"
-            f"stdout:\n{result.stdout[-2000:]}\n"
-            f"stderr:\n{result.stderr[-2000:]}"
-        )
-    return result.stdout[-1000:]
+    return run_sweep_command(env)
 
 
 @app.function(image=endpoint_image, secrets=[secrets], timeout=30)
@@ -242,6 +237,23 @@ def search(item: dict):
     return {"ok": True, "candidates": payload.get("candidates") or []}
 
 
+@app.function(
+    image=worker_image,
+    timeout=120,
+    cpu=1.0,
+    memory=2048,
+)
+def smoke_chromium() -> str:
+    """Launch system Chromium through the uid-922 wrapper on Modal."""
+    return run_chromium_isolation_smoke()
+
+
 @app.local_entrypoint()
-def main(job_id: str):
+def main(job_id: str = "", chromium_smoke: bool = False):
+    # modal run apps/modal/thumper_worker.py --chromium-smoke
+    if chromium_smoke:
+        print(smoke_chromium.remote())
+        return
+    if not job_id:
+        raise SystemExit("job_id required unless --chromium-smoke")
     print(process_job.remote(job_id))

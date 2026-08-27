@@ -94,7 +94,7 @@ export class ManualDownloadRequiredError extends Error {
     super(
       `Manual download required (not Hypeddit): ${url}${
         purchaseTitle ? ` (${purchaseTitle})` : ""
-      }. Download it yourself, then use WAV → AIFF to tag.`,
+      }. Download it yourself, then upload it on Retag; WAV is tagged losslessly as FLAC.`,
     );
     this.name = "ManualDownloadRequiredError";
     this.manualDownloadUrl = url;

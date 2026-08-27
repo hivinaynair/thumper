@@ -30,6 +30,12 @@ export const AUDIO_FORMAT_SELECTOR = [
 ].join("/");
 
 /**
+ * YouTube has no artist-original format. Keep its selector codec-neutral so
+ * AUDIO_FORMAT_SORT can choose the highest available bitrate across codecs.
+ */
+export const YOUTUBE_AUDIO_FORMAT_SELECTOR = "bestaudio/best";
+
+/**
  * yt-dlp `-S` sorting.
  *
  * Every field sorts descending by default; `+` reverses it. There is no `:desc`

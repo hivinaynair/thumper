@@ -120,3 +120,13 @@ export async function uploadToDrive(params: {
   if (!fileId) throw new Error("Drive upload returned no file id");
   return { fileId, webViewLink: res.data.webViewLink ?? undefined };
 }
+
+export async function deleteDriveFile(params: {
+  accessToken: string;
+  fileId: string;
+}): Promise<void> {
+  const auth = new google.auth.OAuth2();
+  auth.setCredentials({ access_token: params.accessToken });
+  const drive = google.drive({ version: "v3", auth });
+  await drive.files.delete({ fileId: params.fileId });
+}

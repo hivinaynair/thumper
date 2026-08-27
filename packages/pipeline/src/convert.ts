@@ -156,7 +156,7 @@ export type AudioProbe = {
   channels: number;
   sampleRate: string;
   bitRate: string;
-  /** e.g. s16, s24, s32, flt — used to pick a matching AIFF PCM codec. */
+  /** e.g. s16, s24, s32, flt — used to preserve meaningful PCM depth. */
   sampleFmt: string;
   /**
    * Meaningful sample width from the container (e.g. 24), when present.
@@ -237,7 +237,7 @@ function buildMetadataArgs(meta: ConvertMetadata): string[] {
   return out;
 }
 
-export async function convertAudio(params: {
+export type ConvertAudioParams = {
   inputPath: string;
   outputPath: string;
   target: AudioTargetFormat;
@@ -260,14 +260,140 @@ export async function convertAudio(params: {
    */
   peakLimitLossy?: boolean;
   signal?: AbortSignal;
-}): Promise<{
+};
+
+export function buildFfmpegArgs(
+  params: ConvertAudioParams,
+  info: AudioProbe,
+  processing: LossyProcessingPlan,
+): string[] {
+  const sampleRate = Number.parseInt(info.sampleRate) || 44100;
+  const channels = info.channels || 2;
+  const gain = lossyFilterArgs(processing);
+  const meta = buildMetadataArgs(params);
+  const canEmbedArt =
+    Boolean(params.artworkPath) &&
+    (params.target === "flac" || params.target === "alac");
+
+  if (params.target === "wav") {
+    // WAV keeps text tags; cover art is unreliable in DJ tools — skip artwork.
+    if (isPcmSource(info.codec, params.inputPath)) {
+      return ["-y", "-i", params.inputPath, "-vn", "-c:a", "copy", ...meta, params.outputPath];
+    }
+    return [
+      "-y",
+      "-i",
+      params.inputPath,
+      "-vn",
+      ...gain,
+      "-ar",
+      String(sampleRate),
+      "-acodec",
+      "pcm_s16le",
+      "-ac",
+      String(channels),
+      ...meta,
+      params.outputPath,
+    ];
+  }
+
+  if (params.target === "flac") {
+    const alreadyFlac =
+      info.codec === "flac" || params.inputPath.toLowerCase().endsWith(".flac");
+    if (canEmbedArt) {
+      return [
+        "-y",
+        "-i",
+        params.inputPath,
+        "-i",
+        params.artworkPath!,
+        "-map",
+        "0:a:0",
+        "-map",
+        "1:0",
+        ...(alreadyFlac
+          ? ["-c:a", "copy"]
+          : [...gain, "-c:a", "flac", "-compression_level", "8", "-ar", String(sampleRate), "-ac", String(channels)]),
+        "-c:v",
+        "mjpeg",
+        "-disposition:v:0",
+        "attached_pic",
+        ...meta,
+        params.outputPath,
+      ];
+    }
+    if (alreadyFlac) {
+      return ["-y", "-i", params.inputPath, "-vn", "-c:a", "copy", ...meta, params.outputPath];
+    }
+    return [
+      "-y",
+      "-i",
+      params.inputPath,
+      "-vn",
+      ...gain,
+      "-c:a",
+      "flac",
+      "-compression_level",
+      "8",
+      "-ar",
+      String(sampleRate),
+      "-ac",
+      String(channels),
+      ...meta,
+      params.outputPath,
+    ];
+  }
+
+  // ALAC / m4a
+  if (canEmbedArt) {
+    return [
+      "-y",
+      "-i",
+      params.inputPath,
+      "-i",
+      params.artworkPath!,
+      "-map",
+      "0:a:0",
+      "-map",
+      "1:0",
+      ...gain,
+      "-c:a",
+      "alac",
+      "-ar",
+      String(sampleRate),
+      "-ac",
+      String(channels),
+      "-c:v",
+      "mjpeg",
+      "-disposition:v:0",
+      "attached_pic",
+      ...meta,
+      params.outputPath,
+    ];
+  }
+  return [
+    "-y",
+    "-i",
+    params.inputPath,
+    "-vn",
+    ...gain,
+    "-c:a",
+    "alac",
+    "-ar",
+    String(sampleRate),
+    "-ac",
+    String(channels),
+    ...meta,
+    params.outputPath,
+  ];
+}
+
+export async function convertAudio(params: ConvertAudioParams): Promise<{
   qualityLabel: string;
   headroomGainDb: number | null;
   peakLimited: boolean;
 }> {
   const info = await probeAudio(params.inputPath, { signal: params.signal });
-  const sampleRate = Number.parseInt(info.sampleRate) || 44100;
-  const channels = info.channels || 2;
   let qualityLabel = audioQualityLabel(
     params.target,
     info.codec,
@@ -288,130 +414,11 @@ export async function convertAudio(params: {
       (await measureLoudness(params.inputPath, { signal: params.signal }));
     processing = lossyProcessingPlan(loudness, params.peakLimitLossy === true);
   }
-  const gain = lossyFilterArgs(processing);
   if (processing.peakLimited) {
     qualityLabel += " · peak-limited to -0.1 dBFS";
   }
 
-  const meta = buildMetadataArgs(params);
-  const canEmbedArt =
-    Boolean(params.artworkPath) &&
-    (params.target === "flac" || params.target === "alac");
-
-  let args: string[];
-
-  if (params.target === "wav") {
-    // WAV keeps text tags; cover art is unreliable in DJ tools — skip artwork.
-    if (isPcmSource(info.codec, params.inputPath)) {
-      args = ["-y", "-i", params.inputPath, "-vn", "-c:a", "copy", ...meta, params.outputPath];
-    } else {
-      args = [
-        "-y",
-        "-i",
-        params.inputPath,
-        "-vn",
-        ...gain,
-        "-ar",
-        String(sampleRate),
-        "-acodec",
-        "pcm_s16le",
-        "-ac",
-        String(channels),
-        ...meta,
-        params.outputPath,
-      ];
-    }
-  } else if (params.target === "flac") {
-    const alreadyFlac =
-      info.codec === "flac" || params.inputPath.toLowerCase().endsWith(".flac");
-    if (canEmbedArt) {
-      args = [
-        "-y",
-        "-i",
-        params.inputPath,
-        "-i",
-        params.artworkPath!,
-        "-map",
-        "0:a:0",
-        "-map",
-        "1:0",
-        ...(alreadyFlac
-          ? ["-c:a", "copy"]
-          : [...gain, "-c:a", "flac", "-compression_level", "8", "-ar", String(sampleRate), "-ac", String(channels)]),
-        "-c:v",
-        "mjpeg",
-        "-disposition:v:0",
-        "attached_pic",
-        ...meta,
-        params.outputPath,
-      ];
-    } else if (alreadyFlac) {
-      args = ["-y", "-i", params.inputPath, "-vn", "-c:a", "copy", ...meta, params.outputPath];
-    } else {
-      args = [
-        "-y",
-        "-i",
-        params.inputPath,
-        "-vn",
-        ...gain,
-        "-c:a",
-        "flac",
-        "-compression_level",
-        "8",
-        "-ar",
-        String(sampleRate),
-        "-ac",
-        String(channels),
-        ...meta,
-        params.outputPath,
-      ];
-    }
-  } else {
-    // ALAC / m4a
-    if (canEmbedArt) {
-      args = [
-        "-y",
-        "-i",
-        params.inputPath,
-        "-i",
-        params.artworkPath!,
-        "-map",
-        "0:a:0",
-        "-map",
-        "1:0",
-        ...gain,
-        "-c:a",
-        "alac",
-        "-ar",
-        String(sampleRate),
-        "-ac",
-        String(channels),
-        "-c:v",
-        "mjpeg",
-        "-disposition:v:0",
-        "attached_pic",
-        ...meta,
-        params.outputPath,
-      ];
-    } else {
-      args = [
-        "-y",
-        "-i",
-        params.inputPath,
-        "-vn",
-        ...gain,
-        "-c:a",
-        "alac",
-        "-ar",
-        String(sampleRate),
-        "-ac",
-        String(channels),
-        ...meta,
-        params.outputPath,
-      ];
-    }
-  }
-
+  const args = buildFfmpegArgs(params, info, processing);
   await runCommandOk("ffmpeg", args, { signal: params.signal });
   return {
     qualityLabel,

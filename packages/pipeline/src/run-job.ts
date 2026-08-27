@@ -26,6 +26,15 @@ import { FILE_TTL_MS } from "./cleanup";
 import { convertAudio } from "./convert";
 import { materializeCookieFile } from "./cookies";
 import {
+  audioMimeForExtension,
+  executeOriginalArtifact,
+  extensionFromPath,
+  planDeliveryArtifact,
+  preserveArtifactForLocalDelivery,
+  completeDeliveryTransaction,
+  type DeliveryArtifactPlan,
+} from "./delivery-artifact";
+import {
   downloadMedia,
   dumpJson,
   isSoundCloudPreviewError,
@@ -33,8 +42,12 @@ import {
   probeSoundCloudFreeDownload,
   SoundCloudPreviewError,
 } from "./download";
-import { ensurePlaylistFolder, uploadToDrive } from "./drive";
-import { downloadHypedditGate } from "./hypeddit";
+import { deleteDriveFile, ensurePlaylistFolder, uploadToDrive } from "./drive";
+import {
+  downloadHypedditWithSpotifyFallback,
+  type HypedditDownloadResult,
+  type SpotifyFallbackDependencies,
+} from "./hypeddit";
 import {
   matchSpotifyTrackToMirror,
   matchTrackToYoutube,
@@ -57,7 +70,12 @@ import {
   resolveSoundCloudPurchase,
 } from "./soundcloud-purchase";
 import { fetchSpotifyCatalog, type SpotifyTrackMeta } from "./spotify";
-import { putLocalFile, useBlobStorage, userStorageKey } from "./storage";
+import {
+  deleteObjectStrict,
+  putLocalFile,
+  useBlobStorage,
+  userStorageKey,
+} from "./storage";
 import { randomUUID } from "node:crypto";
 
 export type ProgressUpdater = (patch: {
@@ -86,6 +104,11 @@ export type ProgressUpdater = (patch: {
     driveFileId?: string;
     driveUrl?: string;
     qualityLabel?: string;
+    filename?: string;
+    extension?: string;
+    mime?: string;
+    sizeBytes?: number;
+    audioConverted?: boolean;
     playlist?: boolean;
     trackCount?: number;
     childJobIds?: string[];
@@ -135,16 +158,6 @@ export type RunJobDeps = {
   ) => Promise<string[]>;
 };
 
-// FLAC is the only output format; both stay parameterised so adding another
-// target later is a one-line change rather than a hunt through call sites.
-function extFor(format: AudioFormat): string {
-  return format;
-}
-
-function mimeFor(_format: AudioFormat): string {
-  return "audio/flac";
-}
-
 async function ensureNotCancelled(
   signal: AbortSignal,
   db: Db,
@@ -159,7 +172,9 @@ async function ensureNotCancelled(
     .where(inArray(jobs.id, ids));
   // Cancelling the playlist parent must stop every child mid-download.
   if (
-    rows.some((row) => row.status === "cancelling" || row.status === "cancelled")
+    rows.some(
+      (row) => row.status === "cancelling" || row.status === "cancelled",
+    )
   ) {
     throw new ProcessCancelledError();
   }
@@ -201,19 +216,193 @@ function qualityGateError(
     : new QualityGateError({ tier: null, source });
 }
 
+async function deliverArtifact(params: {
+  deps: RunJobDeps;
+  artifact: DeliveryArtifactPlan;
+  outDir: string;
+  complete: (result: {
+    fileId?: string;
+    relativePath?: string;
+    driveFileId?: string;
+    driveUrl?: string;
+    filename: string;
+    extension: string;
+    mime: string;
+    sizeBytes: number;
+    audioConverted: boolean;
+  }) => Promise<void>;
+}): Promise<{
+  fileId?: string;
+  relativePath?: string;
+  driveFileId?: string;
+  driveUrl?: string;
+  filename: string;
+  extension: string;
+  mime: string;
+  sizeBytes: number;
+  audioConverted: boolean;
+}> {
+  return completeDeliveryTransaction({
+    create: async (registerCleanup) => {
+      const { deps, artifact, outDir } = params;
+      const { db, payload } = deps;
+      const blobMode = useBlobStorage();
+      const skipObjectStore = blobMode && payload.destination === "drive";
+      const copiedLocalOriginal =
+        !blobMode && artifact.action === "preserve-original";
+      const deliveryPath = copiedLocalOriginal
+        ? await preserveArtifactForLocalDelivery({
+            sourcePath: artifact.path,
+            outputDirectory: outDir,
+            filename: artifact.filename,
+          })
+        : artifact.path;
+      if (copiedLocalOriginal || artifact.audioConverted) {
+        registerCleanup(() => fs.rm(deliveryPath, { force: true }));
+      }
+      const stat = await fs.stat(deliveryPath);
+      let relativePath = path.relative(userRoot(payload.userId), deliveryPath);
+
+      if (blobMode && !skipObjectStore) {
+        const key = userStorageKey(
+          payload.userId,
+          "downloads",
+          randomUUID(),
+          artifact.filename,
+        );
+        await putLocalFile(key, deliveryPath, { contentType: artifact.mime });
+        registerCleanup(() => deleteObjectStrict(key));
+        relativePath = key;
+      }
+
+      const [fileRow] = skipObjectStore
+        ? []
+        : await db
+            .insert(files)
+            .values({
+              userId: payload.userId,
+              jobId: payload.jobId,
+              relativePath,
+              filename: artifact.filename,
+              mime: artifact.mime,
+              sizeBytes: Number(stat.size),
+              expiresAt: new Date(Date.now() + FILE_TTL_MS),
+            })
+            .returning();
+      if (fileRow) {
+        registerCleanup(async () => {
+          await db.delete(files).where(eq(files.id, fileRow.id));
+        });
+      }
+
+      let driveFileId: string | undefined;
+      let driveUrl: string | undefined;
+      const wantsDrive =
+        payload.destination === "drive" || payload.destination === "both";
+      if (wantsDrive) {
+        const token = await deps.getGoogleAccessToken?.(payload.userId);
+        if (!token) throw new Error(GOOGLE_DRIVE_TOKEN_ERROR);
+        const uploaded = await uploadToDrive({
+          accessToken: token,
+          filePath: deliveryPath,
+          filename: artifact.filename,
+          mimeType: artifact.mime,
+          folderId: payload.driveFolderId,
+        });
+        driveFileId = uploaded.fileId;
+        driveUrl = uploaded.webViewLink;
+        registerCleanup(() =>
+          deleteDriveFile({ accessToken: token, fileId: uploaded.fileId }),
+        );
+        if (fileRow) {
+          await db
+            .update(files)
+            .set({ driveFileId, driveUrl })
+            .where(eq(files.id, fileRow.id));
+        }
+      }
+
+      // Converted outputs are temporary in object-storage mode. Preserved
+      // sources remain until runDownloadJob's outer work-directory cleanup.
+      if (blobMode && artifact.audioConverted) {
+        await fs.unlink(deliveryPath).catch(() => undefined);
+      }
+
+      return {
+        fileId: fileRow?.id,
+        relativePath: skipObjectStore ? undefined : relativePath,
+        driveFileId,
+        driveUrl,
+        filename: artifact.filename,
+        extension: artifact.extension,
+        mime: artifact.mime,
+        sizeBytes: Number(stat.size),
+        audioConverted: artifact.audioConverted,
+      };
+    },
+    complete: params.complete,
+  });
+}
+
+export async function processHypedditOriginalDownload(params: {
+  gateUrl: string;
+  email: string;
+  name: string;
+  userId: string;
+  workDir: string;
+  signal?: AbortSignal;
+  requestedFormat: AudioFormat;
+  outputDirectory: string;
+  displayName?: string;
+  artistHint?: string;
+  titleHint?: string;
+  fallbackDependencies?: Partial<SpotifyFallbackDependencies>;
+  planArtifact?: typeof planDeliveryArtifact;
+}): Promise<{
+  downloaded: HypedditDownloadResult;
+  artifact: DeliveryArtifactPlan;
+}> {
+  const downloaded = await downloadHypedditWithSpotifyFallback({
+    gateUrl: params.gateUrl,
+    email: params.email,
+    name: params.name,
+    userId: params.userId,
+    workDir: params.workDir,
+    signal: params.signal,
+    ...params.fallbackDependencies,
+  });
+  const artifact = (params.planArtifact ?? planDeliveryArtifact)({
+    provenance: "hypeddit-original",
+    downloadedPath: downloaded.filePath,
+    originalFilename: downloaded.filename,
+    requestedFormat: params.requestedFormat,
+    outputDirectory: params.outputDirectory,
+    displayName:
+      params.displayName ??
+      sanitizeFilename(
+        trackDisplayName(
+          params.artistHint,
+          params.titleHint ?? downloaded.title ?? "track",
+        ),
+      ),
+  });
+  return { downloaded, artifact };
+}
+
 /**
- * Unlock a Hypeddit Free Download gate, store the file, then retag → FLAC
- * using the SoundCloud track URL for metadata/artwork.
+ * Unlock and deliver a Hypeddit artist original. WAV uses the existing tagged
+ * FLAC retag path; every other format bypasses conversion.
  */
-async function processHypedditRetag(params: {
+async function processHypedditOriginal(params: {
   deps: RunJobDeps;
   hypedditUrl: string;
   metadataUrl: string;
   titleHint?: string;
   artistHint?: string;
   workDir: string;
+  outDir: string;
 }): Promise<void> {
-  const { deps, hypedditUrl, metadataUrl, workDir } = params;
+  const { deps, hypedditUrl, metadataUrl, workDir, outDir } = params;
   const { payload, signal, update } = deps;
   const email = payload.gateEmail?.trim();
   if (!email) {
@@ -229,66 +418,117 @@ async function processHypedditRetag(params: {
   });
   await ensureNotCancelled(signal, deps.db, payload.jobId, payload.parentJobId);
 
-  const downloaded = await downloadHypedditGate({
+  const { downloaded, artifact } = await processHypedditOriginalDownload({
     gateUrl: hypedditUrl,
     email,
     name: payload.gateName?.trim() || email.split("@")[0] || "DJ",
     workDir,
     signal,
+    userId: payload.userId,
+    requestedFormat: payload.audioFormat,
+    outputDirectory: outDir,
+    artistHint: params.artistHint,
+    titleHint: params.titleHint,
   });
 
   // This path returns before processTrack's gate ever runs, so club-ready-only
-  // has to be enforced here or Hypeddit tracks ship unchecked. Verify now:
-  // these are frequently 320 kbps MP3s about to be rewrapped as FLAC, after
-  // which every container-level check will happily report "lossless".
+  // has to be enforced here or Hypeddit tracks ship unchecked. Verify the
+  // downloaded original read-only before either preserving it or converting WAV.
   // Unlike the main path there is no YouTube mirror, so a rejection fails outright.
   // A Hypeddit gate is the artist handing over their own file, so it is
   // eligible for "master" — but only eligible: the spectral checks still have
   // to agree, which is what catches a 320 kbps MP3 dressed up as WAV.
+  const verdict = payload.clubReadyOnly
+    ? await safeVerifyForDj(downloaded.filePath, signal, true)
+    : null;
   if (payload.clubReadyOnly) {
-    const verdict = await safeVerifyForDj(downloaded.filePath, signal, true);
     if (!verdict || !isClubReady(verdict.tier)) {
       await fs.unlink(downloaded.filePath).catch(() => undefined);
       throw qualityGateError(verdict, "The Hypeddit Free Download");
     }
   }
 
-  const contentType =
-    downloaded.ext === "wav"
-      ? "audio/wav"
-      : downloaded.ext === "mp3"
-        ? "audio/mpeg"
-        : downloaded.ext === "flac"
-          ? "audio/flac"
-          : downloaded.ext === "aiff" || downloaded.ext === "aif"
-            ? "audio/aiff"
-            : "application/octet-stream";
+  if (artifact.action === "normal-conversion") {
+    throw new Error("Hypeddit original produced a stream conversion plan");
+  }
 
-  const inputStorageKey = userStorageKey(
-    payload.userId,
-    "uploads",
-    `${randomUUID()}.${downloaded.ext}`,
-  );
-  await putLocalFile(inputStorageKey, downloaded.filePath, { contentType });
-
-  // Dynamic import avoids a circular module graph with retag-job → run-job types.
-  const { runRetagJob } = await import("./retag-job");
-  await runRetagJob({
-    db: deps.db,
-    payload: {
-      jobId: payload.jobId,
-      userId: payload.userId,
-      inputStorageKey,
-      metadataUrl,
-      titleHint: params.titleHint,
-      artistHint: params.artistHint,
-      destination: payload.destination,
-      hypedditOriginal: true,
-      clubReadyOnly: payload.clubReadyOnly,
+  await executeOriginalArtifact({
+    provenance: "hypeddit-original",
+    action: artifact.action,
+    preserve: async () => {
+      await update({
+        title: params.titleHint ?? downloaded.title ?? artifact.filename,
+        artist: params.artistHint,
+        stage: "delivering",
+        progress: 80,
+      });
+      await ensureNotCancelled(
+        signal,
+        deps.db,
+        payload.jobId,
+        payload.parentJobId,
+      );
+      await deliverArtifact({
+        deps,
+        artifact,
+        outDir,
+        complete: async (delivered) => {
+          await update({ stage: "cleanup", progress: 95 });
+          await update({
+            status: "completed",
+            stage: "done",
+            progress: 100,
+            result: {
+              ...delivered,
+              qualityLabel: artifact.qualityLabel,
+              hypedditOriginal: true,
+              sourceCodec: verdict?.analysis.codec,
+              sourceBitrateKbps: verdict?.analysis.bitrateKbps ?? null,
+              cutoffHz: verdict?.analysis.cutoffHz,
+              djTier: verdict?.tier,
+              djHeadline: verdict?.headline,
+              warnings: verdict?.warnings.length ? verdict.warnings : undefined,
+              ...(payload.clubReadyOnly ? { clubReadyOnly: true } : {}),
+            },
+          });
+        },
+      });
     },
-    signal,
-    update,
-    getGoogleAccessToken: deps.getGoogleAccessToken,
+    convertWav: async () => {
+      throw new Error("Hypeddit WAV must use the retag path");
+    },
+    retagWav: async () => {
+      const sourceExtension = extensionFromPath(downloaded.filePath);
+      const inputStorageKey = userStorageKey(
+        payload.userId,
+        "uploads",
+        `${randomUUID()}.${sourceExtension}`,
+      );
+      await putLocalFile(inputStorageKey, downloaded.filePath, {
+        contentType: audioMimeForExtension(sourceExtension),
+      });
+
+      // Dynamic import avoids a circular module graph with retag-job → run-job types.
+      const { runRetagJob } = await import("./retag-job");
+      await runRetagJob({
+        db: deps.db,
+        payload: {
+          jobId: payload.jobId,
+          userId: payload.userId,
+          inputStorageKey,
+          metadataUrl,
+          titleHint: params.titleHint,
+          artistHint: params.artistHint,
+          destination: payload.destination,
+          driveFolderId: payload.driveFolderId,
+          hypedditOriginal: true,
+          clubReadyOnly: payload.clubReadyOnly,
+        },
+        signal,
+        update,
+        getGoogleAccessToken: deps.getGoogleAccessToken,
+      });
+    },
   });
 }
 
@@ -323,7 +563,7 @@ async function processTrack(params: {
   const cookieTmp = params.cookieTmp;
 
   // SoundCloud playlist/track priority:
-  // 0) Free Download purchase_url → Hypeddit unlock → retag AIFF
+  // 0) Free Download purchase_url → Hypeddit unlock → preserve the original
   //    (other store/gate links → fail flagged for manual download)
   // 1) artist free-download / original upload (best possible)
   // 2) confident YouTube mirror (Premium Opus beats SC AAC stream)
@@ -343,13 +583,14 @@ async function processTrack(params: {
       throw new ManualDownloadRequiredError(purchase.url, purchase.title);
     }
     if (purchase.kind === "hypeddit" && purchase.url) {
-      await processHypedditRetag({
+      await processHypedditOriginal({
         deps,
         hypedditUrl: purchase.url,
         metadataUrl: params.catalogUrl ?? params.trackUrl,
         titleHint: params.titleHint,
         artistHint: params.artistHint,
         workDir,
+        outDir,
       });
       return;
     }
@@ -402,7 +643,11 @@ async function processTrack(params: {
   // artist's original upload or a Hypeddit gate, which is what the switch
   // declares. Its streams top out at 128 kbps MP3 / 160 kbps AAC, strictly
   // worse than YouTube Premium's ~280 kbps Opus, so everything else mirrors.
-  if (soundcloud && !payload.freeDownloadsOnly && params.preferYoutube !== false) {
+  if (
+    soundcloud &&
+    !payload.freeDownloadsOnly &&
+    params.preferYoutube !== false
+  ) {
     await update({ stage: "resolving", progress: 18 });
     const ytResult = await trySoundCloudViaYoutubeFirst({
       deps,
@@ -467,22 +712,6 @@ async function processTrack(params: {
     throw err;
   }
 
-  const tags = await resolveTrackTags({
-    catalogUrl: params.catalogUrl,
-    // YouTube is consulted last and only answers for Topic channels, so a
-    // Spotify/SoundCloud catalogUrl still wins whenever we have one.
-    downloadUrl: params.trackUrl,
-    titleHint: params.titleHint ?? downloaded.title,
-    artistHint: params.artistHint,
-    cookiePath: cookieTmp,
-    signal,
-  });
-
-  const title = tags.title ?? params.titleHint ?? downloaded.title ?? "track";
-  const artist = tags.artist ?? params.artistHint;
-  await update({ title, artist, stage: "converting", progress: 55 });
-  await ensureNotCancelled(signal, db, payload.jobId, payload.parentJobId);
-
   // Verify the *downloaded source*, before conversion. Once it has been
   // rewrapped as ALAC/FLAC every container-level check says "lossless", so this
   // is the last moment the truth is visible.
@@ -522,6 +751,82 @@ async function processTrack(params: {
     );
   }
 
+  let title = params.titleHint ?? downloaded.title ?? "track";
+  let artist = params.artistHint;
+  const initialArtifact = planDeliveryArtifact({
+    provenance: isArtistOriginal ? "soundcloud-original" : "stream",
+    downloadedPath: downloaded.filePath,
+    requestedFormat: payload.audioFormat,
+    outputDirectory: outDir,
+    displayName: sanitizeFilename(trackDisplayName(artist, title)),
+  });
+
+  if (initialArtifact.action === "preserve-original") {
+    await executeOriginalArtifact({
+      provenance: "soundcloud-original",
+      action: initialArtifact.action,
+      preserve: async () => {
+        await update({ title, artist, stage: "delivering", progress: 80 });
+        await ensureNotCancelled(
+          signal,
+          db,
+          payload.jobId,
+          payload.parentJobId,
+        );
+        await deliverArtifact({
+          deps,
+          artifact: initialArtifact,
+          outDir,
+          complete: async (delivered) => {
+            await update({ stage: "cleanup", progress: 95 });
+            await update({
+              status: "completed",
+              stage: "done",
+              progress: 100,
+              result: {
+                ...delivered,
+                qualityLabel: initialArtifact.qualityLabel,
+                matchScore: params.matchScore,
+                djTier: verdict?.tier,
+                djHeadline: verdict?.headline,
+                warnings: warnings.length ? warnings : undefined,
+                sourceCodec: verdict?.analysis.codec ?? downloaded.acodec,
+                sourceBitrateKbps:
+                  verdict?.analysis.bitrateKbps ?? downloaded.abr ?? null,
+                cutoffHz: verdict?.analysis.cutoffHz,
+                sourceFormatId: downloaded.formatId,
+                soundcloudOriginal: true,
+                ...(payload.clubReadyOnly ? { clubReadyOnly: true } : {}),
+              },
+            });
+          },
+        });
+      },
+      convertWav: async () => {
+        throw new Error("A preserved original must not be converted");
+      },
+      retagWav: async () => {
+        throw new Error("A direct SoundCloud original must not be retagged");
+      },
+    });
+    return;
+  }
+
+  const tags = await resolveTrackTags({
+    catalogUrl: params.catalogUrl,
+    // YouTube is consulted last and only answers for Topic channels, so a
+    // Spotify/SoundCloud catalogUrl still wins whenever we have one.
+    downloadUrl: params.trackUrl,
+    titleHint: params.titleHint ?? downloaded.title,
+    artistHint: params.artistHint,
+    cookiePath: cookieTmp,
+    signal,
+  });
+  title = tags.title ?? title;
+  artist = tags.artist ?? artist;
+  await update({ title, artist, stage: "converting", progress: 55 });
+  await ensureNotCancelled(signal, db, payload.jobId, payload.parentJobId);
+
   let artworkPath: string | null = null;
   if (tags.artworkUrl) {
     artworkPath = await downloadArtworkFile({
@@ -549,127 +854,85 @@ async function processTrack(params: {
     }
   }
 
-  const filename = `${sanitizeFilename(
-    trackDisplayName(artist, title),
-  )}.${extFor(payload.audioFormat)}`;
-  const outPath = assertPathInside(outDir, path.join(outDir, filename));
-
-  const { qualityLabel } = await convertAudio({
-    inputPath: downloaded.filePath,
-    outputPath: outPath,
-    target: payload.audioFormat,
-    title,
-    artist,
-    album: tags.album,
-    genre: tags.genre,
-    date: tags.date,
-    artworkPath,
-    cutoffHz: verdict?.analysis.cutoffHz,
-    peakLimitLossy: true,
-    signal,
+  const artifact = planDeliveryArtifact({
+    provenance: isArtistOriginal ? "soundcloud-original" : "stream",
+    downloadedPath: downloaded.filePath,
+    requestedFormat: payload.audioFormat,
+    outputDirectory: outDir,
+    displayName: sanitizeFilename(trackDisplayName(artist, title)),
   });
+  if (artifact.action === "preserve-original") {
+    throw new Error("Conversion path produced a preservation artifact");
+  }
+  const outPath = assertPathInside(outDir, artifact.path);
+
+  const convert = () =>
+    convertAudio({
+      inputPath: downloaded.filePath,
+      outputPath: outPath,
+      target: artifact.target,
+      title,
+      artist,
+      album: tags.album,
+      genre: tags.genre,
+      date: tags.date,
+      artworkPath,
+      cutoffHz: verdict?.analysis.cutoffHz,
+      peakLimitLossy: artifact.peakLimitLossy,
+      signal,
+    });
+  const converted = isArtistOriginal
+    ? await executeOriginalArtifact({
+        provenance: "soundcloud-original",
+        action: "convert-wav",
+        preserve: async () => {
+          throw new Error("A WAV original must not use preservation delivery");
+        },
+        convertWav: convert,
+        retagWav: async () => {
+          throw new Error("A direct SoundCloud WAV must not be retagged");
+        },
+      })
+    : await convert();
+  const convertedArtifact: DeliveryArtifactPlan = {
+    ...artifact,
+    qualityLabel: converted.qualityLabel,
+  };
 
   await update({ stage: "delivering", progress: 80 });
   await ensureNotCancelled(signal, db, payload.jobId, payload.parentJobId);
-
-  const stat = await fs.stat(outPath);
-  let relativePath = path.relative(userRoot(payload.userId), outPath);
-
-  const blobMode = useBlobStorage();
-  // Drive-only jobs don't need an object-store copy: Drive holds the durable
-  // artifact, and without a file row the UI shows no Download button. Skipping
-  // it avoids storing a full duplicate of every track.
-  const skipObjectStore = blobMode && payload.destination === "drive";
-
-  if (blobMode && !skipObjectStore) {
-    const key = userStorageKey(
-      payload.userId,
-      "downloads",
-      randomUUID(),
-      filename,
-    );
-    await putLocalFile(key, outPath, {
-      contentType: mimeFor(payload.audioFormat),
-    });
-    relativePath = key;
-  }
-
-  const [fileRow] = skipObjectStore
-    ? []
-    : await db
-        .insert(files)
-        .values({
-          userId: payload.userId,
-          jobId: payload.jobId,
-          relativePath,
-          filename,
-          mime: mimeFor(payload.audioFormat),
-          sizeBytes: Number(stat.size),
-          expiresAt: new Date(Date.now() + FILE_TTL_MS),
-        })
-        .returning();
-
-  let driveFileId: string | undefined;
-  let driveUrl: string | undefined;
-
-  const wantsDrive =
-    payload.destination === "drive" || payload.destination === "both";
-  if (wantsDrive) {
-    const token = await deps.getGoogleAccessToken?.(payload.userId);
-    if (!token) {
-      throw new Error(GOOGLE_DRIVE_TOKEN_ERROR);
-    }
-    const uploaded = await uploadToDrive({
-      accessToken: token,
-      filePath: outPath,
-      filename,
-      mimeType: mimeFor(payload.audioFormat),
-      folderId: payload.driveFolderId,
-    });
-    driveFileId = uploaded.fileId;
-    driveUrl = uploaded.webViewLink;
-    if (fileRow) {
-      await db
-        .update(files)
-        .set({ driveFileId, driveUrl })
-        .where(eq(files.id, fileRow.id));
-    }
-  }
-
-  await update({ stage: "cleanup", progress: 95 });
-
-  // In blob mode the converted file on disk is now redundant — either it's in
-  // the object store, or the job was Drive-only and Google has it. Local/disk
-  // deployments keep it, since there `outDir` *is* the storage.
-  if (blobMode) {
-    await fs.unlink(outPath).catch(() => undefined);
-  }
   const sourceFormatId = downloaded.formatId;
   const soundcloudOriginal =
     soundcloud &&
     typeof sourceFormatId === "string" &&
     sourceFormatId.toLowerCase() === "download";
 
-  await update({
-    status: "completed",
-    stage: "done",
-    progress: 100,
-    result: {
-      fileId: fileRow?.id,
-      relativePath,
-      driveFileId,
-      driveUrl,
-      qualityLabel,
-      matchScore: params.matchScore,
-      djTier: verdict?.tier,
-      djHeadline: verdict?.headline,
-      warnings: warnings.length ? warnings : undefined,
-      sourceCodec: verdict?.analysis.codec ?? downloaded.acodec,
-      sourceBitrateKbps: verdict?.analysis.bitrateKbps ?? downloaded.abr ?? null,
-      cutoffHz: verdict?.analysis.cutoffHz,
-      sourceFormatId,
-      soundcloudOriginal: soundcloudOriginal || undefined,
-      ...(payload.clubReadyOnly ? { clubReadyOnly: true } : {}),
+  await deliverArtifact({
+    deps,
+    artifact: convertedArtifact,
+    outDir,
+    complete: async (delivered) => {
+      await update({ stage: "cleanup", progress: 95 });
+      await update({
+        status: "completed",
+        stage: "done",
+        progress: 100,
+        result: {
+          ...delivered,
+          qualityLabel: convertedArtifact.qualityLabel,
+          matchScore: params.matchScore,
+          djTier: verdict?.tier,
+          djHeadline: verdict?.headline,
+          warnings: warnings.length ? warnings : undefined,
+          sourceCodec: verdict?.analysis.codec ?? downloaded.acodec,
+          sourceBitrateKbps:
+            verdict?.analysis.bitrateKbps ?? downloaded.abr ?? null,
+          cutoffHz: verdict?.analysis.cutoffHz,
+          sourceFormatId,
+          soundcloudOriginal: soundcloudOriginal || undefined,
+          ...(payload.clubReadyOnly ? { clubReadyOnly: true } : {}),
+        },
+      });
     },
   });
 }
@@ -735,10 +998,7 @@ async function resolveSoundCloudMeta(params: {
 }
 
 type YoutubePreferResult =
-  | "downloaded"
-  | "no_mirror"
-  | "no_cookies"
-  | "youtube_failed";
+  "downloaded" | "no_mirror" | "no_cookies" | "youtube_failed";
 
 /**
  * Prefer YouTube (Premium Opus) when SoundCloud has no free-download master
@@ -759,12 +1019,7 @@ async function trySoundCloudViaYoutubeFirst(params: {
   const { payload, signal, update } = deps;
 
   await update({ stage: "resolving", progress: 22 });
-  await ensureNotCancelled(
-    signal,
-    deps.db,
-    payload.jobId,
-    payload.parentJobId,
-  );
+  await ensureNotCancelled(signal, deps.db, payload.jobId, payload.parentJobId);
 
   const meta = await resolveSoundCloudMeta({
     trackUrl: params.trackUrl,
@@ -843,12 +1098,7 @@ async function fallbackSoundCloudToYoutube(params: {
     stage: "resolving",
     progress: 25,
   });
-  await ensureNotCancelled(
-    signal,
-    deps.db,
-    payload.jobId,
-    payload.parentJobId,
-  );
+  await ensureNotCancelled(signal, deps.db, payload.jobId, payload.parentJobId);
 
   const meta = await resolveSoundCloudMeta({
     trackUrl: params.trackUrl,
@@ -1078,8 +1328,7 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
       }
 
       if (expanded.entries.length > 1) {
-        const playlistTitle =
-          expanded.title ?? payload.titleHint ?? "Playlist";
+        const playlistTitle = expanded.title ?? payload.titleHint ?? "Playlist";
         await update({
           title: playlistTitle,
           progress: 40,

@@ -2,7 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import {
   queryFromAudioFilename,
   searchSoundCloudTracks,
-} from "@thumper/pipeline";
+} from "@thumper/pipeline/retag-search";
 import { NextResponse } from "next/server";
 import { wakeModalSearch } from "../../../../lib/wake-modal";
 
@@ -28,8 +28,8 @@ export async function POST(req: Request) {
   }
 
   const query =
-    (body.query?.trim() ||
-      (body.filename ? queryFromAudioFilename(body.filename) : "")) ||
+    body.query?.trim() ||
+    (body.filename ? queryFromAudioFilename(body.filename) : "") ||
     "";
   if (!query) {
     return NextResponse.json(
