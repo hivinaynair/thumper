@@ -25,6 +25,8 @@ import {
 import { FILE_TTL_MS } from "./cleanup";
 import { convertAudio, hasAttachedArtwork, tagMp3Copy } from "./convert";
 import { materializeCookieFile } from "./cookies";
+import { downloadBrowserGate } from "./download-browser-gate";
+import { downloadDirectFile } from "./download-direct";
 import {
   audioMimeForExtension,
   executeOriginalArtifact,
@@ -45,6 +47,7 @@ import {
 import { deleteDriveFile, ensurePlaylistFolder, uploadToDrive } from "./drive";
 import {
   downloadHypedditWithSpotifyFallback,
+  parseSpotifyNetscapeCookies,
   type HypedditDownloadResult,
   type SpotifyFallbackDependencies,
 } from "./hypeddit";
@@ -396,6 +399,81 @@ export async function processHypedditOriginalDownload(params: {
   return { downloaded, artifact };
 }
 
+export async function processGenericGateDownload(params: {
+  kind: "direct" | "browser-gate";
+  gateUrl: string;
+  email: string;
+  name: string;
+  userId: string;
+  workDir: string;
+  signal?: AbortSignal;
+  requestedFormat: AudioFormat;
+  outputDirectory: string;
+  displayName?: string;
+  artistHint?: string;
+  titleHint?: string;
+  materializeSpotifyCookies?: (userId: string) => Promise<string | null>;
+  readCookieFile?: (filePath: string) => Promise<string>;
+  unlinkCookieFile?: (filePath: string) => Promise<void>;
+  directDownload?: typeof downloadDirectFile;
+  browserDownload?: typeof downloadBrowserGate;
+  planArtifact?: typeof planDeliveryArtifact;
+}): Promise<{
+  downloaded: HypedditDownloadResult;
+  artifact: DeliveryArtifactPlan;
+}> {
+  let downloaded: HypedditDownloadResult;
+  if (params.kind === "direct") {
+    downloaded = await (params.directDownload ?? downloadDirectFile)({
+      url: params.gateUrl,
+      workDir: params.workDir,
+      signal: params.signal,
+    });
+  } else {
+    let cookies: ReturnType<typeof parseSpotifyNetscapeCookies> = [];
+    const cookiePath = await (
+      params.materializeSpotifyCookies ??
+      ((userId: string) => materializeCookieFile(userId, "spotify"))
+    )(params.userId);
+    if (cookiePath) {
+      try {
+        const text = await (params.readCookieFile ?? ((p) => fs.readFile(p, "utf8")))(
+          cookiePath,
+        );
+        cookies = parseSpotifyNetscapeCookies(text);
+      } finally {
+        await (params.unlinkCookieFile ?? fs.unlink)(cookiePath).catch(
+          () => undefined,
+        );
+      }
+    }
+    downloaded = await (params.browserDownload ?? downloadBrowserGate)({
+      gateUrl: params.gateUrl,
+      email: params.email,
+      name: params.name,
+      workDir: params.workDir,
+      cookies,
+      signal: params.signal,
+    });
+  }
+  const artifact = (params.planArtifact ?? planDeliveryArtifact)({
+    provenance: "hypeddit-original",
+    downloadedPath: downloaded.filePath,
+    originalFilename: downloaded.filename,
+    requestedFormat: params.requestedFormat,
+    outputDirectory: params.outputDirectory,
+    displayName:
+      params.displayName ??
+      sanitizeFilename(
+        trackDisplayName(
+          params.artistHint,
+          params.titleHint ?? downloaded.title ?? "track",
+        ),
+      ),
+  });
+  return { downloaded, artifact };
+}
+
 /**
  * Unlock and deliver a Hypeddit artist original. WAV uses the existing tagged
  * FLAC retag path; MP3 without embedded artwork is copy-tagged; every other
@@ -409,11 +487,15 @@ async function processHypedditOriginal(params: {
   artistHint?: string;
   workDir: string;
   outDir: string;
+  downloadedOverride?: {
+    downloaded: HypedditDownloadResult;
+    artifact: DeliveryArtifactPlan;
+  };
 }): Promise<void> {
   const { deps, hypedditUrl, metadataUrl, workDir, outDir } = params;
   const { payload, signal, update } = deps;
   const email = payload.gateEmail?.trim();
-  if (!email) {
+  if (!params.downloadedOverride && !email) {
     throw new Error(
       "Hypeddit Free Download needs your account email — sign in with Google and retry",
     );
@@ -426,18 +508,20 @@ async function processHypedditOriginal(params: {
   });
   await ensureNotCancelled(signal, deps.db, payload.jobId, payload.parentJobId);
 
-  const { downloaded, artifact } = await processHypedditOriginalDownload({
-    gateUrl: hypedditUrl,
-    email,
-    name: payload.gateName?.trim() || email.split("@")[0] || "DJ",
-    workDir,
-    signal,
-    userId: payload.userId,
-    requestedFormat: payload.audioFormat,
-    outputDirectory: outDir,
-    artistHint: params.artistHint,
-    titleHint: params.titleHint,
-  });
+  const { downloaded, artifact } = params.downloadedOverride
+    ? params.downloadedOverride
+    : await processHypedditOriginalDownload({
+        gateUrl: hypedditUrl,
+        email: email!,
+        name: payload.gateName?.trim() || email!.split("@")[0] || "DJ",
+        workDir,
+        signal,
+        userId: payload.userId,
+        requestedFormat: payload.audioFormat,
+        outputDirectory: outDir,
+        artistHint: params.artistHint,
+        titleHint: params.titleHint,
+      });
 
   // This path returns before processTrack's gate ever runs, so club-ready-only
   // has to be enforced here or Hypeddit tracks ship unchecked. Verify the
@@ -662,8 +746,8 @@ async function processTrack(params: {
   const cookieTmp = params.cookieTmp;
 
   // SoundCloud playlist/track priority:
-  // 0) Free Download purchase_url → Hypeddit unlock → preserve the original
-  //    (other store/gate links → fail flagged for manual download)
+  // 0) Free Download purchase_url → Hypeddit / file-gate unlock → preserve
+  //    the original (stream/store links → fail flagged for manual download)
   // 1) artist free-download / original upload (best possible)
   // 2) confident YouTube mirror (Premium Opus beats SC AAC stream)
   // 3) SoundCloud stream (remixes/bootlegs with no YT upload)
@@ -680,6 +764,50 @@ async function processTrack(params: {
     });
     if (purchase.kind === "other" && purchase.url) {
       throw new ManualDownloadRequiredError(purchase.url, purchase.title);
+    }
+    if (purchase.kind === "stream" && purchase.url) {
+      const titledFree = /\bfree\b/i.test(purchase.title ?? "");
+      if (!titledFree) {
+        throw new ManualDownloadRequiredError(purchase.url, purchase.title);
+      }
+    }
+    const gateKind =
+      purchase.kind === "direct" || purchase.kind === "browser-gate"
+        ? purchase.kind
+        : purchase.kind === "stream" && /\bfree\b/i.test(purchase.title ?? "")
+          ? ("browser-gate" as const)
+          : null;
+    if (gateKind && purchase.url) {
+      const email = payload.gateEmail?.trim() || "listener@thumper.app";
+      await update({
+        stage: "downloading",
+        progress: 25,
+        matchedUrl: purchase.url,
+      });
+      const downloadedOverride = await processGenericGateDownload({
+        kind: gateKind,
+        gateUrl: purchase.url,
+        email,
+        name: payload.gateName?.trim() || email.split("@")[0] || "DJ",
+        userId: payload.userId,
+        workDir,
+        signal,
+        requestedFormat: payload.audioFormat,
+        outputDirectory: outDir,
+        artistHint: params.artistHint,
+        titleHint: params.titleHint,
+      });
+      await processHypedditOriginal({
+        deps,
+        hypedditUrl: purchase.url,
+        metadataUrl: params.catalogUrl ?? params.trackUrl,
+        titleHint: params.titleHint,
+        artistHint: params.artistHint,
+        workDir,
+        outDir,
+        downloadedOverride,
+      });
+      return;
     }
     if (purchase.kind === "hypeddit" && purchase.url) {
       await processHypedditOriginal({
@@ -704,7 +832,7 @@ async function processTrack(params: {
       );
       if (!hasFreeDownload) {
         throw new Error(
-          "No free download on this track — no Hypeddit gate and no artist original. Turn Free downloads only off to mirror it from YouTube.",
+          "No free download on this track — no artist download gate and no native SoundCloud original. Turn Free downloads only off to mirror it from YouTube.",
         );
       }
     }

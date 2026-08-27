@@ -17,6 +17,8 @@ export {
   SoundCloudPreviewError,
   type DownloadMediaResult,
 } from "./download";
+export * from "./download-direct";
+export * from "./download-browser-gate";
 export * from "./drive";
 export * from "./hypeddit";
 export * from "./match";

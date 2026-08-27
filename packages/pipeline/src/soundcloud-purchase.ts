@@ -3,7 +3,13 @@ import { resolveSoundCloudClientId } from "./soundcloud-client";
 
 export { resolveSoundCloudClientId } from "./soundcloud-client";
 
-export type SoundCloudPurchaseKind = "hypeddit" | "other" | "none";
+export type SoundCloudPurchaseKind =
+  | "hypeddit"
+  | "direct"
+  | "browser-gate"
+  | "stream"
+  | "other"
+  | "none";
 
 export type SoundCloudPurchase = {
   kind: SoundCloudPurchaseKind;
@@ -22,17 +28,53 @@ function oauthTokenFromNetscape(cookieText: string): string | null {
   return null;
 }
 
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function hostMatches(host: string, names: readonly string[]): boolean {
+  return names.some((name) => host === name || host.endsWith(`.${name}`));
+}
+
+const DIRECT_HOSTS = ["dropbox.com"] as const;
+const BROWSER_GATE_HOSTS = [
+  "toneden.io",
+  "droploud.com",
+  "laylo.com",
+  "gaterush.me",
+  "pl8list.com",
+  "hive.co",
+  "vault.fm",
+  "cobrand.com",
+  "pumpyoursound.com",
+] as const;
+const STREAM_HOSTS = [
+  "ffm.to",
+  "feature.fm",
+  "fanlink.to",
+  "fanlink.tv",
+  "smarturl.it",
+  "lnk.to",
+  "listen.ukf.com",
+  "monster.cat",
+  "outnow.io",
+  "found.ee",
+  "orcd.co",
+] as const;
+
 export function classifySoundCloudPurchaseUrl(
   url: string,
-): "hypeddit" | "other" {
-  try {
-    const host = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
-    if (host === "hypeddit.com" || host.endsWith(".hypeddit.com")) {
-      return "hypeddit";
-    }
-  } catch {
-    /* treat unparseable as other store link */
-  }
+): Exclude<SoundCloudPurchaseKind, "none"> {
+  const host = hostOf(url);
+  if (!host) return "other";
+  if (hostMatches(host, ["hypeddit.com"])) return "hypeddit";
+  if (hostMatches(host, DIRECT_HOSTS)) return "direct";
+  if (hostMatches(host, BROWSER_GATE_HOSTS)) return "browser-gate";
+  if (hostMatches(host, STREAM_HOSTS)) return "stream";
   return "other";
 }
 
@@ -92,9 +134,9 @@ export class ManualDownloadRequiredError extends Error {
 
   constructor(url: string, purchaseTitle?: string | null) {
     super(
-      `Manual download required (not Hypeddit): ${url}${
+      `Manual download required: ${url}${
         purchaseTitle ? ` (${purchaseTitle})` : ""
-      }. Download it yourself, then upload it on Retag; WAV is tagged losslessly as FLAC.`,
+      }. This link is a stream/store page, not a file gate. Download it yourself, then upload it on Retag.`,
     );
     this.name = "ManualDownloadRequiredError";
     this.manualDownloadUrl = url;

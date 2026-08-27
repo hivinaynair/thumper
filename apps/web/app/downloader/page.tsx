@@ -592,10 +592,12 @@ export default function DownloaderPage() {
               onChange={(e) => setFreeDownloadsOnly(e.target.checked)}
             />
             <span>
-              Free downloads only (Hypeddit)
+              Free downloads only (artist gates)
               <span className="check-row-hint">
-                Skip streams and YouTube mirrors. Tracks without a Hypeddit Free
-                Download fail so playlist fills stay masters-only.
+                Skip streams and YouTube mirrors. Tracks without a native
+                SoundCloud download or a file gate (Hypeddit, ToneDen, DropLoud,
+                Laylo, GateRush, Dropbox, and similar) fail so playlist fills
+                stay masters-only.
               </span>
             </span>
           </label>
@@ -699,7 +701,7 @@ export default function DownloaderPage() {
                   </div>
                   {job.result?.hypedditOriginal ? (
                     <div className="quality-badge original">
-                      <strong>Hypeddit original</strong>
+                      <strong>Artist original</strong>
                       {` — ${HYPEDDIT_ORIGINAL_COPY}`}
                     </div>
                   ) : null}
@@ -712,7 +714,7 @@ export default function DownloaderPage() {
                   {job.result?.manualDownloadUrl ? (
                     <div className="quality-badge unsuitable">
                       <strong>Download manually</strong>
-                      {" — this Free Download isn’t Hypeddit. "}
+                      {" — this link is a stream or store page, not a file gate. "}
                       <a
                         href={job.result.manualDownloadUrl}
                         target="_blank"
