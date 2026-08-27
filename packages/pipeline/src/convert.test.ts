@@ -91,8 +91,27 @@ describe("lossyProcessingPlan", () => {
     expect(plan).toEqual({ gainDb: null, peakLimited: true });
     expect(lossyFilterArgs(plan)).toEqual([
       "-af",
-      "alimiter=limit=0.988553:attack=5:release=50:level=false:latency=true",
+      "alimiter=limit=0.988553:attack=0.1:release=1:level=false:latency=true",
     ]);
+  });
+
+  it("does not limit a stream that already fits in integer PCM", () => {
+    // −0.05 dBFS is above the −0.1 write margin but will not clamp on encode.
+    // The 5/50 limiter used to fire here and duck every near-full-scale kick.
+    const plan = lossyProcessingPlan(
+      { integratedLufs: -7.6, samplePeakDb: -0.05 },
+      true,
+    );
+    expect(plan).toEqual({ gainDb: null, peakLimited: false });
+    expect(lossyFilterArgs(plan)).toEqual([]);
+  });
+
+  it("does not limit a file sitting exactly at 0 dBFS", () => {
+    const plan = lossyProcessingPlan(
+      { integratedLufs: -7.6, samplePeakDb: 0 },
+      true,
+    );
+    expect(plan).toEqual({ gainDb: null, peakLimited: false });
   });
 
   it("keeps clean boost below the ceiling without invoking the limiter", () => {

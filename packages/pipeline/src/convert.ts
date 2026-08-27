@@ -14,24 +14,38 @@ import { measureLoudness, type LoudnessMeasurement } from "./audio-verify";
 export const TARGET_LUFS = -9;
 
 /**
- * Sample-peak ceiling in dBFS — the minimum reduction that avoids adding
- * distortion, and nothing more.
+ * Write-side sample-peak ceiling in dBFS. Used as the limiter *target* and as
+ * the cap on loudness boost — not as the trigger for whether to limit.
  *
- * Deliberately not a true-peak ceiling. Holding files a full dB below full
+ * Integer PCM clamps at 0 dBFS. We write 0.1 dB under that so float rounding
+ * between measurement and encode cannot push a sample into the clamp. This is
+ * deliberately not a true-peak ceiling: holding files a full dB below full
  * scale would protect the CDJ's D/A from inter-sample overshoot, but it costs
- * level on tracks that would never have clipped on disk. Sample peak is the
- * threshold where integer PCM actually clamps, so attenuating to just under it
- * is the least we can take while still writing the decode intact.
- *
- * The 0.1 dB margin absorbs float rounding between measurement and encode.
+ * level on tracks that would never have clipped on disk.
  */
 export const SAMPLE_PEAK_CEILING_DB = -0.1;
+
+/**
+ * Where integer PCM actually clamps. The limiter runs only when the decoded
+ * (post-boost) peak exceeds this — files between here and SAMPLE_PEAK_CEILING_DB
+ * already fit on disk and must not be ducked.
+ */
+const INTEGER_CLIP_DB = 0;
 
 /** Gains smaller than this are inaudible; skip the filter entirely. */
 const MIN_MEANINGFUL_GAIN_DB = 0.1;
 
 /** Linear amplitude matching SAMPLE_PEAK_CEILING_DB for FFmpeg's limiter. */
 const SAMPLE_PEAK_CEILING_LINEAR = 10 ** (SAMPLE_PEAK_CEILING_DB / 20);
+
+/**
+ * Fastest lookahead FFmpeg's alimiter allows (attack 0.1–80 ms, release 1–8000).
+ * 5/50 are the filter defaults and duck ~55 ms around every overshoot — on a
+ * dense club master that is every kick. 0.1/1 still avoids a click, and only
+ * the samples that would have clamped.
+ */
+const LIMITER_ATTACK_MS = 0.1;
+const LIMITER_RELEASE_MS = 1;
 
 export type LossyProcessingPlan = {
   gainDb: number | null;
@@ -87,9 +101,10 @@ export function loudnessGainDb(params: {
  *
  * With peak limiting enabled, loudness gain remains boost-only and is still
  * capped by clean headroom. The difference is the overshoot case: instead of
- * lowering the entire track, the limiter catches only samples above the PCM
- * ceiling. This is deliberately opt-in at the conversion boundary so retagged
- * user uploads keep the conservative, dynamics-preserving behaviour.
+ * lowering the entire track, the limiter catches only samples that would clamp
+ * in integer PCM (> 0 dBFS). This is deliberately opt-in at the conversion
+ * boundary so retagged user uploads keep the conservative, dynamics-preserving
+ * behaviour.
  */
 export function lossyProcessingPlan(
   params: {
@@ -119,7 +134,7 @@ export function lossyProcessingPlan(
 
   return {
     gainDb,
-    peakLimited: peakAfterGain > SAMPLE_PEAK_CEILING_DB,
+    peakLimited: peakAfterGain > INTEGER_CLIP_DB,
   };
 }
 
@@ -129,7 +144,8 @@ export function lossyFilterArgs(plan: LossyProcessingPlan): string[] {
   if (plan.peakLimited) {
     filters.push(
       `alimiter=limit=${SAMPLE_PEAK_CEILING_LINEAR.toFixed(6)}` +
-        ":attack=5:release=50:level=false:latency=true",
+        `:attack=${LIMITER_ATTACK_MS}:release=${LIMITER_RELEASE_MS}` +
+        ":level=false:latency=true",
     );
   }
   return filters.length === 0 ? [] : ["-af", filters.join(",")];
