@@ -21,6 +21,10 @@ export type DeliveryArtifactPlan =
       audioConverted: false;
     })
   | (DeliveryArtifactCommon & {
+      action: "tag-mp3";
+      audioConverted: true;
+    })
+  | (DeliveryArtifactCommon & {
       action: "convert-wav" | "normal-conversion";
       audioConverted: true;
       target: AudioTargetFormat;
@@ -61,11 +65,13 @@ export function planDeliveryArtifact(params: {
   requestedFormat: AudioTargetFormat;
   outputDirectory: string;
   displayName: string;
+  hasAttachedArtwork?: boolean;
 }): DeliveryArtifactPlan {
   const sourceExtension = extensionFromPath(params.downloadedPath);
   const action = artistOriginalAction({
     artistOriginal: params.provenance !== "stream",
     extension: sourceExtension,
+    hasAttachedArtwork: params.hasAttachedArtwork,
   });
 
   if (action === "preserve-original") {
@@ -82,6 +88,20 @@ export function planDeliveryArtifact(params: {
       mime: audioMimeForExtension(sourceExtension),
       qualityLabel: `Artist original ${sourceExtension.toUpperCase()} (preserved)`,
       audioConverted: false,
+    };
+  }
+
+  if (action === "tag-mp3") {
+    const filename = filenameWithExtension(params.displayName, "mp3");
+    return {
+      action,
+      sourcePath: params.downloadedPath,
+      path: path.join(params.outputDirectory, filename),
+      filename,
+      extension: "mp3",
+      mime: audioMimeForExtension("mp3"),
+      qualityLabel: "Artist original MP3 (tagged)",
+      audioConverted: true,
     };
   }
 
@@ -121,13 +141,15 @@ export async function executeOriginalArtifact<T>(params: {
   provenance: Exclude<ArtifactProvenance, "stream">;
   action: Extract<
     DeliveryArtifactPlan["action"],
-    "preserve-original" | "convert-wav"
+    "preserve-original" | "convert-wav" | "tag-mp3"
   >;
   preserve: () => Promise<T>;
   convertWav: () => Promise<T>;
   retagWav: () => Promise<T>;
+  tagMp3: () => Promise<T>;
 }): Promise<T> {
   if (params.action === "preserve-original") return params.preserve();
+  if (params.action === "tag-mp3") return params.tagMp3();
   return params.provenance === "hypeddit-original"
     ? params.retagWav()
     : params.convertWav();

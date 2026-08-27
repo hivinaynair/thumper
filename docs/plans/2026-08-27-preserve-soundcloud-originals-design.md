@@ -11,8 +11,13 @@ stream-oriented gain, normalization, limiting, resampling, or lossy encoding.
 - WAV artist originals are converted losslessly to FLAC so metadata and artwork
   can be added. Their sample rate, channel count, and meaningful bit depth are
   preserved. No audio filter is applied.
-- MP3, AIFF, FLAC, and any other artist-original format are delivered as the
-  exact downloaded bytes. Existing metadata is not rewritten by FFmpeg.
+- MP3 artist originals that already embed artwork are delivered as the exact
+  downloaded bytes.
+- MP3 artist originals with no attached artwork are copy-tagged: FFmpeg writes
+  ID3v2.3 title/artist/album tags and embeds the SoundCloud cover as APIC
+  without re-encoding, gain, limiting, or resampling.
+- AIFF, FLAC, and any other artist-original format are delivered as the exact
+  downloaded bytes. Existing metadata is not rewritten by FFmpeg.
 - The user's selected output format does not override preservation for artist
   originals.
 - Quality analysis may inspect an original before delivery but never mutates it.
@@ -69,9 +74,12 @@ original and inspect its downloaded extension:
 
 1. Artist-original WAV: resolve metadata and artwork, then convert WAV to FLAC
    without audio filters.
-2. Any other artist original: bypass metadata resolution and conversion, then
-   deliver the downloaded file directly.
-3. Stream or mirror: continue through the existing metadata, conversion, and
+2. Artist-original MP3 without attached artwork: resolve metadata and artwork,
+   then copy the audio bitstream into a tagged MP3.
+3. Any other artist original, including MP3 that already has artwork: bypass
+   metadata resolution and conversion, then deliver the downloaded file
+   directly.
+4. Stream or mirror: continue through the existing metadata, conversion, and
    stream peak-protection path.
 
 Browser/object-storage and Google Drive delivery must support both a converted

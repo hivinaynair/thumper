@@ -37,7 +37,6 @@ describe("planDeliveryArtifact", () => {
   });
 
   for (const [extension, mime] of [
-    ["mp3", "audio/mpeg"],
     ["aiff", "audio/aiff"],
     ["aif", "audio/aiff"],
     ["flac", "audio/flac"],
@@ -64,6 +63,50 @@ describe("planDeliveryArtifact", () => {
       expect("peakLimitLossy" in plan).toBe(false);
     });
   }
+
+  it("preserves a direct SoundCloud MP3 original that already has artwork", () => {
+    const sourcePath = "/work/download.mp3";
+    const plan = planDeliveryArtifact({
+      provenance: "soundcloud-original",
+      downloadedPath: sourcePath,
+      requestedFormat: "flac",
+      outputDirectory: "/downloads",
+      displayName: "Artist - Track",
+      hasAttachedArtwork: true,
+    });
+
+    expect(plan.action).toBe("preserve-original");
+    expect(plan.path).toBe(sourcePath);
+    expect(plan.filename).toBe("Artist - Track.mp3");
+    expect(plan.extension).toBe("mp3");
+    expect(plan.mime).toBe("audio/mpeg");
+    expect(plan.audioConverted).toBe(false);
+    expect(plan.qualityLabel).toBe("Artist original MP3 (preserved)");
+  });
+
+  it("tags a direct SoundCloud MP3 original that has no artwork", () => {
+    const plan = planDeliveryArtifact({
+      provenance: "soundcloud-original",
+      downloadedPath: "/work/download.mp3",
+      requestedFormat: "flac",
+      outputDirectory: "/downloads",
+      displayName: "Artist - Track",
+      hasAttachedArtwork: false,
+    });
+
+    expect(plan).toEqual({
+      action: "tag-mp3",
+      sourcePath: "/work/download.mp3",
+      path: "/downloads/Artist - Track.mp3",
+      filename: "Artist - Track.mp3",
+      extension: "mp3",
+      mime: "audio/mpeg",
+      qualityLabel: "Artist original MP3 (tagged)",
+      audioConverted: true,
+    });
+    expect("peakLimitLossy" in plan).toBe(false);
+    expect("target" in plan).toBe(false);
+  });
 
   it("uses the extension from the downloaded path rather than a filename hint", () => {
     const plan = planDeliveryArtifact({
@@ -97,7 +140,7 @@ describe("planDeliveryArtifact", () => {
   });
 
   it("preserves Hypeddit non-WAV originals instead of retagging them", () => {
-    for (const extension of ["mp3", "aiff", "aif", "flac", "m4a", "bin"]) {
+    for (const extension of ["aiff", "aif", "flac", "m4a", "bin"]) {
       const plan = planDeliveryArtifact({
         provenance: "hypeddit-original",
         downloadedPath: `/work/hypeddit.${extension}`,
@@ -111,6 +154,23 @@ describe("planDeliveryArtifact", () => {
       expect(plan.path).toBe(`/work/hypeddit.${extension}`);
       expect(plan.audioConverted).toBe(false);
     }
+  });
+
+  it("tags a Hypeddit MP3 original that has no artwork", () => {
+    const plan = planDeliveryArtifact({
+      provenance: "hypeddit-original",
+      downloadedPath: "/work/hypeddit.mp3",
+      originalFilename: "Artist upload.mp3",
+      requestedFormat: "flac",
+      outputDirectory: "/downloads",
+      displayName: "Artist - Track",
+      hasAttachedArtwork: false,
+    });
+
+    expect(plan.action).toBe("tag-mp3");
+    expect(plan.path).toBe("/downloads/Artist - Track.mp3");
+    expect(plan.filename).toBe("Artist - Track.mp3");
+    expect(plan.audioConverted).toBe(true);
   });
 
   it("retains requested format and peak limiting for streams and mirrors", () => {
@@ -176,6 +236,10 @@ describe("executeOriginalArtifact", () => {
         calls.push("retag");
         return "retagged";
       },
+      tagMp3: async () => {
+        calls.push("tag-mp3");
+        return "tagged";
+      },
     };
   }
 
@@ -225,6 +289,30 @@ describe("executeOriginalArtifact", () => {
 
     expect(result).toBe("retagged");
     expect(ops.calls).toEqual(["retag"]);
+  });
+
+  it("invokes MP3 tagging for a direct original without artwork", async () => {
+    const ops = operations();
+    const result = await executeOriginalArtifact({
+      provenance: "soundcloud-original",
+      action: "tag-mp3",
+      ...ops,
+    });
+
+    expect(result).toBe("tagged");
+    expect(ops.calls).toEqual(["tag-mp3"]);
+  });
+
+  it("invokes MP3 tagging for a Hypeddit original without artwork", async () => {
+    const ops = operations();
+    const result = await executeOriginalArtifact({
+      provenance: "hypeddit-original",
+      action: "tag-mp3",
+      ...ops,
+    });
+
+    expect(result).toBe("tagged");
+    expect(ops.calls).toEqual(["tag-mp3"]);
   });
 });
 

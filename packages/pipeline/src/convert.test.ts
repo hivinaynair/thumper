@@ -5,11 +5,14 @@ import path from "node:path";
 import { describe, expect, it } from "bun:test";
 import {
   buildFfmpegArgs,
+  buildMp3TagArgs,
   convertAudio,
+  hasAttachedArtwork,
   loudnessGainDb,
   lossyFilterArgs,
   lossyProcessingPlan,
   probeAudio,
+  tagMp3Copy,
   TARGET_LUFS,
   SAMPLE_PEAK_CEILING_DB,
   type AudioProbe,
@@ -251,6 +254,146 @@ describe("lossless WAV to FLAC", () => {
       expect(outputProbe.sampleRate).toBe("96000");
       expect(outputProbe.channels).toBe(1);
       expect(outputProbe.bitsPerRawSample).toBe(24);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("artist-original MP3 tagging", () => {
+  it("copies audio and embeds ID3v2.3 tags plus artwork without filters", () => {
+    const args = buildMp3TagArgs({
+      inputPath: "/tmp/artist-original.mp3",
+      outputPath: "/tmp/artist-original-tagged.mp3",
+      title: "Original title",
+      artist: "Original artist",
+      album: "Original album",
+      genre: "Electronic",
+      date: "2026",
+      artworkPath: "/tmp/artwork.jpg",
+    });
+
+    expect(args).toEqual([
+      "-y",
+      "-i",
+      "/tmp/artist-original.mp3",
+      "-i",
+      "/tmp/artwork.jpg",
+      "-map",
+      "0:a:0",
+      "-map",
+      "1:0",
+      "-c:a",
+      "copy",
+      "-c:v",
+      "mjpeg",
+      "-disposition:v:0",
+      "attached_pic",
+      "-id3v2_version",
+      "3",
+      "-metadata",
+      "title=Original title",
+      "-metadata",
+      "artist=Original artist",
+      "-metadata",
+      "album=Original album",
+      "-metadata",
+      "genre=Electronic",
+      "-metadata",
+      "date=2026",
+      "/tmp/artist-original-tagged.mp3",
+    ]);
+    expect(args.join(" ")).not.toMatch(/volume|alimiter|-af /);
+  });
+
+  it("copies audio and writes text tags when no artwork is available", () => {
+    const args = buildMp3TagArgs({
+      inputPath: "/tmp/artist-original.mp3",
+      outputPath: "/tmp/artist-original-tagged.mp3",
+      title: "Original title",
+      artist: "Original artist",
+    });
+
+    expect(args).toEqual([
+      "-y",
+      "-i",
+      "/tmp/artist-original.mp3",
+      "-c:a",
+      "copy",
+      "-id3v2_version",
+      "3",
+      "-metadata",
+      "title=Original title",
+      "-metadata",
+      "artist=Original artist",
+      "/tmp/artist-original-tagged.mp3",
+    ]);
+  });
+
+  it("probes attached artwork and embeds a cover on a real MP3 copy", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "thumper-mp3-tag-"));
+    const inputPath = path.join(dir, "artist-original.mp3");
+    const artworkPath = path.join(dir, "cover.jpg");
+    const outputPath = path.join(dir, "tagged.mp3");
+
+    try {
+      const audio = spawnSync(
+        "ffmpeg",
+        [
+          "-v",
+          "error",
+          "-f",
+          "lavfi",
+          "-i",
+          "sine=frequency=1000:duration=0.2:sample_rate=44100",
+          "-c:a",
+          "libmp3lame",
+          "-b:a",
+          "192k",
+          "-y",
+          inputPath,
+        ],
+        { encoding: "utf8" },
+      );
+      if (audio.status !== 0) {
+        throw new Error(
+          `ffmpeg failed to create MP3: ${audio.stderr || audio.status}`,
+        );
+      }
+      const cover = spawnSync(
+        "ffmpeg",
+        [
+          "-v",
+          "error",
+          "-f",
+          "lavfi",
+          "-i",
+          "color=c=red:s=64x64:d=0.1",
+          "-frames:v",
+          "1",
+          "-y",
+          artworkPath,
+        ],
+        { encoding: "utf8" },
+      );
+      if (cover.status !== 0) {
+        throw new Error(
+          `ffmpeg failed to create cover: ${cover.stderr || cover.status}`,
+        );
+      }
+
+      expect(await hasAttachedArtwork(inputPath)).toBe(false);
+      await tagMp3Copy({
+        inputPath,
+        outputPath,
+        title: "Five Hours",
+        artist: "Darby",
+        artworkPath,
+      });
+      expect(await hasAttachedArtwork(outputPath)).toBe(true);
+
+      const tagged = await probeAudio(outputPath);
+      expect(tagged.codec).toBe("mp3");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

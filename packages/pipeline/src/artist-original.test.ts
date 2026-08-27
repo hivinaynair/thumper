@@ -24,7 +24,34 @@ describe("artistOriginalAction", () => {
       expected: "convert-wav",
     },
     {
-      name: "original mp3",
+      name: "original mp3 with artwork",
+      input: {
+        artistOriginal: true,
+        extension: "mp3",
+        hasAttachedArtwork: true,
+      },
+      expected: "preserve-original",
+    },
+    {
+      name: "original mp3 without artwork",
+      input: {
+        artistOriginal: true,
+        extension: "mp3",
+        hasAttachedArtwork: false,
+      },
+      expected: "tag-mp3",
+    },
+    {
+      name: "original dotted uppercase mp3 without artwork",
+      input: {
+        artistOriginal: true,
+        extension: ".MP3",
+        hasAttachedArtwork: false,
+      },
+      expected: "tag-mp3",
+    },
+    {
+      name: "original mp3 when artwork is unprobed",
       input: { artistOriginal: true, extension: "mp3" },
       expected: "preserve-original",
     },

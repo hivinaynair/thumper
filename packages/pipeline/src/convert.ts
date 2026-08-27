@@ -172,7 +172,7 @@ export type ConvertMetadata = {
   album?: string;
   genre?: string;
   date?: string;
-  /** Local image path for embedded cover art (FLAC / ALAC). */
+  /** Local image path for embedded cover art (FLAC / ALAC / copy-tagged MP3). */
   artworkPath?: string | null;
 };
 
@@ -235,6 +235,88 @@ function buildMetadataArgs(meta: ConvertMetadata): string[] {
   if (meta.genre) out.push("-metadata", `genre=${meta.genre}`);
   if (meta.date) out.push("-metadata", `date=${meta.date}`);
   return out;
+}
+
+export type Mp3TagParams = ConvertMetadata & {
+  inputPath: string;
+  outputPath: string;
+  signal?: AbortSignal;
+};
+
+/**
+ * True when ffprobe reports an attached picture (ID3 APIC / cover stream).
+ * A missing or unreadable file is treated as no artwork so the caller can
+ * still copy-tag rather than crash the job.
+ */
+export async function hasAttachedArtwork(
+  filePath: string,
+  options: SpawnOptions = {},
+): Promise<boolean> {
+  try {
+    const { stdout } = await runCommandOk(
+      "ffprobe",
+      [
+        "-v",
+        "error",
+        "-show_entries",
+        "stream=codec_type:stream_disposition=attached_pic",
+        "-of",
+        "json",
+        filePath,
+      ],
+      options,
+    );
+    const streams = (JSON.parse(stdout).streams ?? []) as Array<{
+      disposition?: { attached_pic?: number };
+    }>;
+    return streams.some((stream) => Number(stream.disposition?.attached_pic) === 1);
+  } catch {
+    return false;
+  }
+}
+
+/** Copy MP3 audio packets and write ID3v2.3 text tags plus optional APIC. */
+export function buildMp3TagArgs(params: Mp3TagParams): string[] {
+  const meta = buildMetadataArgs(params);
+  const version = ["-id3v2_version", "3"];
+  if (params.artworkPath) {
+    return [
+      "-y",
+      "-i",
+      params.inputPath,
+      "-i",
+      params.artworkPath,
+      "-map",
+      "0:a:0",
+      "-map",
+      "1:0",
+      "-c:a",
+      "copy",
+      "-c:v",
+      "mjpeg",
+      "-disposition:v:0",
+      "attached_pic",
+      ...version,
+      ...meta,
+      params.outputPath,
+    ];
+  }
+  return [
+    "-y",
+    "-i",
+    params.inputPath,
+    "-c:a",
+    "copy",
+    ...version,
+    ...meta,
+    params.outputPath,
+  ];
+}
+
+export async function tagMp3Copy(params: Mp3TagParams): Promise<void> {
+  await runCommandOk("ffmpeg", buildMp3TagArgs(params), {
+    signal: params.signal,
+  });
 }
 
 export type ConvertAudioParams = {

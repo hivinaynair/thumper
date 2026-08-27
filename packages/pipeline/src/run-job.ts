@@ -23,7 +23,7 @@ import {
   type DjVerdict,
 } from "./audio-verify";
 import { FILE_TTL_MS } from "./cleanup";
-import { convertAudio } from "./convert";
+import { convertAudio, hasAttachedArtwork, tagMp3Copy } from "./convert";
 import { materializeCookieFile } from "./cookies";
 import {
   audioMimeForExtension,
@@ -371,6 +371,12 @@ export async function processHypedditOriginalDownload(params: {
     signal: params.signal,
     ...params.fallbackDependencies,
   });
+  const hasArtwork =
+    params.planArtifact || extensionFromPath(downloaded.filePath) !== "mp3"
+      ? undefined
+      : await hasAttachedArtwork(downloaded.filePath, {
+          signal: params.signal,
+        });
   const artifact = (params.planArtifact ?? planDeliveryArtifact)({
     provenance: "hypeddit-original",
     downloadedPath: downloaded.filePath,
@@ -385,13 +391,15 @@ export async function processHypedditOriginalDownload(params: {
           params.titleHint ?? downloaded.title ?? "track",
         ),
       ),
+    hasAttachedArtwork: hasArtwork,
   });
   return { downloaded, artifact };
 }
 
 /**
  * Unlock and deliver a Hypeddit artist original. WAV uses the existing tagged
- * FLAC retag path; every other format bypasses conversion.
+ * FLAC retag path; MP3 without embedded artwork is copy-tagged; every other
+ * format is delivered as downloaded.
  */
 async function processHypedditOriginal(params: {
   deps: RunJobDeps;
@@ -496,6 +504,97 @@ async function processHypedditOriginal(params: {
     },
     convertWav: async () => {
       throw new Error("Hypeddit WAV must use the retag path");
+    },
+    tagMp3: async () => {
+      if (artifact.action !== "tag-mp3") {
+        throw new Error("Hypeddit MP3 tagging received a non-tag artifact");
+      }
+      const tags = await resolveTrackTags({
+        catalogUrl: metadataUrl,
+        titleHint: params.titleHint ?? downloaded.title ?? undefined,
+        artistHint: params.artistHint,
+        signal,
+      });
+      const title =
+        tags.title ?? params.titleHint ?? downloaded.title ?? "track";
+      const artist = tags.artist ?? params.artistHint;
+      await update({ title, artist, stage: "converting", progress: 55 });
+      await ensureNotCancelled(
+        signal,
+        deps.db,
+        payload.jobId,
+        payload.parentJobId,
+      );
+
+      let artworkPath: string | null = null;
+      if (tags.artworkUrl) {
+        artworkPath = await downloadArtworkFile({
+          artworkUrl: tags.artworkUrl,
+          workDir,
+          squareCrop: tags.artworkNeedsSquareCrop,
+          signal,
+        });
+      }
+      if (!artworkPath && title) {
+        const fallbackUrl = await findFallbackArtworkUrl({
+          title,
+          ...(artist ? { artist } : {}),
+          signal,
+        });
+        if (fallbackUrl) {
+          artworkPath = await downloadArtworkFile({
+            artworkUrl: fallbackUrl,
+            workDir,
+            signal,
+          });
+        }
+      }
+
+      const outPath = assertPathInside(outDir, artifact.path);
+      await tagMp3Copy({
+        inputPath: downloaded.filePath,
+        outputPath: outPath,
+        title,
+        artist,
+        album: tags.album,
+        genre: tags.genre,
+        date: tags.date,
+        artworkPath,
+        signal,
+      });
+
+      await update({ stage: "delivering", progress: 80 });
+      await ensureNotCancelled(
+        signal,
+        deps.db,
+        payload.jobId,
+        payload.parentJobId,
+      );
+      await deliverArtifact({
+        deps,
+        artifact,
+        outDir,
+        complete: async (delivered) => {
+          await update({ stage: "cleanup", progress: 95 });
+          await update({
+            status: "completed",
+            stage: "done",
+            progress: 100,
+            result: {
+              ...delivered,
+              qualityLabel: artifact.qualityLabel,
+              hypedditOriginal: true,
+              sourceCodec: verdict?.analysis.codec,
+              sourceBitrateKbps: verdict?.analysis.bitrateKbps ?? null,
+              cutoffHz: verdict?.analysis.cutoffHz,
+              djTier: verdict?.tier,
+              djHeadline: verdict?.headline,
+              warnings: verdict?.warnings.length ? verdict.warnings : undefined,
+              ...(payload.clubReadyOnly ? { clubReadyOnly: true } : {}),
+            },
+          });
+        },
+      });
     },
     retagWav: async () => {
       const sourceExtension = extensionFromPath(downloaded.filePath);
@@ -753,12 +852,17 @@ async function processTrack(params: {
 
   let title = params.titleHint ?? downloaded.title ?? "track";
   let artist = params.artistHint;
+  const hasArtwork =
+    isArtistOriginal && extensionFromPath(downloaded.filePath) === "mp3"
+      ? await hasAttachedArtwork(downloaded.filePath, { signal })
+      : undefined;
   const initialArtifact = planDeliveryArtifact({
     provenance: isArtistOriginal ? "soundcloud-original" : "stream",
     downloadedPath: downloaded.filePath,
     requestedFormat: payload.audioFormat,
     outputDirectory: outDir,
     displayName: sanitizeFilename(trackDisplayName(artist, title)),
+    hasAttachedArtwork: hasArtwork,
   });
 
   if (initialArtifact.action === "preserve-original") {
@@ -807,6 +911,9 @@ async function processTrack(params: {
       },
       retagWav: async () => {
         throw new Error("A direct SoundCloud original must not be retagged");
+      },
+      tagMp3: async () => {
+        throw new Error("A preserved original must not be copy-tagged");
       },
     });
     return;
@@ -860,9 +967,75 @@ async function processTrack(params: {
     requestedFormat: payload.audioFormat,
     outputDirectory: outDir,
     displayName: sanitizeFilename(trackDisplayName(artist, title)),
+    hasAttachedArtwork: hasArtwork,
   });
   if (artifact.action === "preserve-original") {
     throw new Error("Conversion path produced a preservation artifact");
+  }
+  if (artifact.action === "tag-mp3") {
+    await executeOriginalArtifact({
+      provenance: "soundcloud-original",
+      action: "tag-mp3",
+      preserve: async () => {
+        throw new Error("An untagged MP3 original must not use preservation");
+      },
+      convertWav: async () => {
+        throw new Error("An MP3 original must not be converted to FLAC");
+      },
+      retagWav: async () => {
+        throw new Error("A direct SoundCloud MP3 must not be retagged as WAV");
+      },
+      tagMp3: async () => {
+        const outPath = assertPathInside(outDir, artifact.path);
+        await tagMp3Copy({
+          inputPath: downloaded.filePath,
+          outputPath: outPath,
+          title,
+          artist,
+          album: tags.album,
+          genre: tags.genre,
+          date: tags.date,
+          artworkPath,
+          signal,
+        });
+        await update({ stage: "delivering", progress: 80 });
+        await ensureNotCancelled(
+          signal,
+          db,
+          payload.jobId,
+          payload.parentJobId,
+        );
+        await deliverArtifact({
+          deps,
+          artifact,
+          outDir,
+          complete: async (delivered) => {
+            await update({ stage: "cleanup", progress: 95 });
+            await update({
+              status: "completed",
+              stage: "done",
+              progress: 100,
+              result: {
+                ...delivered,
+                qualityLabel: artifact.qualityLabel,
+                matchScore: params.matchScore,
+                djTier: verdict?.tier,
+                djHeadline: verdict?.headline,
+                warnings: warnings.length ? warnings : undefined,
+                sourceCodec: verdict?.analysis.codec ?? downloaded.acodec,
+                sourceBitrateKbps:
+                  verdict?.analysis.bitrateKbps ?? downloaded.abr ?? null,
+                cutoffHz: verdict?.analysis.cutoffHz,
+                sourceFormatId: downloaded.formatId,
+                soundcloudOriginal: true,
+                ...(payload.clubReadyOnly ? { clubReadyOnly: true } : {}),
+              },
+            });
+          },
+        });
+      },
+    });
+    return;
   }
   const outPath = assertPathInside(outDir, artifact.path);
 
@@ -891,6 +1064,9 @@ async function processTrack(params: {
         convertWav: convert,
         retagWav: async () => {
           throw new Error("A direct SoundCloud WAV must not be retagged");
+        },
+        tagMp3: async () => {
+          throw new Error("A WAV original must not use MP3 tagging");
         },
       })
     : await convert();
