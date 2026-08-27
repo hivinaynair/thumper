@@ -924,7 +924,7 @@ async function automateSpotifyGate(params: {
     }),
     signal,
   );
-  await clickExactControl(page, ["Get Track", "Free Download"], signal);
+  await clickExactControl(page, ["Get Track", "Free Download", "Download"], signal);
 
   const steps = await readPageSteps(page, signal);
   const supported = new Set(["email", "sc", "ig", "tk", "yt", "fb", "sp"]);

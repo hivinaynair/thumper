@@ -525,6 +525,7 @@ describe("headless Hypeddit download lifecycle", () => {
     started: boolean;
     popup: "spotify" | "unsafe" | "none";
     confirmSpotifyAction: boolean;
+    landingLabel?: string;
     missing?: "get-track" | "client-next" | "connect";
     abortOnConnect?: AbortController;
     oauthReturned?: boolean;
@@ -615,7 +616,7 @@ describe("headless Hypeddit download lifecycle", () => {
           ? []
           : [
               new FakeButton(
-                "Get Track",
+                this.state.landingLabel ?? "Get Track",
                 () => {
                   this.state.started = true;
                   this.state.calls.push("get-track");
@@ -905,6 +906,14 @@ describe("headless Hypeddit download lifecycle", () => {
       workDir,
     };
   }
+
+  it("starts the gate from a Download landing control", async () => {
+    const state = createState({ landingLabel: "Download", steps: ["sp"] });
+    const run = await runBrowserState(state);
+    await run.resultPromise;
+    expect(state.calls).toContain("get-track");
+    expect(state.calls).toContain("download");
+  });
 
   it("delegates the configured Spotify action to Hypeddit and confirms popup progression", async () => {
     const state = createState();

@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it } from "bun:test";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { downloadBrowserGate } from "./download-browser-gate";
+import {
+  downloadBrowserGate,
+  isCapturedGateFilename,
+  looksLikeSocialFollowWall,
+  waitForDownloadedFile,
+} from "./download-browser-gate";
 
 const roots: string[] = [];
 
@@ -119,5 +124,117 @@ describe("downloadBrowserGate", () => {
         },
       }),
     ).rejects.toThrow(/no file|Download control/);
+  });
+
+  it("keeps the Chromium profile out of the download folder", async () => {
+    const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "browser-gate-"));
+    roots.push(workDir);
+    let userDataDir = "";
+
+    await downloadBrowserGate({
+      gateUrl: "https://www.toneden.io/artist/post/track",
+      email: "dj@example.com",
+      name: "DJ",
+      workDir,
+      cookies: [],
+      launcher: {
+        launch: async (options) => {
+          userDataDir = options.userDataDir;
+          return {
+            createBrowserContext: async () => ({
+              setCookie: async () => undefined,
+              newPage: async () => ({
+                setDefaultTimeout: () => undefined,
+                goto: async () => undefined,
+                $: async () => null,
+                evaluate: async () => true,
+                waitForNetworkIdle: async () => undefined,
+              }),
+              close: async () => undefined,
+            }),
+            close: async () => undefined,
+          };
+        },
+      },
+      captureDownload: async () => ({
+        filePath: path.join(workDir, "gate.wav"),
+        filename: "gate.wav",
+        ext: "wav",
+        title: null,
+        size: 1,
+      }),
+    });
+
+    expect(userDataDir).toContain("thumper-chromium-");
+    expect(userDataDir.startsWith(workDir)).toBe(false);
+  });
+
+  it("fails as a manual download when the page is a follow/unlock wall", async () => {
+    const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "browser-gate-"));
+    roots.push(workDir);
+    let evals = 0;
+    await expect(
+      downloadBrowserGate({
+        gateUrl: "https://www.toneden.io/aeonmode/post/track",
+        email: "dj@example.com",
+        name: "DJ",
+        workDir,
+        cookies: [],
+        launcher: {
+          launch: async () => ({
+            createBrowserContext: async () => ({
+              setCookie: async () => undefined,
+              newPage: async () => ({
+                setDefaultTimeout: () => undefined,
+                goto: async () => undefined,
+                $: async () => null,
+                evaluate: async () => {
+                  evals += 1;
+                  if (evals === 1) return true;
+                  return "STEP 1 FOLLOW ON SOUNDCLOUD\nSTEP 2 FOLLOW ON SPOTIFY";
+                },
+                waitForNetworkIdle: async () => undefined,
+              }),
+              close: async () => undefined,
+            }),
+            close: async () => undefined,
+          }),
+        },
+      }),
+    ).rejects.toThrow(/Follow\/unlock required|Manual download required/);
+  });
+});
+
+describe("looksLikeSocialFollowWall", () => {
+  it("detects ToneDen-style follow unlock steps", () => {
+    expect(
+      looksLikeSocialFollowWall(
+        "THANKS SO MUCH FOR YOUR SUPPORT!\nSTEP 1\nFOLLOW ON SOUNDCLOUD\nSTEP 2\nFOLLOW ON SPOTIFY\nUNLOCK PROGRESS\nDOWNLOAD",
+      ),
+    ).toBe(true);
+    expect(looksLikeSocialFollowWall("Download\nManage Privacy")).toBe(false);
+  });
+});
+
+describe("isCapturedGateFilename", () => {
+  it("accepts audio and zip downloads, not Chromium profile junk", () => {
+    expect(isCapturedGateFilename("track.wav")).toBe(true);
+    expect(isCapturedGateFilename("pack.zip")).toBe(true);
+    expect(isCapturedGateFilename("ChromeFeatureState")).toBe(false);
+    expect(isCapturedGateFilename("VariationsSeedV2")).toBe(false);
+    expect(isCapturedGateFilename("track.wav.crdownload")).toBe(false);
+  });
+});
+
+describe("waitForDownloadedFile", () => {
+  it("ignores Chromium profile files until an audio download appears", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "gate-dl-"));
+    roots.push(directory);
+    await fs.writeFile(path.join(directory, "ChromeFeatureState"), "x");
+    await fs.writeFile(path.join(directory, "VariationsSeedV2"), "y");
+    const pending = waitForDownloadedFile(directory, 2_000);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    await fs.writeFile(path.join(directory, "LOOK4MYLOVE.wav"), "WAVDATA");
+    expect(await pending).toBe(path.join(directory, "LOOK4MYLOVE.wav"));
   });
 });

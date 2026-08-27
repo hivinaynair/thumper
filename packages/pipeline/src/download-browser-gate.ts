@@ -1,9 +1,11 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { BrowserLauncher } from "./hypeddit-browser";
 import type { SpotifyBrowserCookie } from "./hypeddit";
 import { ProcessCancelledError } from "./process";
+import { ManualDownloadRequiredError } from "./soundcloud-purchase";
 
 export type GateDownloadResult = {
   filePath: string;
@@ -19,7 +21,47 @@ type PageLike = {
   $(selector: string): Promise<{ type(value: string): Promise<unknown> } | null>;
   evaluate(fn: (...args: never[]) => unknown): Promise<unknown>;
   waitForNetworkIdle?(options?: unknown): Promise<unknown>;
+  createCDPSession?: () => Promise<{
+    send(method: string, params?: object): Promise<unknown>;
+  }>;
 };
+
+export function looksLikeSocialFollowWall(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ");
+  return (
+    /follow on soundcloud/.test(normalized) ||
+    /follow on spotify/.test(normalized) ||
+    /follow on instagram/.test(normalized) ||
+    /follow on youtube/.test(normalized)
+  );
+}
+
+async function rejectSocialFollowWall(
+  page: PageLike,
+  gateUrl: string,
+): Promise<void> {
+  const wallText = String(
+    await page.evaluate(() => document.body?.innerText ?? ""),
+  );
+  if (looksLikeSocialFollowWall(wallText)) {
+    throw new ManualDownloadRequiredError(gateUrl, "Follow/unlock required");
+  }
+}
+
+const GATE_DOWNLOAD_EXT =
+  /\.(wav|wave|flac|aiff|aif|mp3|m4a|aac|ogg|opus|zip|7z)$/i;
+
+export function isCapturedGateFilename(name: string): boolean {
+  if (!name || name.startsWith(".")) return false;
+  if (
+    name.endsWith(".crdownload") ||
+    name.endsWith(".tmp") ||
+    name.endsWith(".part")
+  ) {
+    return false;
+  }
+  return GATE_DOWNLOAD_EXT.test(name);
+}
 
 const DOWNLOAD_LABEL =
   /^(download|download track|get track|free download|unlock|claim|get free download)$/i;
@@ -80,13 +122,7 @@ export async function waitForDownloadedFile(
   while (Date.now() - started < timeoutMs) {
     if (signal?.aborted) throw new ProcessCancelledError();
     const names = await fs.readdir(directory).catch(() => []);
-    const ready = names.find(
-      (name) =>
-        !name.endsWith(".crdownload") &&
-        !name.endsWith(".tmp") &&
-        name !== "." &&
-        name !== "..",
-    );
+    const ready = names.find((name) => isCapturedGateFilename(name));
     if (ready) return path.join(directory, ready);
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
@@ -131,12 +167,16 @@ export async function downloadBrowserGate(params: {
     });
 
   if (params.launcher) {
+    const profileDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "thumper-chromium-"),
+    );
+    await fs.chmod(profileDir, 0o700);
     const browser = await params.launcher.launch({
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/local/bin/chromium-worker",
       headless: true,
       args: ["--disable-dev-shm-usage", "--disable-gpu"],
       env: {},
-      userDataDir: downloadDir,
+      userDataDir: profileDir,
     });
     const context = await browser.createBrowserContext();
     try {
@@ -145,6 +185,11 @@ export async function downloadBrowserGate(params: {
       }
       const page = (await context.newPage()) as PageLike;
       page.setDefaultTimeout?.(45_000);
+      const session = await page.createCDPSession?.();
+      await session?.send("Page.setDownloadBehavior", {
+        behavior: "allow",
+        downloadPath: downloadDir,
+      });
       await page.goto(params.gateUrl, {
         waitUntil: "domcontentloaded",
         timeout: 45_000,
@@ -157,10 +202,14 @@ export async function downloadBrowserGate(params: {
       if (!clicked && !params.captureDownload) {
         throw new Error("Download control not found on gate page");
       }
+      if (clicked) await rejectSocialFollowWall(page, params.gateUrl);
       return await runCapture({ workDir: downloadDir, signal: params.signal });
     } finally {
       await context.close().catch(() => undefined);
       await browser.close().catch(() => undefined);
+      await fs.rm(profileDir, { recursive: true, force: true }).catch(
+        () => undefined,
+      );
     }
   }
 
@@ -192,6 +241,7 @@ export async function downloadBrowserGate(params: {
       if (!clicked) {
         throw new Error("Download control not found on gate page");
       }
+      await rejectSocialFollowWall(page, params.gateUrl);
       return runCapture({ workDir: downloadDir, signal: params.signal });
     },
   });
