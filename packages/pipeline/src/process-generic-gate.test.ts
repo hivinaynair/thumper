@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { processGenericGateDownload } from "./run-job";
+import { ManualDownloadRequiredError } from "./soundcloud-purchase";
 
 const roots: string[] = [];
 
@@ -129,5 +130,78 @@ describe("processGenericGateDownload", () => {
 
     expect(names).toEqual(["sp_dc", "sessionid"]);
     expect(unlinked).toEqual([spotifyPath, instagramPath]);
+  });
+
+  it("fails closed on a Laylo RSVP drop with no hosted file", async () => {
+    const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "generic-gate-"));
+    roots.push(workDir);
+    let browser = 0;
+    let direct = 0;
+    await expect(
+      processGenericGateDownload({
+        kind: "browser-gate",
+        gateUrl: "https://laylo.com/controlfreakus/gaOHY",
+        email: "dj@example.com",
+        name: "DJ",
+        userId: "user-1",
+        workDir,
+        requestedFormat: "flac",
+        outputDirectory: workDir,
+        fetchLaylo: async () => ({
+          title: "MEAN GIRLS",
+          link: null,
+          emailRequired: true,
+        }),
+        browserDownload: async () => {
+          browser += 1;
+          throw new Error("must not launch");
+        },
+        directDownload: async () => {
+          direct += 1;
+          throw new Error("must not download");
+        },
+      }),
+    ).rejects.toBeInstanceOf(ManualDownloadRequiredError);
+    expect(browser).toBe(0);
+    expect(direct).toBe(0);
+  });
+
+  it("downloads a Laylo hosted file without launching Chromium", async () => {
+    const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "generic-gate-"));
+    roots.push(workDir);
+    let browser = 0;
+    const result = await processGenericGateDownload({
+      kind: "browser-gate",
+      gateUrl: "https://laylo.com/viperactive/czJvU8",
+      email: "dj@example.com",
+      name: "DJ",
+      userId: "user-1",
+      workDir,
+      requestedFormat: "flac",
+      outputDirectory: workDir,
+      fetchLaylo: async () => ({
+        title: "BODIES",
+        link: "https://cdn.example.test/bodies.wav",
+        emailRequired: false,
+      }),
+      browserDownload: async () => {
+        browser += 1;
+        throw new Error("must not launch");
+      },
+      directDownload: async ({ url, workDir: dir }) => {
+        expect(url).toBe("https://cdn.example.test/bodies.wav");
+        const filePath = path.join(dir, "bodies.wav");
+        await fs.writeFile(filePath, "WAV");
+        return {
+          filePath,
+          filename: "bodies.wav",
+          ext: "wav",
+          title: "bodies",
+          size: 3,
+        };
+      },
+    });
+    expect(browser).toBe(0);
+    expect(result.downloaded.filename).toBe("bodies.wav");
   });
 });

@@ -9,6 +9,8 @@ import {
   downloadHypedditGate,
   downloadHypedditGateWithBrowser,
   downloadHypedditWithSpotifyFallback,
+  isAllowedGateControlHref,
+  isHypedditSmartLinkPage,
   isSafeInstagramUrl,
   isSafeSpotifyAuthorizationUrl,
   parseInstagramNetscapeCookies,
@@ -16,6 +18,7 @@ import {
   sniffAudioExt,
 } from "./hypeddit";
 import { ProcessCancelledError } from "./process";
+import { ManualDownloadRequiredError } from "./soundcloud-purchase";
 
 const originalFetch = globalThis.fetch;
 const tempDirectories: string[] = [];
@@ -110,6 +113,35 @@ describe("sniffAudioExt", () => {
       0x66, 0x4c, 0x61, 0x43, 0, 0, 0, 0, 0, 0, 0, 0,
     ]);
     expect(sniffAudioExt(buf)).toBe("flac");
+  });
+});
+
+describe("Hypeddit Trap playlist page shapes", () => {
+  it("treats Play/Buy smart links as manual downloads, not parse failures", async () => {
+    const html = `
+      <div class="hype-smartlink">
+        <a id="fanclubLink" class="smartlink-click-button" href="https://open.spotify.com">Play</a>
+      </div>
+    `;
+    expect(isHypedditSmartLinkPage(html)).toBe(true);
+    const promise = runGateWithFetch(html, async () => new Response(html));
+    expect(promise).rejects.toBeInstanceOf(ManualDownloadRequiredError);
+    await promise.catch(() => undefined);
+  });
+
+  it("allows javascript:void landing Download anchors", () => {
+    expect(
+      isAllowedGateControlHref(
+        "javascript:void(0);",
+        "https://hypeddit.com/sportmode/holdmyhandsportmodeflip",
+      ),
+    ).toBe(true);
+    expect(
+      isAllowedGateControlHref(
+        "javascript:void(0);",
+        "https://hypeddit.com/66jz3n",
+      ),
+    ).toBe(true);
   });
 });
 
@@ -680,19 +712,31 @@ describe("headless Hypeddit download lifecycle", () => {
   }
 
   class FakeButton {
+    readonly id: string;
+    readonly className: string;
+    readonly alt: string;
+
     constructor(
       readonly textContent: string,
       private readonly onClick: () => void,
       readonly hidden = false,
       readonly disabled = false,
-    ) {}
+      extras: { id?: string; className?: string; alt?: string } = {},
+    ) {
+      this.id = extras.id ?? "";
+      this.className = extras.className ?? "";
+      this.alt = extras.alt ?? "";
+    }
 
     click() {
       this.onClick();
     }
 
     getAttribute(name: string) {
-      return name === "aria-disabled" && this.disabled ? "true" : null;
+      if (name === "aria-disabled" && this.disabled) return "true";
+      if (name === "class") return this.className;
+      if (name === "alt") return this.alt;
+      return null;
     }
 
     getClientRects() {
@@ -705,8 +749,9 @@ describe("headless Hypeddit download lifecycle", () => {
       text: string,
       readonly href: string,
       onClick: () => void,
+      extras: { id?: string; className?: string; alt?: string } = {},
     ) {
-      super(text, onClick);
+      super(text, onClick, false, false, extras);
     }
   }
 
@@ -718,6 +763,15 @@ describe("headless Hypeddit download lifecycle", () => {
     confirmSpotifyAction: boolean;
     confirmInstagramAction?: boolean;
     landingLabel?: string;
+    landingHref?: string;
+    landingId?: string;
+    emailField?: "validateEmailAddress" | "email_address";
+    emailNextLabel?: string;
+    spotifyConnectLabel?: string;
+    spotifyConnectId?: string;
+    instagramLabel?: string;
+    instagramClass?: string;
+    instagramId?: string;
     missing?: "get-track" | "client-next" | "connect" | "instagram-connect";
     abortOnConnect?: AbortController;
     oauthReturned?: boolean;
@@ -774,7 +828,13 @@ describe("headless Hypeddit download lifecycle", () => {
       private readonly popupKind: "spotify" | "instagram" | false = false,
     ) {
       this.currentUrl = url;
-      this.emailInput.name = "validateEmailAddress";
+      if (state.emailField === "email_address") {
+        this.emailInput.name = "email_address";
+        this.emailInput.id = "email_address";
+      } else {
+        this.emailInput.name = "validateEmailAddress";
+        this.emailInput.id = "validateEmailAddress";
+      }
       this.nameInput.name = "email_name";
       this.marketingInput.name = "spotify_marketing";
       this.marketingInput.checked = true;
@@ -822,25 +882,44 @@ describe("headless Hypeddit download lifecycle", () => {
       if (!this.state.started) {
         return this.state.missing === "get-track"
           ? []
-          : [
-              new FakeButton(
-                this.state.landingLabel ?? "Get Track",
-                () => {
-                  this.state.started = true;
-                  this.state.calls.push("get-track");
-                },
-                this.state.unusableGetTrack === "hidden",
-                this.state.unusableGetTrack === "disabled",
-              ),
-            ];
+          : this.state.landingHref
+            ? [
+                new FakeAnchor(
+                  this.state.landingLabel ?? "Download",
+                  this.state.landingHref,
+                  () => {
+                    this.state.started = true;
+                    this.state.calls.push("get-track");
+                  },
+                  { id: this.state.landingId ?? "downloadProcess" },
+                ),
+              ]
+            : [
+                new FakeButton(
+                  this.state.landingLabel ?? "Get Track",
+                  () => {
+                    this.state.started = true;
+                    this.state.calls.push("get-track");
+                  },
+                  this.state.unusableGetTrack === "hidden",
+                  this.state.unusableGetTrack === "disabled",
+                  { id: this.state.landingId },
+                ),
+              ];
       }
       const next = this.state.steps[0];
       if (next === "email") {
         return [
-          new FakeButton("Next", () => {
-            this.state.calls.push("email-next");
-            removeStep(this.state, "email");
-          }),
+          new FakeButton(
+            this.state.emailNextLabel ?? "Next",
+            () => {
+              this.state.calls.push("email-next");
+              removeStep(this.state, "email");
+            },
+            false,
+            false,
+            { id: "email_to_downloads_next" },
+          ),
         ];
       }
       if (next && ["sc", "tk", "yt", "fb"].includes(next)) {
@@ -857,45 +936,61 @@ describe("headless Hypeddit download lifecycle", () => {
         return this.state.missing === "instagram-connect"
           ? []
           : [
-              new FakeButton("Follow on Instagram", () => {
-                this.state.calls.push("instagram-connect");
-                this.state.abortOnConnect?.abort();
-                if (this.state.sessionFailure === "instagram-same-tab-login") {
-                  this.currentUrl =
-                    "https://www.instagram.com/accounts/login/";
-                }
-                if (
-                  this.state.popup === "none" &&
-                  this.state.confirmInstagramAction !== false
-                ) {
-                  this.state.oauthReturned = true;
-                  removeStep(this.state, "ig");
-                }
-              }),
+              new FakeAnchor(
+                this.state.instagramLabel ?? "Follow on Instagram",
+                "https://www.instagram.com/artist/",
+                () => {
+                  this.state.calls.push("instagram-connect");
+                  this.state.abortOnConnect?.abort();
+                  if (this.state.sessionFailure === "instagram-same-tab-login") {
+                    this.currentUrl =
+                      "https://www.instagram.com/accounts/login/";
+                  }
+                  if (
+                    this.state.popup === "none" &&
+                    this.state.confirmInstagramAction !== false
+                  ) {
+                    this.state.oauthReturned = true;
+                    removeStep(this.state, "ig");
+                  }
+                },
+                {
+                  id: this.state.instagramId ?? "login_to_ig",
+                  className:
+                    this.state.instagramClass ?? "hype-btn-instagram",
+                  alt: "Follow on Instagram",
+                },
+              ),
             ];
       }
       if (next === "sp") {
         return this.state.missing === "connect"
           ? []
           : [
-              new FakeButton("Connect Spotify", () => {
-                this.state.calls.push("spotify-connect");
-                this.state.abortOnConnect?.abort();
-                if (this.state.sessionFailure === "same-tab-login") {
-                  this.currentUrl = "https://accounts.spotify.com/login";
-                }
-                if (this.state.sessionFailure === "callback-url") {
-                  this.currentUrl =
-                    "https://hypeddit.com/spotify/callback?error=session_expired";
-                }
-                if (
-                  this.state.popup === "none" &&
-                  this.state.confirmSpotifyAction
-                ) {
-                  this.state.oauthReturned = true;
-                  removeStep(this.state, "sp");
-                }
-              }),
+              new FakeButton(
+                this.state.spotifyConnectLabel ?? "Connect Spotify",
+                () => {
+                  this.state.calls.push("spotify-connect");
+                  this.state.abortOnConnect?.abort();
+                  if (this.state.sessionFailure === "same-tab-login") {
+                    this.currentUrl = "https://accounts.spotify.com/login";
+                  }
+                  if (this.state.sessionFailure === "callback-url") {
+                    this.currentUrl =
+                      "https://hypeddit.com/spotify/callback?error=session_expired";
+                  }
+                  if (
+                    this.state.popup === "none" &&
+                    this.state.confirmSpotifyAction
+                  ) {
+                    this.state.oauthReturned = true;
+                    removeStep(this.state, "sp");
+                  }
+                },
+                false,
+                false,
+                { id: this.state.spotifyConnectId ?? "login_to_sp" },
+              ),
               ...(this.state.staleControl
                 ? [
                     new FakeButton(
@@ -937,6 +1032,17 @@ describe("headless Hypeddit download lifecycle", () => {
           }
           if (
             this.state.steps.includes("email") &&
+            this.state.emailField === "email_address" &&
+            [
+              "#email_address",
+              'input[name="email_address"]',
+            ].includes(selector)
+          ) {
+            return this.emailInput;
+          }
+          if (
+            this.state.steps.includes("email") &&
+            this.state.emailField !== "email_address" &&
             [
               "#validateEmailAddress",
               'input[name="validateEmailAddress"]',
@@ -1159,6 +1265,59 @@ describe("headless Hypeddit download lifecycle", () => {
     const run = await runBrowserState(state);
     await run.resultPromise;
     expect(state.calls).toContain("get-track");
+    expect(state.calls).toContain("download");
+  });
+
+  it("starts the gate from a javascript:void #downloadProcess landing control", async () => {
+    const state = createState({
+      steps: ["sp"],
+      landingLabel: "Download",
+      landingHref: "javascript:void(0);",
+      landingId: "downloadProcess",
+    });
+    const run = await runBrowserState(state);
+    await run.resultPromise;
+    expect(state.calls).toContain("get-track");
+    expect(state.calls).toContain("download");
+  });
+
+  it("fills #email_address and clicks Share email address", async () => {
+    const state = createState({
+      steps: ["email", "sp"],
+      emailField: "email_address",
+      emailNextLabel: "Share email address",
+    });
+    const run = await runBrowserState(state);
+    await run.resultPromise;
+    expect(state.calls).toContain("email-next");
+    expect(run.fake.page.emailInput.value).toBe("listener@example.com");
+    expect(run.fake.page.emailInput.id).toBe("email_address");
+  });
+
+  it("connects Spotify from #login_to_sp whose visible text is Connect", async () => {
+    const state = createState({
+      steps: ["sp"],
+      spotifyConnectLabel: "Connect",
+      spotifyConnectId: "login_to_sp",
+    });
+    const run = await runBrowserState(state);
+    await run.resultPromise;
+    expect(state.calls).toContain("spotify-connect");
+    expect(state.calls).toContain("download");
+  });
+
+  it("follows Instagram from hype-btn-instagram text that starts with Follow", async () => {
+    const state = createState({
+      steps: ["ig"],
+      popup: "instagram",
+      instagramLabel: "Follow slickmusic_",
+      instagramClass: "hype-btn-instagram",
+      instagramId: "login_to_ig",
+    });
+    const run = await runBrowserState(state);
+    await run.resultPromise;
+    expect(state.calls).toContain("instagram-connect");
+    expect(state.calls).toContain("instagram-follow");
     expect(state.calls).toContain("download");
   });
 

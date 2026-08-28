@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import {
   classifySoundCloudPurchaseUrl,
+  extractSoundCloudGateUrls,
   ManualDownloadRequiredError,
   isManualDownloadRequiredError,
+  pickPreferredSoundCloudPurchase,
 } from "./soundcloud-purchase";
 
 describe("classifySoundCloudPurchaseUrl", () => {
@@ -61,6 +63,14 @@ describe("classifySoundCloudPurchaseUrl", () => {
         "https://pumpyoursound.com/f/hoang/space-laces/228062",
       ),
     ).toBe("browser-gate");
+    expect(classifySoundCloudPurchaseUrl("https://ipln.io/vmMQ8L8E")).toBe(
+      "browser-gate",
+    );
+    expect(
+      classifySoundCloudPurchaseUrl(
+        "https://influenceplanner.com/campaign/abc",
+      ),
+    ).toBe("browser-gate");
   });
 
   it("detects streaming smart links", () => {
@@ -98,5 +108,44 @@ describe("ManualDownloadRequiredError", () => {
     expect(isManualDownloadRequiredError(err)).toBe(true);
     expect(err.manualDownloadUrl).toBe("https://listen.ukf.com/x");
     expect(err.message).toContain("https://listen.ukf.com/x");
+  });
+});
+
+describe("extractSoundCloudGateUrls", () => {
+  it("pulls Hypeddit and ToneDen links out of a SoundCloud description", () => {
+    expect(
+      extractSoundCloudGateUrls(
+        "Free DL → https://hypeddit.com/remyheart/shmoneremyheartflip\nAlso https://www.toneden.io/aydo8/post/joey-valence-brae-jpegmafia-wassup-aydo8-flip",
+      ),
+    ).toEqual([
+      "https://hypeddit.com/remyheart/shmoneremyheartflip",
+      "https://www.toneden.io/aydo8/post/joey-valence-brae-jpegmafia-wassup-aydo8-flip",
+    ]);
+  });
+});
+
+describe("pickPreferredSoundCloudPurchase", () => {
+  it("prefers a Hypeddit description URL over an InfluencePlanner purchase_url", () => {
+    const picked = pickPreferredSoundCloudPurchase({
+      purchaseUrl: "https://ipln.io/vmMQ8L8E",
+      purchaseTitle: "Free Download",
+      description:
+        "DL: https://hypeddit.com/remyheart/shmoneremyheartflip",
+    });
+    expect(picked).toEqual({
+      kind: "hypeddit",
+      url: "https://hypeddit.com/remyheart/shmoneremyheartflip",
+      title: "Free Download",
+    });
+  });
+
+  it("uses a ToneDen description URL when purchase_url is empty", () => {
+    const picked = pickPreferredSoundCloudPurchase({
+      purchaseUrl: null,
+      description:
+        "https://www.toneden.io/aydo8/post/joey-valence-brae-jpegmafia-wassup-aydo8-flip",
+    });
+    expect(picked.kind).toBe("browser-gate");
+    expect(picked.url).toContain("toneden.io");
   });
 });

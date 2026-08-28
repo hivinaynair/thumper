@@ -51,7 +51,92 @@ const BROWSER_GATE_HOSTS = [
   "vault.fm",
   "cobrand.com",
   "pumpyoursound.com",
+  "ipln.io",
+  "influenceplanner.com",
 ] as const;
+
+const GATE_KIND_RANK: Record<Exclude<SoundCloudPurchaseKind, "none">, number> = {
+  hypeddit: 0,
+  direct: 1,
+  "browser-gate": 2,
+  stream: 3,
+  other: 4,
+};
+
+const URL_IN_TEXT =
+  /(?:https?:\/\/|www\.)[^\s<>"'()]+|(?:hypeddit\.com|toneden\.io|gaterush\.me|laylo\.com|droploud\.com|dropbox\.com|ipln\.io)\/[^\s<>"'()]+/gi;
+
+function normalizeExtractedUrl(raw: string): string | null {
+  const trimmed = raw.replace(/[),.;:]+$/g, "").trim();
+  if (!trimmed) return null;
+  const withScheme = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed.replace(/^www\./i, "")}`;
+  try {
+    const parsed = new URL(withScheme);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+/** Pull Free Download / gate URLs out of a SoundCloud description. */
+export function extractSoundCloudGateUrls(text: string | null | undefined): string[] {
+  if (!text) return [];
+  const found: string[] = [];
+  const seen = new Set<string>();
+  for (const match of text.matchAll(URL_IN_TEXT)) {
+    const url = normalizeExtractedUrl(match[0] ?? "");
+    if (!url) continue;
+    const key = url.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    found.push(url);
+  }
+  return found;
+}
+
+export function pickPreferredSoundCloudPurchase(params: {
+  purchaseUrl?: string | null;
+  purchaseTitle?: string | null;
+  description?: string | null;
+}): SoundCloudPurchase {
+  const candidates: Array<{ url: string; title: string | null; fromPurchase: boolean }> =
+    [];
+  const purchaseUrl = params.purchaseUrl?.trim();
+  if (purchaseUrl) {
+    candidates.push({
+      url: purchaseUrl,
+      title: params.purchaseTitle ?? null,
+      fromPurchase: true,
+    });
+  }
+  for (const url of extractSoundCloudGateUrls(params.description)) {
+    if (purchaseUrl && url.toLowerCase() === purchaseUrl.toLowerCase()) continue;
+    candidates.push({ url, title: params.purchaseTitle ?? null, fromPurchase: false });
+  }
+  if (candidates.length === 0) return { kind: "none" };
+
+  let best = candidates[0]!;
+  let bestRank = GATE_KIND_RANK[classifySoundCloudPurchaseUrl(best.url)];
+  for (const candidate of candidates.slice(1)) {
+    const rank = GATE_KIND_RANK[classifySoundCloudPurchaseUrl(candidate.url)];
+    if (
+      rank < bestRank ||
+      (rank === bestRank && candidate.fromPurchase && !best.fromPurchase)
+    ) {
+      best = candidate;
+      bestRank = rank;
+    }
+  }
+  return {
+    kind: classifySoundCloudPurchaseUrl(best.url),
+    url: best.url,
+    title: best.title,
+  };
+}
+
 const STREAM_HOSTS = [
   "ffm.to",
   "feature.fm",
@@ -116,16 +201,13 @@ export async function resolveSoundCloudPurchase(params: {
   const data = (await res.json()) as {
     purchase_url?: string | null;
     purchase_title?: string | null;
+    description?: string | null;
   };
-  const purchaseUrl = data.purchase_url?.trim();
-  if (!purchaseUrl) return { kind: "none" };
-
-  const kind = classifySoundCloudPurchaseUrl(purchaseUrl);
-  return {
-    kind,
-    url: purchaseUrl,
-    title: data.purchase_title ?? null,
-  };
+  return pickPreferredSoundCloudPurchase({
+    purchaseUrl: data.purchase_url,
+    purchaseTitle: data.purchase_title,
+    description: data.description,
+  });
 }
 
 export class ManualDownloadRequiredError extends Error {

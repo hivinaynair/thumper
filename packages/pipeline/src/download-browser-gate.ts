@@ -32,7 +32,11 @@ export function looksLikeSocialFollowWall(text: string): boolean {
     /follow on soundcloud/.test(normalized) ||
     /follow on spotify/.test(normalized) ||
     /follow on instagram/.test(normalized) ||
-    /follow on youtube/.test(normalized)
+    /follow on youtube/.test(normalized) ||
+    /follow to (unlock|download)/.test(normalized) ||
+    /connect with soundcloud/.test(normalized) ||
+    /become a superfan/.test(normalized) ||
+    /unlock progress/.test(normalized)
   );
 }
 
@@ -69,19 +73,30 @@ const DOWNLOAD_LABEL =
 export async function clickDownloadControl(page: PageLike): Promise<boolean> {
   return Boolean(
     await page.evaluate(() => {
-      const nodes = Array.from(
-        document.querySelectorAll("a, button, input[type=submit], [role=button]"),
+      const byId = document.querySelector<HTMLElement>(
+        "#downloadProcess, #gateDownloadButton, [data-testid='download']",
       );
+      const nodes = [
+        ...(byId ? [byId] : []),
+        ...Array.from(
+          document.querySelectorAll(
+            "a, button, input[type=submit], [role=button]",
+          ),
+        ),
+      ];
       const match = nodes.find((el) => {
         const text = (
           el.getAttribute("value") ||
           el.getAttribute("aria-label") ||
+          el.getAttribute("alt") ||
           el.textContent ||
           ""
         )
           .replace(/\s+/g, " ")
           .trim();
-        return /download|get track|free download|unlock|claim/i.test(text);
+        return /download|get track|free download|unlock|claim|rsvp|continue/i.test(
+          text,
+        );
       });
       if (!match) return false;
       (match as HTMLElement).click();
@@ -197,12 +212,12 @@ export async function downloadBrowserGate(params: {
       await page.waitForNetworkIdle?.({ idleTime: 500, timeout: 8_000 }).catch(
         () => undefined,
       );
-      await fillEmailIfPresent(page, params.email, params.name);
-      const clicked = await clickDownloadControl(page);
-      if (!clicked && !params.captureDownload) {
-        throw new Error("Download control not found on gate page");
-      }
-      if (clicked) await rejectSocialFollowWall(page, params.gateUrl);
+      await unlockRenderedGatePage(page, {
+        gateUrl: params.gateUrl,
+        email: params.email,
+        name: params.name,
+        requireClick: !params.captureDownload,
+      });
       return await runCapture({ workDir: downloadDir, signal: params.signal });
     } finally {
       await context.close().catch(() => undefined);
@@ -236,15 +251,83 @@ export async function downloadBrowserGate(params: {
       await page.waitForNetworkIdle?.({ idleTime: 800, timeout: 10_000 }).catch(
         () => undefined,
       );
-      await fillEmailIfPresent(page, params.email, params.name);
-      const clicked = await clickDownloadControl(page);
-      if (!clicked) {
-        throw new Error("Download control not found on gate page");
-      }
-      await rejectSocialFollowWall(page, params.gateUrl);
+      await unlockRenderedGatePage(page, {
+        gateUrl: params.gateUrl,
+        email: params.email,
+        name: params.name,
+        requireClick: true,
+      });
       return runCapture({ workDir: downloadDir, signal: params.signal });
     },
   });
 }
 
-export { DOWNLOAD_LABEL };
+async function unlockRenderedGatePage(
+  page: PageLike,
+  params: {
+    gateUrl: string;
+    email: string;
+    name: string;
+    requireClick: boolean;
+  },
+): Promise<void> {
+  await fillEmailIfPresent(page, params.email, params.name);
+  await rejectSocialFollowWall(page, params.gateUrl);
+  let clicked = await clickDownloadControl(page);
+  if (!clicked) {
+    await page.waitForNetworkIdle?.({ idleTime: 800, timeout: 8_000 }).catch(
+      () => undefined,
+    );
+    await fillEmailIfPresent(page, params.email, params.name);
+    clicked = await clickDownloadControl(page);
+  }
+  if (!clicked && params.requireClick) {
+    throw new Error("Download control not found on gate page");
+  }
+  if (clicked) await rejectSocialFollowWall(page, params.gateUrl);
+}
+
+export function layloDropJsonUrl(gateUrl: string): string | null {
+  try {
+    const parsed = new URL(gateUrl);
+    const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
+    if (host !== "laylo.com") return null;
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parts.length < 2 || !parts[0] || !parts[1]) return null;
+    return `https://d21i0hc4hl3bvt.cloudfront.net/${parts[0]}/${parts[1]}.json`;
+  } catch {
+    return null;
+  }
+}
+
+export type LayloDrop = {
+  title: string | null;
+  link: string | null;
+  emailRequired: boolean;
+};
+
+export async function fetchLayloDrop(
+  gateUrl: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<LayloDrop | null> {
+  const jsonUrl = layloDropJsonUrl(gateUrl);
+  if (!jsonUrl) return null;
+  const response = await fetchImpl(jsonUrl, {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) return null;
+  const data = (await response.json()) as {
+    title?: string;
+    link?: string | null;
+    rsvpOptions?: { email?: number };
+  };
+  return {
+    title: data.title ?? null,
+    link: data.link ?? null,
+    emailRequired: (data.rsvpOptions?.email ?? 0) > 0,
+  };
+}
