@@ -22,8 +22,10 @@ from pathlib import Path
 import modal
 
 try:
+    from .playlist_fanout import spawn_fanout_children
     from .subprocess_retry import run_process_job_command, run_sweep_command
 except ImportError:
+    from playlist_fanout import spawn_fanout_children
     from subprocess_retry import run_process_job_command, run_sweep_command
 
 APP_NAME = "thumper-worker"
@@ -104,6 +106,7 @@ worker_image = (
     )
     .run_commands("cd /app && bun install --frozen-lockfile")
     .add_local_python_source("subprocess_retry")
+    .add_local_python_source("playlist_fanout")
     .add_local_python_source("chromium_isolation")
 )
 
@@ -140,7 +143,9 @@ def _run_process_job(job_id: str) -> str:
     max_containers=4,
 )
 def process_job(job_id: str) -> str:
-    return _run_process_job(job_id)
+    output = _run_process_job(job_id)
+    spawn_fanout_children(job_id, process_job.spawn)
+    return output
 
 
 @app.function(

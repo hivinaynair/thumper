@@ -4,6 +4,7 @@ export type JobResultMeta = {
   playlist?: boolean;
   childJobIds?: string[];
   driveFolderId?: string;
+  parentJobId?: string;
   gateEmail?: string;
   gateName?: string;
   freeDownloadsOnly?: boolean;
@@ -57,6 +58,7 @@ export function downloadPayloadFromJob(
     clubReadyOnly: Boolean(result.clubReadyOnly),
     freeDownloadsOnly: Boolean(result.freeDownloadsOnly),
     ...(result.driveFolderId ? { driveFolderId: result.driveFolderId } : {}),
+    ...(result.parentJobId ? { parentJobId: result.parentJobId } : {}),
   };
 }
 

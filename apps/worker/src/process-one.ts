@@ -2,7 +2,6 @@ import { createClerkClient } from "@clerk/backend";
 import { createDb, jobs } from "@thumper/db";
 import {
   ensurePlaylistFolder,
-  ProcessCancelledError,
   runDownloadJob,
   runRetagJob,
 } from "@thumper/pipeline";
@@ -14,6 +13,11 @@ import {
 } from "@thumper/shared";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
+import {
+  enqueuePlaylistChildren,
+  fanoutIdsFromCompletedParent,
+  writeFanoutChildIds,
+} from "./playlist-fanout";
 
 const log = pino({ level: process.env.LOG_LEVEL ?? "info" });
 
@@ -114,11 +118,10 @@ export async function processJobById(jobId: string): Promise<void> {
     | undefined;
   const isRetag = Boolean(retagMeta?.retag && retagMeta.inputStorageKey);
 
-  // One controller for the parent + every inline child. The cancel API flips
-  // the parent to "cancelling"; this poll turns that into an abort so the
-  // current yt-dlp/ffmpeg child dies and the playlist loop stops.
-  // Also abort if the parent row is gone (Clear finished) or already terminal —
-  // otherwise a zombie Modal loop keeps inserting orphan children forever.
+  // Abort this container when the row leaves queued/running — Cancel, a
+  // finished job, or Clear deleting the row. Playlist children run in their
+  // own containers; each one polls itself (and ensureNotCancelled also watches
+  // parentJobId).
   const ac = new AbortController();
   const cancelPoll = setInterval(() => {
     void (async () => {
@@ -181,6 +184,7 @@ export async function processJobById(jobId: string): Promise<void> {
 
   const gateMeta = row.result as
     | {
+        parentJobId?: string;
         gateEmail?: string;
         gateName?: string;
         freeDownloadsOnly?: boolean;
@@ -221,10 +225,13 @@ export async function processJobById(jobId: string): Promise<void> {
     gateName: gateMeta?.gateName,
     freeDownloadsOnly: Boolean(gateMeta?.freeDownloadsOnly),
     clubReadyOnly: Boolean(gateMeta?.clubReadyOnly),
-    ...(playlistCtx.parentJobId
-      ? { parentJobId: playlistCtx.parentJobId }
+    ...(gateMeta?.parentJobId || playlistCtx.parentJobId
+      ? { parentJobId: gateMeta?.parentJobId ?? playlistCtx.parentJobId }
       : {}),
     ...(driveFolderId ? { driveFolderId } : {}),
+    ...(detectSourceKind(row.sourceUrl) === "spotify"
+      ? { spotifyUrl: row.sourceUrl }
+      : {}),
   };
 
   async function runOne(p: DownloadJobPayload): Promise<void> {
@@ -237,128 +244,56 @@ export async function processJobById(jobId: string): Promise<void> {
         update: (patch) => updateJob(p.jobId, patch),
         getGoogleAccessToken,
         enqueueChildTracks: async (tracks, context) => {
-          const childIds: string[] = [];
-          let failed = 0;
-          // SoundCloud rate-limits (~429) when a set is hammered back-to-back
-          // from a datacenter IP. A short gap between tracks keeps most of the
-          // playlist alive without much wall-clock cost.
-          const TRACK_GAP_MS = 2_000;
-          for (const [index, track] of tracks.entries()) {
-            if (ac.signal.aborted) {
-              throw new ProcessCancelledError();
-            }
-            const kind = detectSourceKind(track.url) ?? detectSourceKind(p.url);
-            if (kind !== "youtube" && kind !== "soundcloud") continue;
-
-            if (index > 0 && TRACK_GAP_MS > 0) {
-              await new Promise<void>((resolve, reject) => {
-                const timer = setTimeout(resolve, TRACK_GAP_MS);
-                const onAbort = () => {
-                  clearTimeout(timer);
-                  reject(new ProcessCancelledError());
-                };
-                if (ac.signal.aborted) {
-                  onAbort();
-                  return;
-                }
-                ac.signal.addEventListener("abort", onAbort, { once: true });
+          return enqueuePlaylistChildren({
+            parent: p,
+            tracks,
+            context,
+            signal: ac.signal,
+            insertChild: async ({ kind, track, result }) => {
+              const [child] = await db
+                .insert(jobs)
+                .values({
+                  userId: p.userId,
+                  sourceUrl: track.spotifyUrl ?? track.url,
+                  matchedUrl: track.url,
+                  sourceKind: kind,
+                  audioFormat: p.audioFormat,
+                  destination: p.destination,
+                  title: track.title,
+                  artist: track.artist,
+                  status: "queued",
+                  stage: "queued",
+                  progress: 0,
+                  result,
+                })
+                .returning();
+              return child ? { id: child.id } : null;
+            },
+            publishChildIds: async (childIds) => {
+              await updateJob(p.jobId, {
+                result: {
+                  playlist: true,
+                  trackCount: tracks.length,
+                  childJobIds: childIds,
+                  ...(context?.driveFolderId
+                    ? { driveFolderId: context.driveFolderId }
+                    : {}),
+                  ...(p.gateEmail
+                    ? { gateEmail: p.gateEmail, gateName: p.gateName }
+                    : {}),
+                  ...(p.freeDownloadsOnly ? { freeDownloadsOnly: true } : {}),
+                  ...(p.clubReadyOnly ? { clubReadyOnly: true } : {}),
+                },
               });
-            }
-
-            const childResult = {
-              ...(p.gateEmail
-                ? { gateEmail: p.gateEmail, gateName: p.gateName }
-                : {}),
-              ...(p.freeDownloadsOnly ? { freeDownloadsOnly: true } : {}),
-              ...(p.clubReadyOnly ? { clubReadyOnly: true } : {}),
-              ...(context?.driveFolderId
-                ? { driveFolderId: context.driveFolderId }
-                : {}),
-            };
-            const [child] = await db
-              .insert(jobs)
-              .values({
-                userId: p.userId,
-                sourceUrl: track.spotifyUrl ?? track.url,
-                matchedUrl: track.url,
-                sourceKind: kind,
-                audioFormat: p.audioFormat,
-                destination: p.destination,
-                title: track.title,
-                artist: track.artist,
-                status: "queued",
-                stage: "queued",
-                progress: 0,
-                ...(Object.keys(childResult).length > 0
-                  ? { result: childResult }
-                  : {}),
-              })
-              .returning();
-            if (!child) continue;
-            childIds.push(child.id);
-
-            // Publish child ids as we go so a mid-playlist Cancel can cascade
-            // via the API even before the parent finishes.
-            await updateJob(p.jobId, {
-              result: {
-                playlist: true,
-                trackCount: tracks.length,
-                childJobIds: [...childIds],
-                ...(context?.driveFolderId
-                  ? { driveFolderId: context.driveFolderId }
-                  : {}),
-                ...(p.gateEmail
-                  ? { gateEmail: p.gateEmail, gateName: p.gateName }
-                  : {}),
-                ...(p.freeDownloadsOnly ? { freeDownloadsOnly: true } : {}),
-                ...(p.clubReadyOnly ? { clubReadyOnly: true } : {}),
-              },
-            });
-
-            // One track a source refuses to hand over — DRM, geo-block, a dead
-            // upload — must not take the rest of the playlist with it. Cancel
-            // is different: stop the whole set.
-            try {
-              await runOne({
-                jobId: child.id,
-                userId: p.userId,
-                url: track.url,
-                audioFormat: p.audioFormat,
-                destination: p.destination,
-                titleHint: track.title,
-                artistHint: track.artist,
-                parentJobId: p.jobId,
-                spotifyUrl: track.spotifyUrl,
-                driveFolderId: context?.driveFolderId,
-                gateEmail: p.gateEmail,
-                gateName: p.gateName,
-                freeDownloadsOnly: p.freeDownloadsOnly,
-                clubReadyOnly: p.clubReadyOnly,
-              });
-            } catch (err) {
-              if (
-                err instanceof ProcessCancelledError ||
-                ac.signal.aborted
-              ) {
-                await markJobsCancelled([child.id]);
-                throw err instanceof ProcessCancelledError
-                  ? err
-                  : new ProcessCancelledError();
-              }
-              failed += 1;
+            },
+            cancelChildren: markJobsCancelled,
+            onInsertError: (err, url) => {
               log.warn(
-                { err, jobId: child.id, url: track.url },
-                "Playlist track failed — continuing with the rest",
+                { err, url, parentJobId: p.jobId },
+                "Failed to queue playlist track — continuing",
               );
-            }
-          }
-          if (failed) {
-            log.info(
-              { jobId: p.jobId, failed, total: childIds.length },
-              "Playlist finished with failures",
-            );
-          }
-          return childIds;
+            },
+          });
         },
       });
     } finally {
@@ -368,6 +303,15 @@ export async function processJobById(jobId: string): Promise<void> {
 
   try {
     await runOne(payload);
+    const [done] = await db
+      .select({ status: jobs.status, result: jobs.result })
+      .from(jobs)
+      .where(eq(jobs.id, jobId))
+      .limit(1);
+    const childIds = done ? fanoutIdsFromCompletedParent(done) : [];
+    if (childIds.length > 0) {
+      await writeFanoutChildIds(jobId, childIds);
+    }
   } finally {
     clearInterval(cancelPoll);
   }

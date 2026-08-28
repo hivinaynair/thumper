@@ -34,6 +34,7 @@ describe("downloadPayloadFromJob", () => {
           gateName: "Vinay",
           clubReadyOnly: true,
           driveFolderId: "folder-uk-140",
+          parentJobId: "uk-140",
         },
       }),
     ).toEqual({
@@ -49,6 +50,7 @@ describe("downloadPayloadFromJob", () => {
       clubReadyOnly: true,
       freeDownloadsOnly: false,
       driveFolderId: "folder-uk-140",
+      parentJobId: "uk-140",
     });
   });
 });

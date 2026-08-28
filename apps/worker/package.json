@@ -8,6 +8,7 @@
     "build": "bun build src/index.ts --outdir dist --target bun --packages external",
     "start": "bun src/index.ts",
     "process-job": "bun src/process-job.ts",
+    "test": "bun test",
     "check-types": "tsc --noEmit",
     "lint": "echo ok"
   },
