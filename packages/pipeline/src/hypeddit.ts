@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import type { BrowserContext, HTTPResponse, Page } from "puppeteer-core";
 import { materializeCookieFile } from "./cookies";
 import { ProcessCancelledError } from "./process";
+import { ManualDownloadRequiredError } from "./soundcloud-purchase";
 
 const HYPEDDIT_ORIGIN = "https://hypeddit.com";
 const USER_AGENT =
@@ -226,6 +227,14 @@ function matchHiddenInput(html: string, id: string): string | null {
   return null;
 }
 
+export function isHypedditSmartLinkPage(html: string): boolean {
+  return (
+    html.includes("smartlink-click-button") ||
+    html.includes('id="fanclubLink"') ||
+    /hype-smartlink/i.test(html)
+  );
+}
+
 function parseGateData(html: string): GateData | null {
   const csrfToken = html.match(
     /name=["']csrf-token["'][^>]*content=["']([^"']+)["']/,
@@ -442,6 +451,12 @@ export async function downloadHypedditGate(params: {
   const html = await get(gateUrl);
   const gate = parseGateData(html);
   if (!gate) {
+    if (isHypedditSmartLinkPage(html)) {
+      throw new ManualDownloadRequiredError(
+        gateUrl,
+        "Hypeddit streaming smart link",
+      );
+    }
     throw new Error("Could not parse Hypeddit gate page");
   }
   csrfToken = gate.csrfToken;
@@ -630,50 +645,127 @@ async function withAbort<T>(
   }
 }
 
+export function isAllowedGateControlHref(
+  href: string,
+  pageUrl: string,
+): boolean {
+  try {
+    const target = new URL(href, pageUrl);
+    if (target.protocol === "javascript:" || target.protocol === "mailto:") {
+      return true;
+    }
+    if (target.protocol !== "http:" && target.protocol !== "https:") {
+      return false;
+    }
+    const host = target.hostname.toLowerCase();
+    if (!host) return true;
+    const current = new URL(pageUrl).hostname.toLowerCase();
+    return (
+      host === current ||
+      host === "spotify.com" ||
+      host.endsWith(".spotify.com") ||
+      host === "instagram.com" ||
+      host.endsWith(".instagram.com")
+    );
+  } catch {
+    return false;
+  }
+}
+
+type ClickControlOptions = {
+  ids?: string[];
+};
+
 async function clickExactControl(
   page: Page,
   labels: string[],
   signal?: AbortSignal,
+  options?: ClickControlOptions,
 ): Promise<void> {
   const clicked = await withAbort(
-    page.evaluate((allowedLabels) => {
-      const normalized = new Set(
-        allowedLabels.map((label) => label.trim().toLowerCase()),
-      );
-      const controls = Array.from(
-        document.querySelectorAll<HTMLButtonElement | HTMLAnchorElement>(
-          "button, a",
-        ),
-      );
-      const control = controls.find((element) => {
-        const disabled =
-          ("disabled" in element && Boolean(element.disabled)) ||
-          element.getAttribute("aria-disabled") === "true";
-        const visible = !element.hidden && element.getClientRects().length > 0;
-        return (
-          !disabled &&
-          visible &&
-          normalized.has((element.textContent ?? "").trim().toLowerCase())
+    page.evaluate(
+      ({ allowedLabels, allowedIds }) => {
+        const normalized = new Set(
+          allowedLabels.map((label) => label.trim().toLowerCase()),
         );
-      });
-      if (!control) return false;
-      if (control instanceof HTMLAnchorElement && control.href) {
-        const target = new URL(control.href, window.location.href);
-        const current = new URL(window.location.href);
-        const host = target.hostname.toLowerCase();
-        const allowed =
-          host === current.hostname.toLowerCase() ||
-          host === "spotify.com" ||
-          host.endsWith(".spotify.com") ||
-          host === "instagram.com" ||
-          host.endsWith(".instagram.com");
-        if (!allowed) {
-          throw new Error(`Refusing gate control host: ${target.hostname}`);
+        const ids = new Set(
+          allowedIds.map((id) => id.trim().toLowerCase()).filter(Boolean),
+        );
+        const controls = Array.from(
+          document.querySelectorAll<HTMLButtonElement | HTMLAnchorElement>(
+            "button, a",
+          ),
+        );
+        const labelOf = (element: HTMLElement) =>
+          (
+            element.getAttribute("value") ||
+            element.getAttribute("aria-label") ||
+            element.getAttribute("alt") ||
+            element.textContent ||
+            ""
+          )
+            .replace(/\s+/g, " ")
+            .trim()
+            .toLowerCase();
+        const isUsable = (element: HTMLElement) => {
+          const disabled =
+            ("disabled" in element &&
+              Boolean((element as HTMLButtonElement).disabled)) ||
+            element.getAttribute("aria-disabled") === "true";
+          return (
+            !disabled && !element.hidden && element.getClientRects().length > 0
+          );
+        };
+        const matches = (element: HTMLElement) => {
+          if (ids.has((element.id ?? "").toLowerCase())) return true;
+          const text = labelOf(element);
+          if (normalized.has(text)) return true;
+          for (const label of normalized) {
+            if (
+              label.length >= 10 &&
+              (text.startsWith(label) || text.includes(label))
+            ) {
+              return true;
+            }
+          }
+          const cls = (element.getAttribute("class") || "").toLowerCase();
+          const wantsInstagram = [...normalized].some((label) =>
+            label.includes("instagram"),
+          );
+          if (
+            wantsInstagram &&
+            cls.includes("instagram") &&
+            text.startsWith("follow")
+          ) {
+            return true;
+          }
+          return false;
+        };
+        const control = controls.find(
+          (element) => isUsable(element) && matches(element),
+        );
+        if (!control) return false;
+        if (control instanceof HTMLAnchorElement && control.href) {
+          const target = new URL(control.href, window.location.href);
+          const current = new URL(window.location.href);
+          const host = target.hostname.toLowerCase();
+          const allowed =
+            target.protocol === "javascript:" ||
+            !host ||
+            host === current.hostname.toLowerCase() ||
+            host === "spotify.com" ||
+            host.endsWith(".spotify.com") ||
+            host === "instagram.com" ||
+            host.endsWith(".instagram.com");
+          if (!allowed) {
+            throw new Error(`Refusing gate control host: ${target.hostname}`);
+          }
         }
-      }
-      control.click();
-      return true;
-    }, labels),
+        control.click();
+        return true;
+      },
+      { allowedLabels: labels, allowedIds: options?.ids ?? [] },
+    ),
     signal,
   );
   if (!clicked) {
@@ -882,6 +974,10 @@ async function fillEmailStep(
           document.querySelector<HTMLInputElement>(
             'input[name="validateEmailAddress"]',
           ) ??
+          document.querySelector<HTMLInputElement>("#email_address") ??
+          document.querySelector<HTMLInputElement>(
+            'input[name="email_address"]',
+          ) ??
           document.querySelector<HTMLInputElement>('input[type="email"]');
         if (!emailInput) return false;
         const setValue = (input: HTMLInputElement, value: string) => {
@@ -906,7 +1002,12 @@ async function fillEmailStep(
   );
   if (!filled)
     throw new Error("Hypeddit email step changed: email field missing");
-  await clickExactControl(page, ["Continue", "Submit", "Next"], signal);
+  await clickExactControl(
+    page,
+    ["Share email address", "Continue", "Submit", "Next"],
+    signal,
+    { ids: ["email_to_downloads_next"] },
+  );
   await waitForStepProgression(page, "email", signal);
 }
 
@@ -1137,7 +1238,9 @@ async function automateSpotifyGate(params: {
     }),
     signal,
   );
-  await clickExactControl(page, ["Get Track", "Free Download", "Download"], signal);
+  await clickExactControl(page, ["Get Track", "Free Download", "Download", "Download now"], signal, {
+    ids: ["downloadProcess"],
+  });
 
   const steps = await readPageSteps(page, signal);
   const supported = new Set(["email", "sc", "ig", "tk", "yt", "fb", "sp"]);
@@ -1162,6 +1265,7 @@ async function automateSpotifyGate(params: {
             "Instagram Connect",
           ],
           signal,
+          { ids: ["login_to_ig"] },
         ),
       waitForPopup: () =>
         waitForProviderPopup(context, openerTarget, isSafeInstagramUrl, signal),
@@ -1184,6 +1288,7 @@ async function automateSpotifyGate(params: {
           page,
           ["Connect Spotify", "Connect with Spotify", "Spotify Connect"],
           signal,
+          { ids: ["login_to_sp"] },
         ),
       waitForPopup: () =>
         waitForProviderPopup(

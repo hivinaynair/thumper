@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   downloadBrowserGate,
   isCapturedGateFilename,
+  layloDropJsonUrl,
   looksLikeSocialFollowWall,
   waitForDownloadedFile,
 } from "./download-browser-gate";
@@ -172,7 +173,7 @@ describe("downloadBrowserGate", () => {
   it("fails as a manual download when the page is a follow/unlock wall", async () => {
     const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "browser-gate-"));
     roots.push(workDir);
-    let evals = 0;
+    let clicked = false;
     await expect(
       downloadBrowserGate({
         gateUrl: "https://www.toneden.io/aeonmode/post/track",
@@ -188,9 +189,12 @@ describe("downloadBrowserGate", () => {
                 setDefaultTimeout: () => undefined,
                 goto: async () => undefined,
                 $: async () => null,
-                evaluate: async () => {
-                  evals += 1;
-                  if (evals === 1) return true;
+                evaluate: async (fn: (...args: never[]) => unknown) => {
+                  const source = String(fn);
+                  if (source.includes("click")) {
+                    clicked = true;
+                    return true;
+                  }
                   return "STEP 1 FOLLOW ON SOUNDCLOUD\nSTEP 2 FOLLOW ON SPOTIFY";
                 },
                 waitForNetworkIdle: async () => undefined,
@@ -202,6 +206,7 @@ describe("downloadBrowserGate", () => {
         },
       }),
     ).rejects.toThrow(/Follow\/unlock required|Manual download required/);
+    expect(clicked).toBe(false);
   });
 });
 
@@ -212,7 +217,22 @@ describe("looksLikeSocialFollowWall", () => {
         "THANKS SO MUCH FOR YOUR SUPPORT!\nSTEP 1\nFOLLOW ON SOUNDCLOUD\nSTEP 2\nFOLLOW ON SPOTIFY\nUNLOCK PROGRESS\nDOWNLOAD",
       ),
     ).toBe(true);
+    expect(looksLikeSocialFollowWall("Follow to unlock the download")).toBe(
+      true,
+    );
+    expect(looksLikeSocialFollowWall("Become a Superfan to download")).toBe(
+      true,
+    );
     expect(looksLikeSocialFollowWall("Download\nManage Privacy")).toBe(false);
+  });
+});
+
+describe("layloDropJsonUrl", () => {
+  it("maps a Laylo drop URL to the CDN JSON", () => {
+    expect(layloDropJsonUrl("https://laylo.com/controlfreakus/gaOHY")).toBe(
+      "https://d21i0hc4hl3bvt.cloudfront.net/controlfreakus/gaOHY.json",
+    );
+    expect(layloDropJsonUrl("https://www.toneden.io/x")).toBeNull();
   });
 });
 

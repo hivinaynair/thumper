@@ -25,7 +25,7 @@ import {
 import { FILE_TTL_MS } from "./cleanup";
 import { convertAudio, hasAttachedArtwork, tagMp3Copy } from "./convert";
 import { materializeCookieFile } from "./cookies";
-import { downloadBrowserGate } from "./download-browser-gate";
+import { downloadBrowserGate, fetchLayloDrop } from "./download-browser-gate";
 import { downloadDirectFile } from "./download-direct";
 import {
   audioMimeForExtension,
@@ -420,6 +420,7 @@ export async function processGenericGateDownload(params: {
   unlinkCookieFile?: (filePath: string) => Promise<void>;
   directDownload?: typeof downloadDirectFile;
   browserDownload?: typeof downloadBrowserGate;
+  fetchLaylo?: typeof fetchLayloDrop;
   planArtifact?: typeof planDeliveryArtifact;
 }): Promise<{
   downloaded: HypedditDownloadResult;
@@ -433,6 +434,22 @@ export async function processGenericGateDownload(params: {
       signal: params.signal,
     });
   } else {
+    const laylo = params.gateUrl.toLowerCase().includes("laylo.com")
+      ? await (params.fetchLaylo ?? fetchLayloDrop)(params.gateUrl)
+      : null;
+    if (laylo && !laylo.link) {
+      throw new ManualDownloadRequiredError(
+        params.gateUrl,
+        "Laylo RSVP drop (no hosted file)",
+      );
+    }
+    if (laylo?.link) {
+      downloaded = await (params.directDownload ?? downloadDirectFile)({
+        url: laylo.link,
+        workDir: params.workDir,
+        signal: params.signal,
+      });
+    } else {
     let cookies: BrowserCookie[] = [];
     const loadProviderCookies = async (
       materialize: (userId: string) => Promise<string | null>,
@@ -469,6 +486,7 @@ export async function processGenericGateDownload(params: {
       cookies,
       signal: params.signal,
     });
+    }
   }
   const artifact = (params.planArtifact ?? planDeliveryArtifact)({
     provenance: "hypeddit-original",
