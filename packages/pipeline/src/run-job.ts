@@ -47,7 +47,9 @@ import {
 import { deleteDriveFile, ensurePlaylistFolder, uploadToDrive } from "./drive";
 import {
   downloadHypedditWithSpotifyFallback,
+  parseInstagramNetscapeCookies,
   parseSpotifyNetscapeCookies,
+  type BrowserCookie,
   type HypedditDownloadResult,
   type SpotifyFallbackDependencies,
 } from "./hypeddit";
@@ -413,6 +415,7 @@ export async function processGenericGateDownload(params: {
   artistHint?: string;
   titleHint?: string;
   materializeSpotifyCookies?: (userId: string) => Promise<string | null>;
+  materializeInstagramCookies?: (userId: string) => Promise<string | null>;
   readCookieFile?: (filePath: string) => Promise<string>;
   unlinkCookieFile?: (filePath: string) => Promise<void>;
   directDownload?: typeof downloadDirectFile;
@@ -430,23 +433,34 @@ export async function processGenericGateDownload(params: {
       signal: params.signal,
     });
   } else {
-    let cookies: ReturnType<typeof parseSpotifyNetscapeCookies> = [];
-    const cookiePath = await (
-      params.materializeSpotifyCookies ??
-      ((userId: string) => materializeCookieFile(userId, "spotify"))
-    )(params.userId);
-    if (cookiePath) {
+    let cookies: BrowserCookie[] = [];
+    const loadProviderCookies = async (
+      materialize: (userId: string) => Promise<string | null>,
+      parse: (text: string) => BrowserCookie[],
+    ) => {
+      const cookiePath = await materialize(params.userId);
+      if (!cookiePath) return;
       try {
-        const text = await (params.readCookieFile ?? ((p) => fs.readFile(p, "utf8")))(
-          cookiePath,
-        );
-        cookies = parseSpotifyNetscapeCookies(text);
+        const text = await (
+          params.readCookieFile ?? ((p) => fs.readFile(p, "utf8"))
+        )(cookiePath);
+        cookies.push(...parse(text));
       } finally {
         await (params.unlinkCookieFile ?? fs.unlink)(cookiePath).catch(
           () => undefined,
         );
       }
-    }
+    };
+    await loadProviderCookies(
+      params.materializeSpotifyCookies ??
+        ((userId: string) => materializeCookieFile(userId, "spotify")),
+      parseSpotifyNetscapeCookies,
+    );
+    await loadProviderCookies(
+      params.materializeInstagramCookies ??
+        ((userId: string) => materializeCookieFile(userId, "instagram")),
+      parseInstagramNetscapeCookies,
+    );
     downloaded = await (params.browserDownload ?? downloadBrowserGate)({
       gateUrl: params.gateUrl,
       email: params.email,

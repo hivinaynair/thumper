@@ -3,12 +3,15 @@ const PROVIDERS = {
   soundcloud: [".soundcloud.com"],
   // sp_dc lives on .spotify.com; accounts.* is needed for Hypeddit OAuth.
   spotify: [".spotify.com"],
+  // sessionid lives on .instagram.com; used for Hypeddit Instagram follows.
+  instagram: [".instagram.com"],
 };
 
 const WARM_URLS = {
   youtube: "https://www.youtube.com/",
   soundcloud: "https://soundcloud.com/",
   spotify: "https://open.spotify.com/",
+  instagram: "https://www.instagram.com/",
 };
 
 const AUTH_COOKIE_NAMES = {
@@ -21,7 +24,10 @@ const AUTH_COOKIE_NAMES = {
   ]),
   soundcloud: new Set(["oauth_token", "oauth_token_refresh"]),
   spotify: new Set(["sp_dc", "sp_key"]),
+  instagram: new Set(["sessionid", "ds_user_id"]),
 };
+
+const SYNC_PROVIDERS = ["youtube", "soundcloud", "spotify", "instagram"];
 
 function getCookiesForDomains(domains) {
   return Promise.all(
@@ -124,53 +130,42 @@ async function uploadCookies(origin, provider, netscapeText) {
   }
 }
 
+const SKIP_REASONS = {
+  youtube: "Not signed in to YouTube in this browser",
+  soundcloud: "Not signed in to SoundCloud — skipped",
+  spotify: "Not signed in to Spotify — skipped",
+  instagram: "Not signed in to Instagram — skipped",
+};
+
 async function syncAll(origin) {
   const results = {
     youtube: { status: "pending" },
     soundcloud: { status: "pending" },
     spotify: { status: "pending" },
+    instagram: { status: "pending" },
   };
 
-  const yt = await exportProvider("youtube");
-  if (!yt.loggedIn) {
-    results.youtube = {
-      status: "skipped",
-      reason: "Not signed in to YouTube in this browser",
-    };
-  } else {
-    await uploadCookies(origin, "youtube", yt.cookies);
-    results.youtube = { status: "synced" };
+  for (const provider of SYNC_PROVIDERS) {
+    const exported = await exportProvider(provider);
+    if (!exported.loggedIn) {
+      results[provider] = {
+        status: "skipped",
+        reason: SKIP_REASONS[provider],
+      };
+      continue;
+    }
+    await uploadCookies(origin, provider, exported.cookies);
+    results[provider] = { status: "synced" };
   }
 
-  const sc = await exportProvider("soundcloud");
-  if (!sc.loggedIn) {
-    results.soundcloud = {
-      status: "skipped",
-      reason: "Not signed in to SoundCloud — skipped",
-    };
-  } else {
-    await uploadCookies(origin, "soundcloud", sc.cookies);
-    results.soundcloud = { status: "synced" };
-  }
-
-  const sp = await exportProvider("spotify");
-  if (!sp.loggedIn) {
-    results.spotify = {
-      status: "skipped",
-      reason: "Not signed in to Spotify — skipped",
-    };
-  } else {
-    await uploadCookies(origin, "spotify", sp.cookies);
-    results.spotify = { status: "synced" };
-  }
-
-  const synced = ["youtube", "soundcloud", "spotify"].filter(
+  const synced = SYNC_PROVIDERS.filter(
     (p) => results[p].status === "synced",
   );
   if (synced.length === 0) {
     return {
       ok: false,
-      error: "No signed-in sessions found for YouTube, SoundCloud, or Spotify",
+      error:
+        "No signed-in sessions found for YouTube, SoundCloud, Spotify, or Instagram",
       results,
     };
   }
@@ -186,6 +181,8 @@ function summarize(results) {
   if (results.soundcloud.status === "skipped") parts.push("SoundCloud skipped");
   if (results.spotify.status === "synced") parts.push("Spotify refreshed");
   if (results.spotify.status === "skipped") parts.push("Spotify skipped");
+  if (results.instagram.status === "synced") parts.push("Instagram refreshed");
+  if (results.instagram.status === "skipped") parts.push("Instagram skipped");
   return parts.join(" · ");
 }
 

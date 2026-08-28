@@ -4,11 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import {
   BrowserRequiredError,
+  authorizeInstagramAndConfirmHypedditAction,
   authorizeSpotifyAndConfirmHypedditAction,
   downloadHypedditGate,
   downloadHypedditGateWithBrowser,
   downloadHypedditWithSpotifyFallback,
+  isSafeInstagramUrl,
   isSafeSpotifyAuthorizationUrl,
+  parseInstagramNetscapeCookies,
   parseSpotifyNetscapeCookies,
   sniffAudioExt,
 } from "./hypeddit";
@@ -115,12 +118,12 @@ describe("downloadHypedditGate browserless contract", () => {
     const requests: Array<{ url: string; body: URLSearchParams | null }> = [];
     await runGateWithFetch(
       gateHtml({
-        steps: "ig",
+        steps: "sc",
         externalIdMarkup: `<script>window.externID = "instagram-user-17";</script>`,
       }),
       successFetch(
         gateHtml({
-          steps: "ig",
+          steps: "sc",
           externalIdMarkup: `<script>window.externID = "instagram-user-17";</script>`,
         }),
         requests,
@@ -136,7 +139,7 @@ describe("downloadHypedditGate browserless contract", () => {
   it("sends external_id parsed from a hidden field", async () => {
     const requests: Array<{ url: string; body: URLSearchParams | null }> = [];
     const html = gateHtml({
-      steps: "ig",
+      steps: "sc",
       externalIdMarkup: `<input type="hidden" name="external_id" value="hidden-user-9">`,
     });
     await runGateWithFetch(html, successFetch(html, requests));
@@ -149,7 +152,7 @@ describe("downloadHypedditGate browserless contract", () => {
 
   it("skips only explicitly allowlisted browserless social steps", async () => {
     const requests: Array<{ url: string; body: URLSearchParams | null }> = [];
-    const html = gateHtml({ steps: "email,sc,ig,tk,yt,fb" });
+    const html = gateHtml({ steps: "email,sc,tk,yt,fb" });
     await runGateWithFetch(html, successFetch(html, requests));
 
     const unlock = requests.find(({ url }) =>
@@ -157,14 +160,13 @@ describe("downloadHypedditGate browserless contract", () => {
     );
     expect(unlock?.body?.getAll("skip_gate_steps[]")).toEqual([
       "sc",
-      "ig",
       "tk",
       "yt",
       "fb",
     ]);
   });
 
-  for (const step of ["sp", "future-provider"]) {
+  for (const step of ["sp", "ig", "future-provider"]) {
     it(`requires a browser for ${step} before attempting unlock`, async () => {
       const requests: Array<{ url: string; body: URLSearchParams | null }> = [];
       const html = gateHtml({ steps: `email,${step}` });
@@ -220,6 +222,54 @@ describe("Spotify Netscape cookies", () => {
         "not-a-cookie",
         ".spotify.com.evil.test\tTRUE\t/\tTRUE\t2147483647\tbad\tcookie",
         ".spotify.com\tTRUE\t/\tTRUE\t100\told\tcookie",
+      ].join("\n"),
+      101,
+    );
+
+    expect(cookies).toEqual([]);
+  });
+});
+
+describe("Instagram Netscape cookies", () => {
+  it("parses only Instagram domains and maps Netscape fields for Puppeteer", () => {
+    const cookies = parseInstagramNetscapeCookies(
+      [
+        "# Netscape HTTP Cookie File",
+        ".instagram.com\tTRUE\t/\tTRUE\t2147483647\tsessionid\tsecret",
+        "#HttpOnly_.instagram.com\tTRUE\t/\tTRUE\t2147483647\tds_user_id\t17",
+        ".spotify.com\tTRUE\t/\tTRUE\t2147483647\tsp_dc\tnever",
+      ].join("\n"),
+      1_700_000_000,
+    );
+
+    expect(cookies).toEqual([
+      {
+        name: "sessionid",
+        value: "secret",
+        domain: ".instagram.com",
+        path: "/",
+        secure: true,
+        httpOnly: false,
+        expires: 2147483647,
+      },
+      {
+        name: "ds_user_id",
+        value: "17",
+        domain: ".instagram.com",
+        path: "/",
+        secure: true,
+        httpOnly: true,
+        expires: 2147483647,
+      },
+    ]);
+  });
+
+  it("drops malformed, expired, and deceptive suffix domains", () => {
+    const cookies = parseInstagramNetscapeCookies(
+      [
+        "not-a-cookie",
+        ".instagram.com.evil.test\tTRUE\t/\tTRUE\t2147483647\tbad\tcookie",
+        ".instagram.com\tTRUE\t/\tTRUE\t100\told\tcookie",
       ].join("\n"),
       101,
     );
@@ -307,6 +357,46 @@ describe("Spotify authorization state machine", () => {
     expect(promise).rejects.toBeInstanceOf(ProcessCancelledError);
     await promise.catch(() => undefined);
     expect(calls).toEqual(["connect"]);
+  });
+});
+
+describe("Instagram authorization state machine", () => {
+  it("follows on instagram.com then requires Hypeddit to confirm its configured action", async () => {
+    const calls: string[] = [];
+    await authorizeInstagramAndConfirmHypedditAction({
+      signal: new AbortController().signal,
+      clickConnect: async () => calls.push("connect"),
+      waitForPopup: async () => ({
+        url: () => "https://www.instagram.com/artist/",
+      }),
+      acceptAuthorization: async () => calls.push("follow"),
+      waitForHypedditActionConfirmation: async () =>
+        calls.push("hypeddit-confirm"),
+    });
+
+    expect(calls).toEqual(["connect", "follow", "hypeddit-confirm"]);
+  });
+
+  it("refuses to act on a lookalike or non-Instagram host", async () => {
+    expect(isSafeInstagramUrl("https://www.instagram.com/artist/")).toBe(true);
+    expect(
+      isSafeInstagramUrl("https://www.instagram.com.evil.test/artist/"),
+    ).toBe(false);
+    expect(isSafeInstagramUrl("https://hypeddit.com/instagram")).toBe(false);
+
+    const promise = authorizeInstagramAndConfirmHypedditAction({
+      signal: new AbortController().signal,
+      clickConnect: async () => undefined,
+      waitForPopup: async () => ({
+        url: () => "https://www.instagram.com.evil.test/artist/",
+      }),
+      acceptAuthorization: async () => {
+        throw new Error("must not click");
+      },
+      waitForHypedditActionConfirmation: async () => undefined,
+    });
+
+    expect(promise).rejects.toThrow("instagram.com");
   });
 });
 
@@ -454,6 +544,107 @@ describe("Spotify browser fallback selection", () => {
     expect(result).toBe(expected);
     expect(unlinked).toEqual(["/tmp/spotify.txt"]);
   });
+
+  it("shows an Instagram cookie refresh message without launching when cookies are missing", async () => {
+    let launched = false;
+    const promise = downloadHypedditWithSpotifyFallback({
+      gateUrl: "https://hypeddit.com/artist/track",
+      email: "listener@example.com",
+      name: "Listener",
+      workDir: "/tmp/unused",
+      signal: new AbortController().signal,
+      userId: "user-1",
+      browserlessDownload: async () => {
+        throw new BrowserRequiredError(["ig"]);
+      },
+      materializeInstagramCookies: async () => null,
+      browserDownload: async () => {
+        launched = true;
+        throw new Error("must not launch");
+      },
+      readCookieFile: async () => "",
+      unlinkCookieFile: async () => undefined,
+    });
+
+    expect(promise).rejects.toThrow("refresh Instagram cookies");
+    await promise.catch(() => undefined);
+    expect(launched).toBe(false);
+  });
+
+  it("imports Instagram cookies and unlinks them after browser success", async () => {
+    const unlinked: string[] = [];
+    const names: string[] = [];
+    const expected = {
+      filePath: "/tmp/master.mp3",
+      ext: "mp3",
+      filename: "master.mp3",
+      title: "master",
+      size: 4,
+    };
+    const result = await downloadHypedditWithSpotifyFallback({
+      gateUrl: "https://hypeddit.com/artist/track",
+      email: "listener@example.com",
+      name: "Listener",
+      workDir: "/tmp/unused",
+      signal: new AbortController().signal,
+      userId: "user-1",
+      browserlessDownload: async () => {
+        throw new BrowserRequiredError(["ig"]);
+      },
+      materializeInstagramCookies: async () => "/tmp/instagram.txt",
+      readCookieFile: async () =>
+        ".instagram.com\tTRUE\t/\tTRUE\t2147483647\tsessionid\tsecret",
+      browserDownload: async ({ cookies }) => {
+        names.push(...cookies.map((cookie) => cookie.name));
+        return expected;
+      },
+      unlinkCookieFile: async (cookiePath) => {
+        unlinked.push(cookiePath);
+      },
+    });
+
+    expect(result).toBe(expected);
+    expect(names).toEqual(["sessionid"]);
+    expect(unlinked).toEqual(["/tmp/instagram.txt"]);
+  });
+
+  it("sends Spotify and Instagram cookies together when the gate needs both", async () => {
+    const unlinked: string[] = [];
+    const names: string[] = [];
+    await downloadHypedditWithSpotifyFallback({
+      gateUrl: "https://hypeddit.com/artist/track",
+      email: "listener@example.com",
+      name: "Listener",
+      workDir: "/tmp/unused",
+      signal: new AbortController().signal,
+      userId: "user-1",
+      browserlessDownload: async () => {
+        throw new BrowserRequiredError(["sp", "ig"]);
+      },
+      materializeSpotifyCookies: async () => "/tmp/spotify.txt",
+      materializeInstagramCookies: async () => "/tmp/instagram.txt",
+      readCookieFile: async (cookiePath) =>
+        cookiePath.includes("instagram")
+          ? ".instagram.com\tTRUE\t/\tTRUE\t2147483647\tsessionid\tsecret"
+          : ".spotify.com\tTRUE\t/\tTRUE\t2147483647\tsp_dc\tsecret",
+      browserDownload: async ({ cookies }) => {
+        names.push(...cookies.map((cookie) => cookie.name));
+        return {
+          filePath: "/tmp/master.mp3",
+          ext: "mp3",
+          filename: "master.mp3",
+          title: "master",
+          size: 4,
+        };
+      },
+      unlinkCookieFile: async (cookiePath) => {
+        unlinked.push(cookiePath);
+      },
+    });
+
+    expect(names).toEqual(["sp_dc", "sessionid"]);
+    expect(unlinked).toEqual(["/tmp/spotify.txt", "/tmp/instagram.txt"]);
+  });
 });
 
 describe("headless Hypeddit download lifecycle", () => {
@@ -523,17 +714,23 @@ describe("headless Hypeddit download lifecycle", () => {
     steps: GateStep[];
     calls: string[];
     started: boolean;
-    popup: "spotify" | "unsafe" | "none";
+    popup: "spotify" | "instagram" | "unsafe" | "unsafe-instagram" | "none";
     confirmSpotifyAction: boolean;
+    confirmInstagramAction?: boolean;
     landingLabel?: string;
-    missing?: "get-track" | "client-next" | "connect";
+    missing?: "get-track" | "client-next" | "connect" | "instagram-connect";
     abortOnConnect?: AbortController;
     oauthReturned?: boolean;
     pendingStateAfterOAuth?: "missing" | "unparseable";
     staleControl?: "visible" | "hidden" | "disabled";
     unusableGetTrack?: "hidden" | "disabled";
     sessionFailure?:
-      "same-tab-login" | "popup-login" | "callback-url" | "callback-alert";
+      | "same-tab-login"
+      | "popup-login"
+      | "callback-url"
+      | "callback-alert"
+      | "instagram-same-tab-login"
+      | "instagram-popup-login";
   };
 
   function removeStep(state: GateState, step: string) {
@@ -574,7 +771,7 @@ describe("headless Hypeddit download lifecycle", () => {
     constructor(
       readonly state: GateState,
       url = "https://hypeddit.com/artist/track",
-      private readonly spotifyPopup = false,
+      private readonly popupKind: "spotify" | "instagram" | false = false,
     ) {
       this.currentUrl = url;
       this.emailInput.name = "validateEmailAddress";
@@ -602,12 +799,23 @@ describe("headless Hypeddit download lifecycle", () => {
     }
 
     controls(): Array<FakeButton | FakeAnchor> {
-      if (this.spotifyPopup) {
+      if (this.popupKind === "spotify") {
         return [
           new FakeButton("Accept", () => {
             this.state.calls.push("spotify-accept");
             this.state.oauthReturned = true;
             if (this.state.confirmSpotifyAction) removeStep(this.state, "sp");
+          }),
+        ];
+      }
+      if (this.popupKind === "instagram") {
+        return [
+          new FakeButton("Follow", () => {
+            this.state.calls.push("instagram-follow");
+            this.state.oauthReturned = true;
+            if (this.state.confirmInstagramAction !== false) {
+              removeStep(this.state, "ig");
+            }
           }),
         ];
       }
@@ -626,7 +834,8 @@ describe("headless Hypeddit download lifecycle", () => {
               ),
             ];
       }
-      if (this.state.steps.includes("email")) {
+      const next = this.state.steps[0];
+      if (next === "email") {
         return [
           new FakeButton("Next", () => {
             this.state.calls.push("email-next");
@@ -634,20 +843,38 @@ describe("headless Hypeddit download lifecycle", () => {
           }),
         ];
       }
-      const clientStep = this.state.steps.find((step) =>
-        ["sc", "ig", "tk", "yt", "fb"].includes(step),
-      );
-      if (clientStep) {
+      if (next && ["sc", "tk", "yt", "fb"].includes(next)) {
         return this.state.missing === "client-next"
           ? []
           : [
               new FakeButton("Skip", () => {
-                this.state.calls.push(`client-skip:${clientStep}`);
-                removeStep(this.state, clientStep);
+                this.state.calls.push(`client-skip:${next}`);
+                removeStep(this.state, next);
               }),
             ];
       }
-      if (this.state.steps.includes("sp")) {
+      if (next === "ig") {
+        return this.state.missing === "instagram-connect"
+          ? []
+          : [
+              new FakeButton("Follow on Instagram", () => {
+                this.state.calls.push("instagram-connect");
+                this.state.abortOnConnect?.abort();
+                if (this.state.sessionFailure === "instagram-same-tab-login") {
+                  this.currentUrl =
+                    "https://www.instagram.com/accounts/login/";
+                }
+                if (
+                  this.state.popup === "none" &&
+                  this.state.confirmInstagramAction !== false
+                ) {
+                  this.state.oauthReturned = true;
+                  removeStep(this.state, "ig");
+                }
+              }),
+            ];
+      }
+      if (next === "sp") {
         return this.state.missing === "connect"
           ? []
           : [
@@ -726,7 +953,7 @@ describe("headless Hypeddit download lifecycle", () => {
             return this.nameInput;
           }
           if (
-            this.spotifyPopup &&
+            this.popupKind === "spotify" &&
             selector === 'button[data-testid="auth-accept"]'
           ) {
             return this.controls()[0] ?? null;
@@ -742,7 +969,11 @@ describe("headless Hypeddit download lifecycle", () => {
           return null;
         },
         querySelectorAll: (selector: string) => {
-          if (selector === "button, a" || selector === "button") {
+          if (
+            selector === "button, a" ||
+            selector === "button" ||
+            selector === "button, a, [role='button']"
+          ) {
             return this.controls();
           }
           if (selector === 'input[type="checkbox"]') {
@@ -805,14 +1036,23 @@ describe("headless Hypeddit download lifecycle", () => {
     const calls: string[] = [];
     const importedCookies: unknown[] = [];
     const page = new FakePage(state);
-    const popup = new FakePage(
+    const spotifyPopup = new FakePage(
       state,
       state.popup === "unsafe"
         ? "https://accounts.spotify.com.evil.test/authorize"
         : state.sessionFailure === "popup-login"
           ? "https://accounts.spotify.com/login"
           : "https://accounts.spotify.com/authorize",
-      true,
+      "spotify",
+    );
+    const instagramPopup = new FakePage(
+      state,
+      state.popup === "unsafe-instagram"
+        ? "https://www.instagram.com.evil.test/artist/"
+        : state.sessionFailure === "instagram-popup-login"
+          ? "https://www.instagram.com/accounts/login/"
+          : "https://www.instagram.com/artist/",
+      "instagram",
     );
     const context = {
       setCookie: async (...cookies: unknown[]) => {
@@ -829,6 +1069,7 @@ describe("headless Hypeddit download lifecycle", () => {
           error.name = "TimeoutError";
           throw error;
         }
+        const popup = state.steps.includes("ig") ? instagramPopup : spotifyPopup;
         const target = {
           opener: () => "gate-target",
           url: () => popup.url(),
@@ -866,6 +1107,7 @@ describe("headless Hypeddit download lifecycle", () => {
       started: false,
       popup: "spotify",
       confirmSpotifyAction: true,
+      confirmInstagramAction: true,
       ...overrides,
     };
   }
@@ -878,9 +1120,14 @@ describe("headless Hypeddit download lifecycle", () => {
       path.join(os.tmpdir(), "hypeddit-browser-"),
     );
     tempDirectories.push(workDir);
-    const cookies = parseSpotifyNetscapeCookies(
-      ".spotify.com\tTRUE\t/\tTRUE\t2147483647\tsp_dc\tsecret",
-    );
+    const cookies = [
+      ...parseSpotifyNetscapeCookies(
+        ".spotify.com\tTRUE\t/\tTRUE\t2147483647\tsp_dc\tsecret",
+      ),
+      ...parseInstagramNetscapeCookies(
+        ".instagram.com\tTRUE\t/\tTRUE\t2147483647\tsessionid\tig-secret",
+      ),
+    ];
 
     const resultPromise = downloadHypedditGateWithBrowser({
       gateUrl: "https://hypeddit.com/artist/track",
@@ -925,7 +1172,8 @@ describe("headless Hypeddit download lifecycle", () => {
       "get-track",
       "email-next",
       "client-skip:sc",
-      "client-skip:ig",
+      "instagram-connect",
+      "instagram-follow",
       "client-skip:tk",
       "client-skip:yt",
       "client-skip:fb",
@@ -939,7 +1187,7 @@ describe("headless Hypeddit download lifecycle", () => {
     expect(run.fake.page.emailInput.value).toBe("listener@example.com");
     expect(run.fake.page.nameInput.value).toBe("Listener");
     expect(run.fake.page.marketingInput.checked).toBe(false);
-    expect(run.fake.importedCookies).toHaveLength(1);
+    expect(run.fake.importedCookies).toHaveLength(2);
     const launchOptions = run.launchOptions() as {
       executablePath: string;
       headless: true;
@@ -1105,8 +1353,88 @@ describe("headless Hypeddit download lifecycle", () => {
     expect(run.resultPromise).rejects.toBeInstanceOf(BrowserRequiredError);
     await run.resultPromise.catch(() => undefined);
     expect(state.calls).not.toContain("spotify-connect");
+    expect(state.calls).not.toContain("instagram-connect");
     expect(state.calls.slice(-2)).toEqual(["context-close", "browser-close"]);
   });
+
+  it("completes an Instagram follow in Chromium and confirms Hypeddit progression", async () => {
+    const state = createState({ steps: ["ig"], popup: "instagram" });
+    const run = await runBrowserState(state);
+    await run.resultPromise;
+
+    expect(state.calls).toEqual([
+      "goto",
+      "get-track",
+      "instagram-connect",
+      "instagram-follow",
+      "download",
+      "context-close",
+      "browser-close",
+    ]);
+    expect(state.steps).not.toContain("ig");
+  });
+
+  it("confirms Instagram after an already-authorized no-popup return", async () => {
+    const state = createState({
+      steps: ["ig"],
+      popup: "none",
+    });
+    const run = await runBrowserState(state);
+    await run.resultPromise;
+
+    expect(state.calls).toContain("instagram-connect");
+    expect(state.calls).not.toContain("instagram-follow");
+    expect(state.calls).toContain("download");
+  });
+
+  it("fails closed when Hypeddit does not confirm its configured Instagram action", async () => {
+    const state = createState({
+      steps: ["ig"],
+      popup: "instagram",
+      confirmInstagramAction: false,
+    });
+    const run = await runBrowserState(state);
+
+    expect(run.resultPromise).rejects.toThrow("configured Instagram action");
+    await run.resultPromise.catch(() => undefined);
+    expect(state.calls).not.toContain("download");
+    expect(state.calls.slice(-2)).toEqual(["context-close", "browser-close"]);
+  });
+
+  it("rejects unsafe Instagram popup hosts without following", async () => {
+    const state = createState({
+      steps: ["ig"],
+      popup: "unsafe-instagram",
+    });
+    const run = await runBrowserState(state);
+
+    expect(run.resultPromise).rejects.toThrow("configured Instagram action");
+    await run.resultPromise.catch(() => undefined);
+    expect(state.calls).not.toContain("instagram-follow");
+    expect(state.calls.slice(-2)).toEqual(["context-close", "browser-close"]);
+  });
+
+  for (const sessionFailure of [
+    "instagram-same-tab-login",
+    "instagram-popup-login",
+  ] as const) {
+    it(`maps ${sessionFailure} Instagram expiry to the cookie refresh message`, async () => {
+      const state = createState({
+        steps: ["ig"],
+        popup:
+          sessionFailure === "instagram-popup-login" ? "instagram" : "none",
+        sessionFailure,
+      });
+      const run = await runBrowserState(state);
+
+      expect(run.resultPromise).rejects.toThrow(
+        "refresh Instagram cookies and retry",
+      );
+      await run.resultPromise.catch(() => undefined);
+      expect(state.calls).not.toContain("download");
+      expect(state.calls.slice(-2)).toEqual(["context-close", "browser-close"]);
+    });
+  }
 
   it("rejects unsafe Spotify popup hosts without accepting authorization", async () => {
     const state = createState({ steps: ["sp"], popup: "unsafe" });

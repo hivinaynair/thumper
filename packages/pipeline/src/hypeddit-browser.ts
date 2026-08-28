@@ -2,10 +2,10 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import puppeteer from "puppeteer-core";
-import type { SpotifyBrowserCookie } from "./hypeddit";
+import type { BrowserCookie } from "./hypeddit";
 
 type BrowserContextLike = {
-  setCookie(...cookies: SpotifyBrowserCookie[]): Promise<unknown>;
+  setCookie(...cookies: BrowserCookie[]): Promise<unknown>;
   newPage(): Promise<unknown>;
   close(): Promise<unknown>;
 };
@@ -27,10 +27,10 @@ export type BrowserLauncher = {
 
 /**
  * Worker-only value import. Provider-neutral pipeline and web route imports
- * reach this module only when a Spotify gate actually needs Chromium.
+ * reach this module only when a Spotify or Instagram gate actually needs Chromium.
  */
 export async function withSecureHypedditBrowser<T>(params: {
-  cookies: SpotifyBrowserCookie[];
+  cookies: BrowserCookie[];
   launcher?: BrowserLauncher;
   signal?: AbortSignal;
   run: (page: unknown, context: BrowserContextLike) => Promise<T>;
@@ -69,7 +69,7 @@ export async function withSecureHypedditBrowser<T>(params: {
       userDataDir: profileDir,
     });
     context = await browser.createBrowserContext();
-    // The Spotify session enters Chromium only through the browser protocol.
+    // Provider sessions enter Chromium only through the browser protocol.
     await context.setCookie(...params.cookies);
     return await params.run(await context.newPage(), context);
   } finally {

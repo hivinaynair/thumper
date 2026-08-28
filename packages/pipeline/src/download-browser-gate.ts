@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { BrowserLauncher } from "./hypeddit-browser";
-import type { SpotifyBrowserCookie } from "./hypeddit";
+import type { BrowserCookie } from "./hypeddit";
 import { ProcessCancelledError } from "./process";
 import { ManualDownloadRequiredError } from "./soundcloud-purchase";
 
@@ -134,7 +134,7 @@ export async function downloadBrowserGate(params: {
   email: string;
   name: string;
   workDir: string;
-  cookies: SpotifyBrowserCookie[];
+  cookies: BrowserCookie[];
   signal?: AbortSignal;
   launcher?: BrowserLauncher;
   captureDownload?: (args: {

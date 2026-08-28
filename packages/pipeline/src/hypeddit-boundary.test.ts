@@ -35,6 +35,9 @@ describe("Hypeddit worker-only browser boundary", () => {
     for (const source of sources) {
       expect(source).not.toContain('from "@thumper/pipeline"');
     }
+
+    const cookiesRoute = sources[sources.length - 1] ?? "";
+    expect(cookiesRoute).toContain("instagram");
   });
 
   it("configures a dedicated Chromium wrapper on the Modal worker image", async () => {

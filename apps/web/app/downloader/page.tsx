@@ -78,6 +78,7 @@ type CookieStatus = {
   youtube: CookieProviderStatus;
   soundcloud: CookieProviderStatus;
   spotify: CookieProviderStatus;
+  instagram: CookieProviderStatus;
 };
 
 type SyncResult = {
@@ -88,6 +89,7 @@ type SyncResult = {
     youtube?: { status: string; reason?: string };
     soundcloud?: { status: string; reason?: string };
     spotify?: { status: string; reason?: string };
+    instagram?: { status: string; reason?: string };
   };
 };
 
@@ -173,7 +175,7 @@ function isCookieStale(iso: string | null): boolean {
 
 function cookieNeedsRefresh(error: string | null | undefined): boolean {
   if (!error) return false;
-  return /bot check|stale cookies|no playable formats|Sign in to confirm|Re-sync|Sync YouTube cookies/i.test(
+  return /bot check|stale cookies|no playable formats|Sign in to confirm|Re-sync|Sync YouTube cookies|refresh (Spotify|Instagram) cookies/i.test(
     error,
   );
 }
@@ -447,7 +449,8 @@ export default function DownloaderPage() {
   const anyCookiesPresent = Boolean(
     cookies?.youtube.present ||
     cookies?.soundcloud.present ||
-    cookies?.spotify.present,
+    cookies?.spotify.present ||
+    cookies?.instagram?.present,
   );
   const youtubeStale =
     Boolean(cookies?.youtube.present) &&
@@ -465,11 +468,11 @@ export default function DownloaderPage() {
           </div>
           <aside
             className="cookie-sync"
-            title="Synced Spotify sessions authorize the real follow/save requested by Hypeddit gates."
+            title="Synced Spotify and Instagram sessions authorize the real follow/save requested by Hypeddit gates."
           >
             <p className="cookie-sync-disclosure">
-              Synced Spotify sessions authorize the real follow/save requested
-              by Hypeddit gates.
+              Synced Spotify and Instagram sessions authorize the real
+              follow/save requested by Hypeddit gates.
             </p>
             <div className="cookie-sync-top">
               <span className="cookie-sync-label">Cookies</span>
@@ -479,6 +482,7 @@ export default function DownloaderPage() {
                     ["youtube", "YT"],
                     ["soundcloud", "SC"],
                     ["spotify", "SP"],
+                    ["instagram", "IG"],
                   ] as const
                 ).map(([key, label]) => {
                   const status = cookies?.[key];
@@ -523,7 +527,7 @@ export default function DownloaderPage() {
                 <p>
                   Extension not detected —{" "}
                   <a href="/thumper-extension.zip" download>
-                    download v0.3
+                    download v0.5
                   </a>
                 </p>
                 <ol className="install-steps">

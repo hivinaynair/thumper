@@ -63,6 +63,7 @@ describe("processGenericGateDownload", () => {
       requestedFormat: "flac",
       outputDirectory: workDir,
       materializeSpotifyCookies: async () => null,
+      materializeInstagramCookies: async () => null,
       browserDownload: async ({ gateUrl, email }) => {
         expect(gateUrl).toContain("toneden.io");
         expect(email).toBe("dj@example.com");
@@ -78,5 +79,55 @@ describe("processGenericGateDownload", () => {
       },
     });
     expect(result.downloaded.ext).toBe("mp3");
+  });
+
+  it("injects Spotify and Instagram cookies into the generic browser gate", async () => {
+    const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "generic-gate-"));
+    roots.push(workDir);
+    const spotifyPath = path.join(workDir, "spotify.txt");
+    const instagramPath = path.join(workDir, "instagram.txt");
+    await fs.writeFile(
+      spotifyPath,
+      ".spotify.com\tTRUE\t/\tTRUE\t2147483647\tsp_dc\tsecret",
+    );
+    await fs.writeFile(
+      instagramPath,
+      ".instagram.com\tTRUE\t/\tTRUE\t2147483647\tsessionid\tig",
+    );
+    const names: string[] = [];
+    const unlinked: string[] = [];
+
+    await processGenericGateDownload({
+      kind: "browser-gate",
+      gateUrl: "https://www.toneden.io/artist/post/track",
+      email: "dj@example.com",
+      name: "DJ",
+      userId: "user-1",
+      workDir,
+      requestedFormat: "flac",
+      outputDirectory: workDir,
+      materializeSpotifyCookies: async () => spotifyPath,
+      materializeInstagramCookies: async () => instagramPath,
+      readCookieFile: (filePath) => fs.readFile(filePath, "utf8"),
+      unlinkCookieFile: async (filePath) => {
+        unlinked.push(filePath);
+        await fs.unlink(filePath);
+      },
+      browserDownload: async ({ cookies }) => {
+        names.push(...cookies.map((cookie) => cookie.name));
+        const filePath = path.join(workDir, "gate.mp3");
+        await fs.writeFile(filePath, "ID3");
+        return {
+          filePath,
+          filename: "unlock.mp3",
+          ext: "mp3",
+          title: "Unlock",
+          size: 3,
+        };
+      },
+    });
+
+    expect(names).toEqual(["sp_dc", "sessionid"]);
+    expect(unlinked).toEqual([spotifyPath, instagramPath]);
   });
 });
