@@ -98,6 +98,8 @@ export const jobs = pgTable("jobs", {
     freeDownloadsOnly?: boolean;
     /** Club-ready-only mode was on for this job. */
     clubReadyOnly?: boolean;
+    /** Google Drive folder for `Thumper/<playlist>/` (parent and children). */
+    driveFolderId?: string;
     /** Set when the club-ready gate rejected every source. */
     qualityRejected?: boolean;
   }>(),

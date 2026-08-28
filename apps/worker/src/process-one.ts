@@ -1,6 +1,7 @@
 import { createClerkClient } from "@clerk/backend";
 import { createDb, jobs } from "@thumper/db";
 import {
+  ensurePlaylistFolder,
   ProcessCancelledError,
   runDownloadJob,
   runRetagJob,
@@ -11,7 +12,7 @@ import {
   type DownloadJobPayload,
   type RetagJobPayload,
 } from "@thumper/shared";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
 
 const log = pino({ level: process.env.LOG_LEVEL ?? "info" });
@@ -69,6 +70,39 @@ export async function processJobById(jobId: string): Promise<void> {
       values.completedAt = new Date();
     }
     await db.update(jobs).set(values).where(eq(jobs.id, id));
+  }
+
+  async function playlistContextForJob(
+    childId: string,
+    userId: string,
+  ): Promise<{
+    parentJobId?: string;
+    playlistTitle?: string;
+    driveFolderId?: string;
+  }> {
+    const [parent] = await db
+      .select({
+        id: jobs.id,
+        title: jobs.title,
+        result: jobs.result,
+      })
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.userId, userId),
+          sql`jsonb_exists(${jobs.result}->'childJobIds', ${childId})`,
+        ),
+      )
+      .limit(1);
+    if (!parent) return {};
+    const folder = (
+      parent.result as { driveFolderId?: string } | null | undefined
+    )?.driveFolderId;
+    return {
+      parentJobId: parent.id,
+      playlistTitle: parent.title ?? undefined,
+      ...(folder ? { driveFolderId: folder } : {}),
+    };
   }
 
   const [row] = await db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
@@ -151,9 +185,26 @@ export async function processJobById(jobId: string): Promise<void> {
         gateName?: string;
         freeDownloadsOnly?: boolean;
         clubReadyOnly?: boolean;
+        driveFolderId?: string;
       }
     | null
     | undefined;
+
+  const playlistCtx = await playlistContextForJob(row.id, row.userId);
+  let driveFolderId = gateMeta?.driveFolderId ?? playlistCtx.driveFolderId;
+  if (
+    !driveFolderId &&
+    playlistCtx.playlistTitle &&
+    (row.destination === "drive" || row.destination === "both")
+  ) {
+    const token = await getGoogleAccessToken(row.userId);
+    if (token) {
+      driveFolderId = await ensurePlaylistFolder({
+        accessToken: token,
+        playlistName: playlistCtx.playlistTitle,
+      });
+    }
+  }
 
   const payload: DownloadJobPayload = {
     jobId: row.id,
@@ -170,6 +221,10 @@ export async function processJobById(jobId: string): Promise<void> {
     gateName: gateMeta?.gateName,
     freeDownloadsOnly: Boolean(gateMeta?.freeDownloadsOnly),
     clubReadyOnly: Boolean(gateMeta?.clubReadyOnly),
+    ...(playlistCtx.parentJobId
+      ? { parentJobId: playlistCtx.parentJobId }
+      : {}),
+    ...(driveFolderId ? { driveFolderId } : {}),
   };
 
   async function runOne(p: DownloadJobPayload): Promise<void> {
@@ -210,6 +265,16 @@ export async function processJobById(jobId: string): Promise<void> {
               });
             }
 
+            const childResult = {
+              ...(p.gateEmail
+                ? { gateEmail: p.gateEmail, gateName: p.gateName }
+                : {}),
+              ...(p.freeDownloadsOnly ? { freeDownloadsOnly: true } : {}),
+              ...(p.clubReadyOnly ? { clubReadyOnly: true } : {}),
+              ...(context?.driveFolderId
+                ? { driveFolderId: context.driveFolderId }
+                : {}),
+            };
             const [child] = await db
               .insert(jobs)
               .values({
@@ -224,18 +289,8 @@ export async function processJobById(jobId: string): Promise<void> {
                 status: "queued",
                 stage: "queued",
                 progress: 0,
-                ...((p.gateEmail || p.freeDownloadsOnly || p.clubReadyOnly)
-                  ? {
-                      result: {
-                        ...(p.gateEmail
-                          ? { gateEmail: p.gateEmail, gateName: p.gateName }
-                          : {}),
-                        ...(p.freeDownloadsOnly
-                          ? { freeDownloadsOnly: true }
-                          : {}),
-                        ...(p.clubReadyOnly ? { clubReadyOnly: true } : {}),
-                      },
-                    }
+                ...(Object.keys(childResult).length > 0
+                  ? { result: childResult }
                   : {}),
               })
               .returning();
@@ -249,6 +304,9 @@ export async function processJobById(jobId: string): Promise<void> {
                 playlist: true,
                 trackCount: tracks.length,
                 childJobIds: [...childIds],
+                ...(context?.driveFolderId
+                  ? { driveFolderId: context.driveFolderId }
+                  : {}),
                 ...(p.gateEmail
                   ? { gateEmail: p.gateEmail, gateName: p.gateName }
                   : {}),

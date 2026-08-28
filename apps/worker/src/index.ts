@@ -145,7 +145,10 @@ async function main() {
         status: "queued",
         stage: "queued",
         progress: 0,
-        ...((parent.gateEmail || parent.freeDownloadsOnly || parent.clubReadyOnly)
+        ...((parent.gateEmail ||
+          parent.freeDownloadsOnly ||
+          parent.clubReadyOnly ||
+          context?.driveFolderId)
           ? {
               result: {
                 ...(parent.gateEmail
@@ -158,6 +161,9 @@ async function main() {
                   ? { freeDownloadsOnly: true }
                   : {}),
                 ...(parent.clubReadyOnly ? { clubReadyOnly: true } : {}),
+                ...(context?.driveFolderId
+                  ? { driveFolderId: context.driveFolderId }
+                  : {}),
               },
             }
           : {}),

@@ -2,6 +2,17 @@
 
 import { detectSourceKind, trackDisplayName } from "@thumper/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  cookieNeedsRefresh,
+  jobsToRetry,
+  retryButtonLabel,
+} from "../../lib/cookie-retry";
+import {
+  COOKIE_SYNC_EXTENSION_VERSION,
+  COOKIE_SYNC_RELOAD_MESSAGE,
+  cookieSyncMissingInstagram,
+  isCookieSyncTooOld,
+} from "./cookie-sync";
 import { HYPEDDIT_ORIGINAL_COPY } from "./result-copy";
 
 type DjTier = "master" | "club" | "marginal" | "unsuitable";
@@ -85,6 +96,7 @@ type SyncResult = {
   ok?: boolean;
   error?: string;
   message?: string;
+  version?: string;
   results?: {
     youtube?: { status: string; reason?: string };
     soundcloud?: { status: string; reason?: string };
@@ -171,13 +183,6 @@ function isCookieStale(iso: string | null): boolean {
   if (!iso) return false;
   const ms = Date.now() - new Date(iso).getTime();
   return Number.isFinite(ms) && ms >= COOKIE_STALE_MS;
-}
-
-function cookieNeedsRefresh(error: string | null | undefined): boolean {
-  if (!error) return false;
-  return /bot check|stale cookies|no playable formats|Sign in to confirm|Re-sync|Sync YouTube cookies|refresh (Spotify|Instagram) cookies/i.test(
-    error,
-  );
 }
 
 function cookiesReadyForUrl(
@@ -292,10 +297,12 @@ export default function DownloaderPage() {
   const [cookies, setCookies] = useState<CookieStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [messageTone, setMessageTone] = useState<"ok" | "error">("ok");
   const [extensionReady, setExtensionReady] = useState(false);
+  const [extensionVersion, setExtensionVersion] = useState<string | null>(null);
   const extensionReadyRef = useRef(false);
 
   useEffect(() => {
@@ -330,12 +337,19 @@ export default function DownloaderPage() {
     const onFocus = () => void refreshCookies();
     const onMessage = (event: MessageEvent) => {
       if (event.source !== window) return;
-      const data = event.data as { source?: string; type?: string };
+      const data = event.data as {
+        source?: string;
+        type?: string;
+        version?: string;
+      };
       if (
         data?.source === "thumper-extension" &&
         data.type === "extension-ready"
       ) {
         setExtensionReady(true);
+        setExtensionVersion(
+          typeof data.version === "string" ? data.version : "",
+        );
       }
     };
     window.addEventListener("focus", onFocus);
@@ -433,6 +447,16 @@ export default function DownloaderPage() {
     setMessage(null);
     try {
       const result = await requestExtensionSync();
+      if (
+        cookieSyncMissingInstagram(result) ||
+        (typeof result.version === "string" &&
+          isCookieSyncTooOld(result.version))
+      ) {
+        setMessageTone("error");
+        setMessage(COOKIE_SYNC_RELOAD_MESSAGE);
+        if (result.ok) await refreshCookies();
+        return;
+      }
       if (!result.ok) {
         setMessageTone("error");
         setMessage(result.error || result.message || "Cookie refresh failed");
@@ -443,6 +467,45 @@ export default function DownloaderPage() {
       await refreshCookies();
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function retryWithNewCookies(jobId: string) {
+    setRetryingId(jobId);
+    setMessage(null);
+    try {
+      if (extensionReady) {
+        const result = await requestExtensionSync();
+        if (
+          cookieSyncMissingInstagram(result) ||
+          (typeof result.version === "string" &&
+            isCookieSyncTooOld(result.version))
+        ) {
+          setMessageTone("error");
+          setMessage(COOKIE_SYNC_RELOAD_MESSAGE);
+          if (result.ok) await refreshCookies();
+        } else if (result.ok) {
+          await refreshCookies();
+        }
+      }
+      const res = await fetch(`/api/jobs/${jobId}/retry`, { method: "POST" });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        retried?: number;
+      };
+      if (!res.ok) throw new Error(data.error ?? "Retry failed");
+      setMessageTone("ok");
+      setMessage(
+        data.retried === 1
+          ? "Retrying with new cookies"
+          : `Retrying ${data.retried} tracks with new cookies`,
+      );
+      await refreshJobs();
+    } catch (err) {
+      setMessageTone("error");
+      setMessage(err instanceof Error ? err.message : "Retry failed");
+    } finally {
+      setRetryingId(null);
     }
   }
 
@@ -458,6 +521,8 @@ export default function DownloaderPage() {
   const failedNeedRefresh = jobs.some(
     (job) => job.status === "failed" && cookieNeedsRefresh(job.error),
   );
+  const cookieSyncTooOld =
+    extensionReady && isCookieSyncTooOld(extensionVersion);
 
   return (
     <main>
@@ -527,7 +592,7 @@ export default function DownloaderPage() {
                 <p>
                   Extension not detected —{" "}
                   <a href="/thumper-extension.zip" download>
-                    download v0.5
+                    download v{COOKIE_SYNC_EXTENSION_VERSION}
                   </a>
                 </p>
                 <ol className="install-steps">
@@ -541,11 +606,22 @@ export default function DownloaderPage() {
                   </li>
                 </ol>
               </div>
+            ) : cookieSyncTooOld ? (
+              <div className="cookie-sync-hint">
+                <p>
+                  This Cookie Sync build never opens Instagram —{" "}
+                  <a href="/thumper-extension.zip" download>
+                    download v{COOKIE_SYNC_EXTENSION_VERSION}
+                  </a>
+                  , then Reload on <code>chrome://extensions</code> and refresh
+                  this page.
+                </p>
+              </div>
             ) : failedNeedRefresh ? (
               <div className="cookie-sync-hint">
                 <p>
-                  A job failed on stale/blocked YouTube cookies — refresh, then
-                  retry those tracks.
+                  A job failed on stale/blocked cookies — Refresh, then Retry
+                  with new cookies on the failed tracks.
                 </p>
               </div>
             ) : youtubeStale ? (
@@ -668,7 +744,9 @@ export default function DownloaderPage() {
             {jobs.length === 0 ? (
               <p className="muted">No jobs yet.</p>
             ) : (
-              jobs.map((job) => (
+              jobs.map((job) => {
+                const retryTargets = jobsToRetry(job, jobs);
+                return (
                 <article key={job.id} className="job">
                   <div className="job-head">
                     <div className="job-title">{jobLabel(job)}</div>
@@ -776,6 +854,18 @@ export default function DownloaderPage() {
                         Cancel
                       </button>
                     ) : null}
+                    {retryTargets.length > 0 ? (
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={retryingId !== null}
+                        onClick={() => void retryWithNewCookies(job.id)}
+                      >
+                        {retryingId === job.id
+                          ? "Retrying…"
+                          : retryButtonLabel(retryTargets.length)}
+                      </button>
+                    ) : null}
                     {job.result?.fileId ? (
                       <a
                         className="btn"
@@ -806,7 +896,8 @@ export default function DownloaderPage() {
                     ) : null}
                   </div>
                 </article>
-              ))
+                );
+              })
             )}
           </div>
         </section>

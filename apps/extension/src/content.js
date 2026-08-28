@@ -3,7 +3,11 @@ const EXT_SOURCE = "thumper-extension";
 
 function announceReady() {
   window.postMessage(
-    { source: EXT_SOURCE, type: "extension-ready" },
+    {
+      source: EXT_SOURCE,
+      type: "extension-ready",
+      version: chrome.runtime.getManifest().version,
+    },
     window.location.origin,
   );
 }
