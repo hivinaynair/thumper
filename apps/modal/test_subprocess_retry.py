@@ -208,6 +208,14 @@ class ModalImageSourceTests(unittest.TestCase):
                     ".add_local_python_source('subprocess_retry')",
                     definition,
                 )
+        self.assertIn(
+            ".add_local_python_source('playlist_fanout')",
+            image_assignments["worker_image"],
+        )
+
+    def test_process_job_spawns_playlist_children_after_the_parent_exits(self):
+        source = Path(__file__).with_name("thumper_worker.py").read_text()
+        self.assertIn("spawn_fanout_children(job_id, process_job.spawn)", source)
 
 
 if __name__ == "__main__":

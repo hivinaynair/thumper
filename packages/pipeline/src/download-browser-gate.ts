@@ -3,7 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { BrowserLauncher } from "./hypeddit-browser";
-import type { BrowserCookie } from "./hypeddit";
+import {
+  isSafeInstagramUrl,
+  isSafeSoundCloudUrl,
+  isSafeSpotifyAuthorizationUrl,
+  type BrowserCookie,
+} from "./hypeddit";
 import { ProcessCancelledError } from "./process";
 import { ManualDownloadRequiredError } from "./soundcloud-purchase";
 
@@ -15,16 +20,51 @@ export type GateDownloadResult = {
   size: number | null;
 };
 
+type PopupTarget = {
+  url(): string;
+  opener(): unknown;
+  page(): Promise<unknown>;
+};
+
+type GateContext = {
+  setCookie(...cookies: BrowserCookie[]): Promise<unknown>;
+  newPage(): Promise<unknown>;
+  close(): Promise<unknown>;
+  waitForTarget?(
+    predicate: (target: PopupTarget) => boolean,
+    options?: { timeout?: number },
+  ): Promise<{ page(): Promise<unknown> }>;
+};
+
 type PageLike = {
   setDefaultTimeout?(ms: number): void;
   goto(url: string, options?: unknown): Promise<unknown>;
   $(selector: string): Promise<{ type(value: string): Promise<unknown> } | null>;
-  evaluate(fn: (...args: never[]) => unknown): Promise<unknown>;
+  evaluate(fn: (...args: never[]) => unknown, arg?: unknown): Promise<unknown>;
   waitForNetworkIdle?(options?: unknown): Promise<unknown>;
+  waitForResponse?(
+    predicate: (response: { url(): string; headers(): Record<string, string> }) => boolean,
+    options?: { timeout?: number },
+  ): Promise<{
+    url(): string;
+    headers(): Record<string, string>;
+    buffer(): Promise<Buffer | Uint8Array>;
+    json(): Promise<unknown>;
+  }>;
+  target?(): unknown;
+  url?(): string;
   createCDPSession?: () => Promise<{
     send(method: string, params?: object): Promise<unknown>;
   }>;
 };
+
+type PopupPage = {
+  url(): string;
+  evaluate(fn: (...args: never[]) => unknown): Promise<unknown>;
+};
+
+const POPUP_TIMEOUT_MS = 5_000;
+const MAX_PROVIDER_POPUPS = 4;
 
 export function looksLikeSocialFollowWall(text: string): boolean {
   const normalized = text.toLowerCase().replace(/\s+/g, " ");
@@ -40,15 +80,237 @@ export function looksLikeSocialFollowWall(text: string): boolean {
   );
 }
 
-async function rejectSocialFollowWall(
-  page: PageLike,
-  gateUrl: string,
-): Promise<void> {
-  const wallText = String(
-    await page.evaluate(() => document.body?.innerText ?? ""),
+export function looksLikeContactCaptureGate(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ");
+  return (
+    /tap to rsvp/.test(normalized) ||
+    /rsvp by sms/.test(normalized) ||
+    /get a text with the download/.test(normalized) ||
+    /put your phone number/.test(normalized)
   );
-  if (looksLikeSocialFollowWall(wallText)) {
-    throw new ManualDownloadRequiredError(gateUrl, "Follow/unlock required");
+}
+
+const AUTHORIZATION_ACCEPT_LABELS = [
+  "agree",
+  "accept",
+  "continue",
+  "connect",
+  "authorize",
+  "allow",
+  "follow",
+  "follow back",
+] as const;
+
+const AUTHORIZATION_DONE_LABELS = [
+  "following",
+  "unfollow",
+  "requested",
+] as const;
+
+export function providerAuthorizationControlKind(
+  text: string,
+): "accept" | "done" | null {
+  const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
+  if (!normalized) return null;
+  if (
+    AUTHORIZATION_DONE_LABELS.some(
+      (label) => normalized === label || normalized.startsWith(`${label} `),
+    )
+  ) {
+    return "done";
+  }
+  if (
+    AUTHORIZATION_ACCEPT_LABELS.some(
+      (label) => normalized === label || normalized.startsWith(`${label} `),
+    )
+  ) {
+    return "accept";
+  }
+  return null;
+}
+
+async function readWallText(page: PageLike): Promise<string> {
+  return String(await page.evaluate(() => document.body?.innerText ?? ""));
+}
+
+export async function clickFollowUnlockControls(page: PageLike): Promise<number> {
+  return Number(
+    await page.evaluate(() => {
+      const nodes = Array.from(
+        document.querySelectorAll("a, button, input[type=submit], [role=button]"),
+      );
+      let clicked = 0;
+      for (const el of nodes) {
+        const text = (
+          el.getAttribute("value") ||
+          el.getAttribute("aria-label") ||
+          el.textContent ||
+          ""
+        )
+          .replace(/\s+/g, " ")
+          .trim();
+        if (
+          !/follow on (soundcloud|spotify|instagram|youtube)/i.test(text) &&
+          !/connect with (soundcloud|spotify|instagram|youtube)/i.test(text) &&
+          !/^connect (soundcloud|spotify|instagram|youtube)$/i.test(text)
+        ) {
+          continue;
+        }
+        (el as HTMLElement).click();
+        clicked += 1;
+      }
+      return clicked;
+    }),
+  );
+}
+
+function isSettledPopupUrl(url: string): boolean {
+  return Boolean(url) && !url.startsWith("about:");
+}
+
+function isSafeProviderAuthorizationUrl(url: string): boolean {
+  return (
+    isSafeSpotifyAuthorizationUrl(url) ||
+    isSafeSoundCloudUrl(url) ||
+    isSafeInstagramUrl(url)
+  );
+}
+
+function providerLoginRefreshMessage(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    const isLogin = path.includes("/login") || path.includes("/signin");
+    if (!isLogin) return null;
+    if (host === "accounts.spotify.com" || host.endsWith(".spotify.com")) {
+      return "Spotify session is no longer usable — refresh Spotify cookies and retry.";
+    }
+    if (host === "soundcloud.com" || host.endsWith(".soundcloud.com")) {
+      return "SoundCloud session is no longer usable — refresh SoundCloud cookies and retry.";
+    }
+    if (host === "instagram.com" || host.endsWith(".instagram.com")) {
+      return "Instagram session is no longer usable — refresh Instagram cookies and retry.";
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+async function clickAuthorizationControl(page: PopupPage): Promise<boolean> {
+  return Boolean(
+    await page.evaluate(
+      ({ acceptLabels, doneLabels }) => {
+        const testId = document.querySelector<HTMLElement>(
+          '[data-testid="auth-accept"]',
+        );
+        if (testId) {
+          testId.click();
+          return true;
+        }
+        const kindOf = (raw: string): "accept" | "done" | null => {
+          const text = raw.replace(/\s+/g, " ").trim().toLowerCase();
+          if (!text) return null;
+          if (
+            doneLabels.some(
+              (label) => text === label || text.startsWith(`${label} `),
+            )
+          ) {
+            return "done";
+          }
+          if (
+            acceptLabels.some(
+              (label) => text === label || text.startsWith(`${label} `),
+            )
+          ) {
+            return "accept";
+          }
+          return null;
+        };
+        const nodes = Array.from(
+          document.querySelectorAll(
+            "a, button, input[type=submit], [role=button]",
+          ),
+        );
+        const texts = nodes.map((el) =>
+          (
+            el.getAttribute("value") ||
+            el.getAttribute("aria-label") ||
+            el.textContent ||
+            ""
+          ).replace(/\s+/g, " ").trim(),
+        );
+        if (texts.some((text) => kindOf(text) === "done")) return true;
+        const index = texts.findIndex((text) => kindOf(text) === "accept");
+        if (index < 0) return false;
+        (nodes[index] as HTMLElement).click();
+        return true;
+      },
+      {
+        acceptLabels: [...AUTHORIZATION_ACCEPT_LABELS],
+        doneLabels: [...AUTHORIZATION_DONE_LABELS],
+      },
+    ),
+  );
+}
+
+async function acceptProviderAuthorizationPage(page: PopupPage): Promise<void> {
+  const url = page.url();
+  const loginMessage = providerLoginRefreshMessage(url);
+  if (loginMessage) throw new Error(loginMessage);
+  if (!isSafeProviderAuthorizationUrl(url)) {
+    throw new Error(
+      `Refusing follow authorization outside SoundCloud, Spotify, or Instagram (${url})`,
+    );
+  }
+  const accepted = await clickAuthorizationControl(page);
+  if (accepted) return;
+  // Opening the provider tab is enough; do not require like/follow/OAuth.
+}
+
+async function acceptProviderPopups(
+  context: GateContext,
+  page: PageLike,
+): Promise<void> {
+  if (!context.waitForTarget || !page.target) return;
+  const opener = page.target();
+  for (let i = 0; i < MAX_PROVIDER_POPUPS; i += 1) {
+    let target: { page(): Promise<unknown> };
+    try {
+      target = await context.waitForTarget(
+        (candidate) =>
+          candidate.opener() === opener && isSettledPopupUrl(candidate.url()),
+        { timeout: POPUP_TIMEOUT_MS },
+      );
+    } catch (error) {
+      if (error instanceof Error && error.name === "TimeoutError") return;
+      throw error;
+    }
+    const popup = (await target.page()) as PopupPage | null;
+    if (!popup || typeof popup.url !== "function") return;
+    await acceptProviderAuthorizationPage(popup);
+  }
+}
+
+async function unlockFollowWallIfPresent(
+  page: PageLike,
+  _gateUrl: string,
+  _hasSessionCookies: boolean,
+  context: GateContext,
+): Promise<void> {
+  const wallText = await readWallText(page);
+  if (!looksLikeSocialFollowWall(wallText)) return;
+  await clickFollowUnlockControls(page);
+  await acceptProviderPopups(context, page);
+}
+
+async function rejectIfContactCaptureGate(page: PageLike): Promise<void> {
+  const wallText = await readWallText(page);
+  if (looksLikeContactCaptureGate(wallText)) {
+    throw new Error(
+      "No free download on this track — this gate only collects a phone number or RSVP, not a file.",
+    );
   }
 }
 
@@ -69,6 +331,10 @@ export function isCapturedGateFilename(name: string): boolean {
 
 const DOWNLOAD_LABEL =
   /^(download|download track|get track|free download|unlock|claim|get free download)$/i;
+
+export function matchesDownloadLabel(text: string): boolean {
+  return DOWNLOAD_LABEL.test(text.replace(/\s+/g, " ").trim());
+}
 
 export async function clickDownloadControl(page: PageLike): Promise<boolean> {
   return Boolean(
@@ -94,7 +360,7 @@ export async function clickDownloadControl(page: PageLike): Promise<boolean> {
         )
           .replace(/\s+/g, " ")
           .trim();
-        return /download|get track|free download|unlock|claim|rsvp|continue/i.test(
+        return /download|get track|free download|unlock|claim|continue/i.test(
           text,
         );
       });
@@ -103,6 +369,121 @@ export async function clickDownloadControl(page: PageLike): Promise<boolean> {
       return true;
     }),
   );
+}
+
+async function dismissCookieBanner(page: PageLike): Promise<void> {
+  await page.evaluate(() => {
+    const labels =
+      /^(accept all|reject non-essential|reject|accept|allow all|got it)$/i;
+    const nodes = Array.from(
+      document.querySelectorAll("a, button, [role=button]"),
+    );
+    const match = nodes.find((el) =>
+      labels.test(
+        (el.getAttribute("value") || el.textContent || "")
+          .replace(/\s+/g, " ")
+          .trim(),
+      ),
+    );
+    if (match) (match as HTMLElement).click();
+  });
+}
+
+async function fillCommentIfPresent(page: PageLike): Promise<void> {
+  const selectors = [
+    'textarea[placeholder*="comment" i]',
+    "textarea",
+    'input[placeholder*="comment" i]',
+  ];
+  for (const selector of selectors) {
+    const input = await page.$(selector);
+    if (!input) continue;
+    await input.type("nice one");
+    return;
+  }
+}
+
+async function unlockAndClickDownload(
+  page: PageLike,
+  gateUrl: string,
+  cookiesPresent: boolean,
+  context: GateContext,
+): Promise<boolean> {
+  await dismissCookieBanner(page);
+  await fillCommentIfPresent(page);
+  await rejectIfContactCaptureGate(page);
+  await unlockFollowWallIfPresent(page, gateUrl, cookiesPresent, context);
+  let clicked = await clickDownloadControl(page);
+  if (looksLikeSocialFollowWall(await readWallText(page))) {
+    await fillCommentIfPresent(page);
+    const opened = Number(await clickFollowUnlockControls(page));
+    await acceptProviderPopups(context, page);
+    clicked = (await clickDownloadControl(page)) || clicked;
+    if (!Number.isFinite(opened) || opened === 0) {
+      throw new ManualDownloadRequiredError(gateUrl, "Follow/unlock required");
+    }
+  }
+  return clicked;
+}
+
+function responseLooksLikeGateFile(response: {
+  url(): string;
+  headers(): Record<string, string>;
+}): boolean {
+  const headers = response.headers();
+  const disposition = headers["content-disposition"] ?? "";
+  const contentType = headers["content-type"] ?? "";
+  return (
+    /attachment/i.test(disposition) ||
+    /^audio\//i.test(contentType) ||
+    /application\/(zip|x-zip|octet-stream)/i.test(contentType)
+  );
+}
+
+async function captureGateFile(
+  page: PageLike,
+  downloadDir: string,
+  signal?: AbortSignal,
+): Promise<GateDownloadResult> {
+  const fromDisk = waitForDownloadedFile(downloadDir, 45_000, signal).then(
+    async (filePath) => {
+      const filename = path.basename(filePath);
+      const ext =
+        path.extname(filename).replace(/^\./, "").toLowerCase() || "bin";
+      const stat = await fs.stat(filePath);
+      return {
+        filePath,
+        filename,
+        ext,
+        title: path.parse(filename).name || null,
+        size: stat.size,
+      };
+    },
+  );
+  if (!page.waitForResponse) return fromDisk;
+  const fromNetwork = page
+    .waitForResponse(responseLooksLikeGateFile, { timeout: 45_000 })
+    .then(async (response) => {
+      const bytes = Buffer.from(await response.buffer());
+      const headers = response.headers();
+      const filename =
+        /filename\*?=(?:UTF-8''|")?([^\";]+)/i.exec(
+          headers["content-disposition"] ?? "",
+        )?.[1] ?? "gate-download.bin";
+      const ext =
+        path.extname(filename).replace(/^\./, "").toLowerCase() || "bin";
+      const filePath = path.join(downloadDir, filename);
+      await fs.writeFile(filePath, bytes);
+      return {
+        filePath,
+        filename,
+        ext,
+        title: path.parse(filename).name || null,
+        size: bytes.byteLength,
+      };
+    })
+    .catch(() => new Promise<GateDownloadResult>(() => undefined));
+  return Promise.race([fromDisk, fromNetwork]);
 }
 
 async function fillEmailIfPresent(
@@ -193,7 +574,7 @@ export async function downloadBrowserGate(params: {
       env: {},
       userDataDir: profileDir,
     });
-    const context = await browser.createBrowserContext();
+    const context = (await browser.createBrowserContext()) as GateContext;
     try {
       if (params.cookies.length > 0) {
         await context.setCookie(...params.cookies);
@@ -212,12 +593,17 @@ export async function downloadBrowserGate(params: {
       await page.waitForNetworkIdle?.({ idleTime: 500, timeout: 8_000 }).catch(
         () => undefined,
       );
-      await unlockRenderedGatePage(page, {
-        gateUrl: params.gateUrl,
-        email: params.email,
-        name: params.name,
-        requireClick: !params.captureDownload,
-      });
+      await fillEmailIfPresent(page, params.email, params.name);
+      const clicked = await unlockAndClickDownload(
+        page,
+        params.gateUrl,
+        params.cookies.length > 0,
+        context,
+      );
+      if (!clicked && !params.captureDownload) {
+        await rejectIfContactCaptureGate(page);
+        throw new Error("Download control not found on gate page");
+      }
       return await runCapture({ workDir: downloadDir, signal: params.signal });
     } finally {
       await context.close().catch(() => undefined);
@@ -232,12 +618,13 @@ export async function downloadBrowserGate(params: {
   return withSecureHypedditBrowser({
     cookies: params.cookies,
     signal: params.signal,
-    run: async (rawPage) => {
+    run: async (rawPage, rawContext) => {
       const page = rawPage as PageLike & {
         createCDPSession?: () => Promise<{
           send(method: string, params?: object): Promise<unknown>;
         }>;
       };
+      const context = rawContext as GateContext;
       page.setDefaultTimeout?.(45_000);
       const session = await page.createCDPSession?.();
       await session?.send("Page.setDownloadBehavior", {
@@ -251,12 +638,17 @@ export async function downloadBrowserGate(params: {
       await page.waitForNetworkIdle?.({ idleTime: 800, timeout: 10_000 }).catch(
         () => undefined,
       );
-      await unlockRenderedGatePage(page, {
-        gateUrl: params.gateUrl,
-        email: params.email,
-        name: params.name,
-        requireClick: true,
-      });
+      await fillEmailIfPresent(page, params.email, params.name);
+      const clicked = await unlockAndClickDownload(
+        page,
+        params.gateUrl,
+        params.cookies.length > 0,
+        context,
+      );
+      if (!clicked) {
+        await rejectIfContactCaptureGate(page);
+        throw new Error("Download control not found on gate page");
+      }
       return runCapture({ workDir: downloadDir, signal: params.signal });
     },
   });

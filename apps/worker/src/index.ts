@@ -16,6 +16,7 @@ import { eq } from "drizzle-orm";
 import { PgBoss } from "pg-boss";
 import pino from "pino";
 import { z } from "zod";
+import { childJobResult } from "./playlist-fanout";
 
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
@@ -131,6 +132,7 @@ async function main() {
     kind: "youtube" | "soundcloud",
     context?: { driveFolderId?: string },
   ): Promise<string> {
+    const result = childJobResult(parent, context);
     const [child] = await db
       .insert(jobs)
       .values({
@@ -145,22 +147,7 @@ async function main() {
         status: "queued",
         stage: "queued",
         progress: 0,
-        ...((parent.gateEmail || parent.freeDownloadsOnly || parent.clubReadyOnly)
-          ? {
-              result: {
-                ...(parent.gateEmail
-                  ? {
-                      gateEmail: parent.gateEmail,
-                      gateName: parent.gateName,
-                    }
-                  : {}),
-                ...(parent.freeDownloadsOnly
-                  ? { freeDownloadsOnly: true }
-                  : {}),
-                ...(parent.clubReadyOnly ? { clubReadyOnly: true } : {}),
-              },
-            }
-          : {}),
+        result,
       })
       .returning();
     if (!child) throw new Error("Could not create job row for playlist track");

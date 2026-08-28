@@ -14,5 +14,5 @@ jobs:
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
-      - run: bunx turbo run check-types test --filter=@thumper/shared --filter=@thumper/pipeline
+      - run: bunx turbo run check-types test --filter=@thumper/shared --filter=@thumper/pipeline --filter=worker
       - run: bun run --filter extension build

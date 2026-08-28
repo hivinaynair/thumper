@@ -4,7 +4,7 @@ const PROVIDERS = {
   // sp_dc lives on .spotify.com; accounts.* is needed for Hypeddit OAuth.
   spotify: [".spotify.com"],
   // sessionid lives on .instagram.com; used for Hypeddit Instagram follows.
-  instagram: [".instagram.com"],
+  instagram: [".instagram.com", "instagram.com"],
 };
 
 const WARM_URLS = {
@@ -38,6 +38,33 @@ function getCookiesForDomains(domains) {
         }),
     ),
   ).then((groups) => groups.flat());
+}
+
+function getCookiesForUrl(url) {
+  return new Promise((resolve) => {
+    chrome.cookies.getAll({ url }, (cookies) => resolve(cookies || []));
+  });
+}
+
+function mergeCookies(...groups) {
+  const byId = new Map();
+  for (const cookies of groups) {
+    for (const cookie of cookies) {
+      byId.set(
+        `${cookie.domain}\t${cookie.path}\t${cookie.name}`,
+        cookie,
+      );
+    }
+  }
+  return [...byId.values()];
+}
+
+async function collectCookies(provider) {
+  const domains = PROVIDERS[provider] || [];
+  const fromDomains = await getCookiesForDomains(domains);
+  const url = WARM_URLS[provider];
+  const fromUrl = url ? await getCookiesForUrl(url) : [];
+  return mergeCookies(fromDomains, fromUrl);
 }
 
 function toNetscape(cookies) {
@@ -109,7 +136,7 @@ async function exportProvider(provider, { warm = true } = {}) {
   const domains = PROVIDERS[provider];
   if (!domains) throw new Error("Unknown provider");
   if (warm) await warmProvider(provider);
-  const cookies = await getCookiesForDomains(domains);
+  const cookies = await collectCookies(provider);
   return {
     cookies: toNetscape(cookies),
     count: cookies.length,
@@ -181,9 +208,13 @@ function summarize(results) {
   if (results.soundcloud.status === "skipped") parts.push("SoundCloud skipped");
   if (results.spotify.status === "synced") parts.push("Spotify refreshed");
   if (results.spotify.status === "skipped") parts.push("Spotify skipped");
-  if (results.instagram.status === "synced") parts.push("Instagram refreshed");
-  if (results.instagram.status === "skipped") parts.push("Instagram skipped");
+  if (results.instagram?.status === "synced") parts.push("Instagram refreshed");
+  if (results.instagram?.status === "skipped") parts.push("Instagram skipped");
   return parts.join(" · ");
+}
+
+function extensionVersion() {
+  return chrome.runtime.getManifest().version;
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -208,6 +239,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .then((result) => {
         sendResponse({
           ...result,
+          version: extensionVersion(),
           message: result.ok
             ? summarize(result.results)
             : result.error || "Sync failed",
@@ -216,6 +248,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .catch((err) =>
         sendResponse({
           ok: false,
+          version: extensionVersion(),
           error: err instanceof Error ? err.message : "Sync failed",
         }),
       );

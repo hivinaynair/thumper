@@ -8,6 +8,14 @@ type BrowserContextLike = {
   setCookie(...cookies: BrowserCookie[]): Promise<unknown>;
   newPage(): Promise<unknown>;
   close(): Promise<unknown>;
+  waitForTarget?(
+    predicate: (target: {
+      url(): string;
+      opener(): unknown;
+      page(): Promise<unknown>;
+    }) => boolean,
+    options?: { timeout?: number },
+  ): Promise<{ page(): Promise<unknown> }>;
 };
 
 type BrowserLike = {

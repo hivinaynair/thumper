@@ -98,6 +98,10 @@ export const jobs = pgTable("jobs", {
     freeDownloadsOnly?: boolean;
     /** Club-ready-only mode was on for this job. */
     clubReadyOnly?: boolean;
+    /** Google Drive folder for `Thumper/<playlist>/` (parent and children). */
+    driveFolderId?: string;
+    /** Playlist parent id, stamped on children so Modal can process them standalone. */
+    parentJobId?: string;
     /** Set when the club-ready gate rejected every source. */
     qualityRejected?: boolean;
   }>(),

@@ -104,6 +104,7 @@ worker_image = (
     )
     .run_commands("cd /app && bun install --frozen-lockfile")
     .add_local_python_source("subprocess_retry")
+    .add_local_python_source("playlist_fanout")
     .add_local_python_source("chromium_isolation")
 )
 
@@ -140,7 +141,14 @@ def _run_process_job(job_id: str) -> str:
     max_containers=4,
 )
 def process_job(job_id: str) -> str:
-    return _run_process_job(job_id)
+    output = _run_process_job(job_id)
+    try:
+        from .playlist_fanout import spawn_fanout_children
+    except ImportError:
+        from playlist_fanout import spawn_fanout_children
+
+    spawn_fanout_children(job_id, process_job.spawn)
+    return output
 
 
 @app.function(

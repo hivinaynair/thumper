@@ -163,6 +163,24 @@ export function classifySoundCloudPurchaseUrl(
   return "other";
 }
 
+export function soundCloudPurchaseApiUrl(
+  trackUrl: string,
+  clientId: string,
+): URL {
+  const id = trackUrl.match(
+    /^https?:\/\/api(?:-v2)?\.soundcloud\.com\/tracks\/(\d+)/i,
+  )?.[1];
+  if (id) {
+    const direct = new URL(`https://api-v2.soundcloud.com/tracks/${id}`);
+    direct.searchParams.set("client_id", clientId);
+    return direct;
+  }
+  const resolveUrl = new URL("https://api-v2.soundcloud.com/resolve");
+  resolveUrl.searchParams.set("url", trackUrl);
+  resolveUrl.searchParams.set("client_id", clientId);
+  return resolveUrl;
+}
+
 /**
  * Resolve a SoundCloud track's Free Download / Buy link (`purchase_url`).
  * Requires a Netscape cookie jar that includes `oauth_token` for reliable API access.
@@ -184,9 +202,7 @@ export async function resolveSoundCloudPurchase(params: {
 
   const oauth = oauthTokenFromNetscape(cookieText);
   const clientId = await resolveSoundCloudClientId(signal);
-  const resolveUrl = new URL("https://api-v2.soundcloud.com/resolve");
-  resolveUrl.searchParams.set("url", trackUrl);
-  resolveUrl.searchParams.set("client_id", clientId);
+  const requestUrl = soundCloudPurchaseApiUrl(trackUrl, clientId);
 
   const headers: Record<string, string> = {
     Accept: "application/json",
@@ -195,7 +211,7 @@ export async function resolveSoundCloudPurchase(params: {
   };
   if (oauth) headers.Authorization = `OAuth ${oauth}`;
 
-  const res = await fetch(resolveUrl, { headers, signal });
+  const res = await fetch(requestUrl, { headers, signal });
   if (!res.ok) return { kind: "none" };
 
   const data = (await res.json()) as {
