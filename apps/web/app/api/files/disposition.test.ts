@@ -14,6 +14,14 @@ describe("contentDispositionAttachment", () => {
     expect(value).toMatch(/filename="[^"]*It's Dare[^"]*"/);
   });
 
+  it("lets Disclosure She's Gone download without a header 500", () => {
+    const value = contentDispositionAttachment(
+      "Disclosure - She\u2019s Gone, Dance On.flac",
+    );
+    expect(() => new Headers({ "Content-Disposition": value })).not.toThrow();
+    expect(value).toMatch(/filename="Disclosure - She's Gone, Dance On\.flac"/);
+  });
+
   it("strips quotes so the fallback filename stays a valid quoted-string", () => {
     const value = contentDispositionAttachment('Artist - "Track".flac');
     expect(() => new Headers({ "Content-Disposition": value })).not.toThrow();
