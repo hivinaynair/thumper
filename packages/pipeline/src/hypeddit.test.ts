@@ -155,21 +155,20 @@ describe("downloadHypedditGate browserless contract", () => {
 
   it("skips only explicitly allowlisted browserless social steps", async () => {
     const requests: Array<{ url: string; body: URLSearchParams | null }> = [];
-    const html = gateHtml({ steps: "email,sc,tk,yt,fb" });
+    const html = gateHtml({ steps: "email,tk,yt,fb" });
     await runGateWithFetch(html, successFetch(html, requests));
 
     const unlock = requests.find(({ url }) =>
       url.endsWith("/gate/download/ul"),
     );
     expect(unlock?.body?.getAll("skip_gate_steps[]")).toEqual([
-      "sc",
       "tk",
       "yt",
       "fb",
     ]);
   });
 
-  for (const step of ["sp", "ig", "future-provider"]) {
+  for (const step of ["sp", "ig", "sc", "future-provider"]) {
     it(`requires a browser for ${step} before attempting unlock`, async () => {
       const requests: Array<{ url: string; body: URLSearchParams | null }> = [];
       const html = gateHtml({ steps: `email,${step}` });
@@ -626,9 +625,16 @@ describe("Spotify browser fallback selection", () => {
     expect(unlinked).toEqual(["/tmp/spotify.txt"]);
   });
 
-  it("shows an Instagram cookie refresh message without launching when cookies are missing", async () => {
+  it("launches Chromium for Instagram without cookies because opening the tab is enough", async () => {
     let launched = false;
-    const promise = downloadHypedditWithSpotifyFallback({
+    const expected = {
+      filePath: "/tmp/master.mp3",
+      ext: "mp3",
+      filename: "master.mp3",
+      title: "master",
+      size: 4,
+    };
+    const result = await downloadHypedditWithSpotifyFallback({
       gateUrl: "https://hypeddit.com/artist/track",
       email: "listener@example.com",
       name: "Listener",
@@ -639,17 +645,17 @@ describe("Spotify browser fallback selection", () => {
         throw new BrowserRequiredError(["ig"]);
       },
       materializeInstagramCookies: async () => null,
-      browserDownload: async () => {
+      browserDownload: async ({ cookies }) => {
         launched = true;
-        throw new Error("must not launch");
+        expect(cookies).toEqual([]);
+        return expected;
       },
       readCookieFile: async () => "",
       unlinkCookieFile: async () => undefined,
     });
 
-    expect(promise).rejects.toThrow("refresh Instagram cookies");
-    await promise.catch(() => undefined);
-    expect(launched).toBe(false);
+    expect(launched).toBe(true);
+    expect(result).toBe(expected);
   });
 
   it("imports Instagram cookies and unlinks them after browser success", async () => {
@@ -762,13 +768,13 @@ describe("headless Hypeddit download lifecycle", () => {
 
   class FakeButton {
     readonly id: string;
-    readonly className: string;
+    className: string;
     private readonly dataType: string | null;
 
     constructor(
       readonly textContent: string,
       private readonly onClick: () => void,
-      readonly hidden = false,
+      public hidden = false,
       readonly disabled = false,
       attrs: { id?: string; className?: string; dataType?: string } = {},
     ) {
@@ -816,6 +822,8 @@ describe("headless Hypeddit download lifecycle", () => {
     landingLabel?: string;
     missing?: "get-track" | "client-next" | "connect" | "instagram-connect";
     abortOnConnect?: AbortController;
+    openTabDone: string[];
+    skipperReady: Partial<Record<string, boolean>>;
     oauthReturned?: boolean;
     pendingStateAfterOAuth?: "missing" | "unparseable";
     staleControl?: "visible" | "hidden" | "disabled";
@@ -831,6 +839,15 @@ describe("headless Hypeddit download lifecycle", () => {
 
   function removeStep(state: GateState, step: string) {
     state.steps = state.steps.filter((candidate) => candidate !== step);
+  }
+
+  function pendingStep(state: GateState): GateStep | undefined {
+    return state.steps.find((step) => {
+      if (["sc", "ig", "tk", "yt", "fb"].includes(step)) {
+        return !state.openTabDone.includes(step);
+      }
+      return true;
+    });
   }
 
   function withPageDom<T>(page: FakePage, callback: () => T): T {
@@ -931,7 +948,7 @@ describe("headless Hypeddit download lifecycle", () => {
               ),
             ];
       }
-      const next = this.state.steps[0];
+      const next = pendingStep(this.state);
       if (next === "email") {
         return [
           new FakeButton("Next", () => {
@@ -947,17 +964,40 @@ describe("headless Hypeddit download lifecycle", () => {
               new FakeButton(
                 "Follow it's murph",
                 () => {
-                  this.state.calls.push("soundcloud-follow");
-                  removeStep(this.state, "sc");
+                  this.state.calls.push("soundcloud-open");
                 },
                 false,
                 false,
-                { className: "hype-btn hype-btn-soundcloud" },
+                {
+                  className: this.state.calls.includes("soundcloud-open")
+                    ? "hype-btn hype-btn-soundcloud"
+                    : "hype-btn hype-btn-soundcloud undone",
+                },
               ),
-              new FakeButton("Next", () => {
-                this.state.calls.push("client-skip:sc");
-                removeStep(this.state, "sc");
-              }),
+              new FakeButton(
+                "Next",
+                () => {
+                  if (!this.state.calls.includes("soundcloud-open")) {
+                    this.state.calls.push("skipper-blocked:sc");
+                    return;
+                  }
+                  this.state.calls.push("skipper-sc");
+                  this.state.skipperReady.sc = true;
+                },
+                false,
+                false,
+                { id: "skipper_sc_channel" },
+              ),
+              new FakeButton(
+                "Next",
+                () => {
+                  this.state.calls.push("skipper-sc-next");
+                  this.state.openTabDone.push("sc");
+                },
+                !this.state.skipperReady.sc,
+                false,
+                { id: "skipper_sc_next" },
+              ),
             ];
       }
       if (next && ["tk", "yt", "fb"].includes(next)) {
@@ -966,7 +1006,7 @@ describe("headless Hypeddit download lifecycle", () => {
           : [
               new FakeButton("Skip", () => {
                 this.state.calls.push(`client-skip:${next}`);
-                removeStep(this.state, next);
+                this.state.openTabDone.push(next);
               }),
             ];
       }
@@ -974,21 +1014,45 @@ describe("headless Hypeddit download lifecycle", () => {
         return this.state.missing === "instagram-connect"
           ? []
           : [
-              new FakeButton("Follow sidepiece", () => {
-                this.state.calls.push("instagram-connect");
-                this.state.abortOnConnect?.abort();
-                if (this.state.sessionFailure === "instagram-same-tab-login") {
-                  this.currentUrl =
-                    "https://www.instagram.com/accounts/login/";
-                }
-                if (
-                  this.state.popup === "none" &&
-                  this.state.confirmInstagramAction !== false
-                ) {
-                  this.state.oauthReturned = true;
-                  removeStep(this.state, "ig");
-                }
-              }),
+              new FakeButton(
+                "Follow sidepiece",
+                () => {
+                  this.state.calls.push("instagram-open");
+                  this.state.abortOnConnect?.abort();
+                },
+                false,
+                false,
+                {
+                  className: this.state.calls.includes("instagram-open")
+                    ? "hype-btn hype-btn-instagram"
+                    : "hype-btn hype-btn-instagram undone",
+                  dataType: "instagram",
+                },
+              ),
+              new FakeButton(
+                "Next",
+                () => {
+                  if (!this.state.calls.includes("instagram-open")) {
+                    this.state.calls.push("skipper-blocked:ig");
+                    return;
+                  }
+                  this.state.calls.push("skipper-ig");
+                  this.state.skipperReady.ig = true;
+                },
+                false,
+                false,
+                { id: "skipper_ig_channel" },
+              ),
+              new FakeButton(
+                "Next",
+                () => {
+                  this.state.calls.push("skipper-ig-next");
+                  this.state.openTabDone.push("ig");
+                },
+                !this.state.skipperReady.ig,
+                false,
+                { id: "skipper_ig_next" },
+              ),
             ];
       }
       if (next === "sp") {
@@ -1198,18 +1262,18 @@ describe("headless Hypeddit download lifecycle", () => {
           error.name = "TimeoutError";
           throw error;
         }
-        const popup = state.steps.includes("ig") ? instagramPopup : spotifyPopup;
-        const target = {
-          opener: () => "gate-target",
-          url: () => popup.url(),
-          page: async () => popup,
-        };
-        if (!predicate(target)) {
-          const error = new Error("unsafe popup");
-          error.name = "TimeoutError";
-          throw error;
+        const popups = [instagramPopup, spotifyPopup];
+        for (const popup of popups) {
+          const target = {
+            opener: () => "gate-target",
+            url: () => popup.url(),
+            page: async () => popup,
+          };
+          if (predicate(target)) return target;
         }
-        return target;
+        const error = new Error("unsafe popup");
+        error.name = "TimeoutError";
+        throw error;
       },
       close: async () => {
         calls.push("context-close");
@@ -1237,6 +1301,8 @@ describe("headless Hypeddit download lifecycle", () => {
       popup: "spotify",
       confirmSpotifyAction: true,
       confirmInstagramAction: true,
+      openTabDone: [],
+      skipperReady: {},
       ...overrides,
     };
   }
@@ -1300,9 +1366,12 @@ describe("headless Hypeddit download lifecycle", () => {
       "goto",
       "get-track",
       "email-next",
-      "client-skip:sc",
-      "instagram-connect",
-      "instagram-follow",
+      "soundcloud-open",
+      "skipper-sc",
+      "skipper-sc-next",
+      "instagram-open",
+      "skipper-ig",
+      "skipper-ig-next",
       "client-skip:tk",
       "client-skip:yt",
       "client-skip:fb",
@@ -1486,7 +1555,32 @@ describe("headless Hypeddit download lifecycle", () => {
     expect(state.calls.slice(-2)).toEqual(["context-close", "browser-close"]);
   });
 
-  it("completes an Instagram follow in Chromium and confirms Hypeddit progression", async () => {
+  it("opens SoundCloud and Instagram tabs then continues without nwSteps dropping", async () => {
+    const state = createState({
+      steps: ["sc", "ig"],
+      popup: "none",
+    });
+    const run = await runBrowserState(state);
+    await run.resultPromise;
+
+    expect(state.calls).toEqual([
+      "goto",
+      "get-track",
+      "soundcloud-open",
+      "skipper-sc",
+      "skipper-sc-next",
+      "instagram-open",
+      "skipper-ig",
+      "skipper-ig-next",
+      "download",
+      "context-close",
+      "browser-close",
+    ]);
+    expect(state.steps).toEqual(["sc", "ig"]);
+    expect(state.calls).not.toContain("instagram-follow");
+  });
+
+  it("completes an Instagram open-tab step without following in the popup", async () => {
     const state = createState({ steps: ["ig"], popup: "instagram" });
     const run = await runBrowserState(state);
     await run.resultPromise;
@@ -1494,60 +1588,48 @@ describe("headless Hypeddit download lifecycle", () => {
     expect(state.calls).toEqual([
       "goto",
       "get-track",
-      "instagram-connect",
-      "instagram-follow",
+      "instagram-open",
+      "skipper-ig",
+      "skipper-ig-next",
       "download",
       "context-close",
       "browser-close",
     ]);
-    expect(state.steps).not.toContain("ig");
-  });
-
-  it("confirms Instagram after an already-authorized no-popup return", async () => {
-    const state = createState({
-      steps: ["ig"],
-      popup: "none",
-    });
-    const run = await runBrowserState(state);
-    await run.resultPromise;
-
-    expect(state.calls).toContain("instagram-connect");
+    expect(state.steps).toContain("ig");
     expect(state.calls).not.toContain("instagram-follow");
-    expect(state.calls).toContain("download");
   });
 
-  it("fails closed when Hypeddit does not confirm its configured Instagram action", async () => {
+  it("still downloads Instagram when Hypeddit leaves ig in nwSteps", async () => {
     const state = createState({
       steps: ["ig"],
       popup: "instagram",
       confirmInstagramAction: false,
     });
     const run = await runBrowserState(state);
+    await run.resultPromise;
 
-    expect(run.resultPromise).rejects.toThrow("configured Instagram action");
-    await run.resultPromise.catch(() => undefined);
-    expect(state.calls).not.toContain("download");
-    expect(state.calls.slice(-2)).toEqual(["context-close", "browser-close"]);
+    expect(state.calls).toContain("download");
+    expect(state.steps).toContain("ig");
   });
 
-  it("rejects unsafe Instagram popup hosts without following", async () => {
+  it("ignores unsafe Instagram popup hosts after opening the gate tab", async () => {
     const state = createState({
       steps: ["ig"],
       popup: "unsafe-instagram",
     });
     const run = await runBrowserState(state);
+    await run.resultPromise;
 
-    expect(run.resultPromise).rejects.toThrow("configured Instagram action");
-    await run.resultPromise.catch(() => undefined);
+    expect(state.calls).toContain("instagram-open");
     expect(state.calls).not.toContain("instagram-follow");
-    expect(state.calls.slice(-2)).toEqual(["context-close", "browser-close"]);
+    expect(state.calls).toContain("download");
   });
 
   for (const sessionFailure of [
     "instagram-same-tab-login",
     "instagram-popup-login",
   ] as const) {
-    it(`maps ${sessionFailure} Instagram expiry to the cookie refresh message`, async () => {
+    it(`still downloads after ${sessionFailure} because opening the tab is enough`, async () => {
       const state = createState({
         steps: ["ig"],
         popup:
@@ -1555,13 +1637,11 @@ describe("headless Hypeddit download lifecycle", () => {
         sessionFailure,
       });
       const run = await runBrowserState(state);
+      await run.resultPromise;
 
-      expect(run.resultPromise).rejects.toThrow(
-        "refresh Instagram cookies and retry",
-      );
-      await run.resultPromise.catch(() => undefined);
-      expect(state.calls).not.toContain("download");
-      expect(state.calls.slice(-2)).toEqual(["context-close", "browser-close"]);
+      expect(state.calls).toContain("instagram-open");
+      expect(state.calls).toContain("download");
+      expect(state.calls).not.toContain("instagram-follow");
     });
   }
 

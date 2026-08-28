@@ -509,7 +509,7 @@ export async function downloadHypedditGate(params: {
     throw new Error("Could not parse Hypeddit gate page");
   }
   csrfToken = gate.csrfToken;
-  const browserlessSteps = new Set(["email", "sc", "tk", "yt", "fb"]);
+  const browserlessSteps = new Set(["email", "tk", "yt", "fb"]);
   const browserRequiredSteps = gate.steps.filter(
     (step) => !browserlessSteps.has(step),
   );
@@ -694,7 +694,7 @@ async function withAbort<T>(
   }
 }
 
-async function clickExactControl(
+async function clickControlIfPresent(
   page: Page,
   labels: string[],
   signal?: AbortSignal,
@@ -704,8 +704,9 @@ async function clickExactControl(
     classTokens?: string[];
     textPrefixes?: string[];
   },
-): Promise<void> {
-  const clicked = await withAbort(
+): Promise<boolean> {
+  return Boolean(
+    await withAbort(
     page.evaluate(
       ({
         allowedLabels,
@@ -805,11 +806,100 @@ async function clickExactControl(
       },
     ),
     signal,
+    ),
   );
+}
+
+async function clickExactControl(
+  page: Page,
+  labels: string[],
+  signal?: AbortSignal,
+  identity?: {
+    ids?: string[];
+    dataTypes?: string[];
+    classTokens?: string[];
+    textPrefixes?: string[];
+  },
+): Promise<void> {
+  const clicked = await clickControlIfPresent(page, labels, signal, identity);
   if (!clicked) {
     throw new Error(
       `Hypeddit gate changed: expected one of ${labels.map((label) => `“${label}”`).join(", ")}`,
     );
+  }
+}
+
+async function clickUndoneProviderActions(
+  page: Page,
+  signal?: AbortSignal,
+): Promise<number> {
+  return Number(
+    await withAbort(
+      page.evaluate(({ allowedRoots }) => {
+        const controls = Array.from(
+          document.querySelectorAll<HTMLButtonElement | HTMLAnchorElement>(
+            "button, a",
+          ),
+        );
+        let clicked = 0;
+        for (const element of controls) {
+          const className = (
+            (typeof element.className === "string" ? element.className : "") ||
+            element.getAttribute("class") ||
+            ""
+          ).toLowerCase();
+          if (!className.split(/\s+/).includes("undone")) continue;
+          const disabled =
+            ("disabled" in element && Boolean(element.disabled)) ||
+            element.getAttribute("aria-disabled") === "true";
+          const visible =
+            !element.hidden && element.getClientRects().length > 0;
+          if (disabled || !visible) continue;
+          if (element instanceof HTMLAnchorElement && element.href) {
+            let target: URL;
+            try {
+              target = new URL(element.href, window.location.href);
+            } catch {
+              throw new Error(`Refusing gate control host: ${element.href}`);
+            }
+            const protocol = target.protocol.toLowerCase();
+            const host = target.hostname.toLowerCase();
+            const currentHost = window.location.hostname.toLowerCase();
+            const allowed =
+              protocol === "javascript:" ||
+              ((protocol === "https:" || protocol === "http:") &&
+                (host === currentHost ||
+                  allowedRoots.some(
+                    (root) => host === root || host.endsWith(`.${root}`),
+                  )));
+            if (!allowed) {
+              throw new Error(`Refusing gate control host: ${target.hostname}`);
+            }
+          }
+          element.click();
+          clicked += 1;
+        }
+        return clicked;
+      }, { allowedRoots: [...GATE_CONTROL_ALLOWED_ROOTS] }),
+      signal,
+    ),
+  );
+}
+
+async function completeOpenTabStep(
+  page: Page,
+  step: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await clickUndoneProviderActions(page, signal);
+  const channel = await clickControlIfPresent(page, [], signal, {
+    ids: [`skipper_${step}_channel`],
+  });
+  const next = await clickControlIfPresent(page, [], signal, {
+    ids: [`skipper_${step}_next`],
+  });
+  if (!channel && !next) {
+    await clickExactControl(page, ["Skip", "Next"], signal);
   }
 }
 
@@ -919,7 +1009,7 @@ const SPOTIFY_SESSION_NEEDED =
   "Hypeddit Spotify authorization needs a usable session — refresh Spotify cookies and retry.";
 const INSTAGRAM_SESSION_NEEDED =
   "Hypeddit Instagram authorization needs a usable session — refresh Instagram cookies and retry.";
-const BROWSER_SOCIAL_STEPS = new Set(["sp", "ig"]);
+const BROWSER_SOCIAL_STEPS = new Set(["sp", "ig", "sc"]);
 
 async function rejectExpiredSpotifySession(
   page: Page,
@@ -1300,37 +1390,6 @@ async function automateSpotifyGate(params: {
     await fillEmailStep(page, params.email, params.name, signal);
   }
 
-  const completeInstagramStep = async () => {
-    const openerTarget = page.target();
-    await authorizeInstagramAndConfirmHypedditAction({
-      signal,
-      clickConnect: () =>
-        clickExactControl(
-          page,
-          [
-            "Follow on Instagram",
-            "Connect Instagram",
-            "Connect with Instagram",
-            "Instagram Connect",
-          ],
-          signal,
-          {
-            textPrefixes: ["follow "],
-            dataTypes: ["instagram"],
-            classTokens: ["hype-btn-instagram"],
-          },
-        ),
-      waitForPopup: () =>
-        waitForProviderPopup(context, openerTarget, isSafeInstagramUrl, signal),
-      acceptAuthorization: (popup) =>
-        completeInstagramActionPage(popup as Page, signal),
-      waitForHypedditActionConfirmation: async () => {
-        await rejectExpiredInstagramSession(page, signal);
-        await confirmHypedditConfiguredInstagramAction(page, signal);
-      },
-    });
-  };
-
   const completeSpotifyStep = async () => {
     await optOutOptionalMarketing(page, signal);
     const openerTarget = page.target();
@@ -1367,13 +1426,8 @@ async function automateSpotifyGate(params: {
 
   for (const step of steps) {
     if (step === "email") continue;
-    if (step === "sc" || step === "tk" || step === "yt" || step === "fb") {
-      await clickExactControl(page, ["Skip", "Next"], signal);
-      await waitForStepProgression(page, step, signal);
-      continue;
-    }
-    if (step === "ig") {
-      await completeInstagramStep();
+    if (step === "sc" || step === "ig" || step === "tk" || step === "yt" || step === "fb") {
+      await completeOpenTabStep(page, step, signal);
       continue;
     }
     if (step === "sp") {
@@ -1532,7 +1586,7 @@ export async function downloadHypedditWithSpotifyFallback(
             await materializeInstagramCookies(params.userId),
             parseInstagramNetscapeCookies,
             INSTAGRAM_SESSION_NEEDED,
-            true,
+            false,
           );
         }
       }

@@ -5,7 +5,6 @@ import { randomUUID } from "node:crypto";
 import type { BrowserLauncher } from "./hypeddit-browser";
 import {
   isSafeInstagramUrl,
-  isSafeSoundCloudConnectUrl,
   isSafeSoundCloudUrl,
   isSafeSpotifyAuthorizationUrl,
   type BrowserCookie,
@@ -41,8 +40,17 @@ type PageLike = {
   setDefaultTimeout?(ms: number): void;
   goto(url: string, options?: unknown): Promise<unknown>;
   $(selector: string): Promise<{ type(value: string): Promise<unknown> } | null>;
-  evaluate(fn: (...args: never[]) => unknown): Promise<unknown>;
+  evaluate(fn: (...args: never[]) => unknown, arg?: unknown): Promise<unknown>;
   waitForNetworkIdle?(options?: unknown): Promise<unknown>;
+  waitForResponse?(
+    predicate: (response: { url(): string; headers(): Record<string, string> }) => boolean,
+    options?: { timeout?: number },
+  ): Promise<{
+    url(): string;
+    headers(): Record<string, string>;
+    buffer(): Promise<Buffer | Uint8Array>;
+    json(): Promise<unknown>;
+  }>;
   target?(): unknown;
   url?(): string;
   createCDPSession?: () => Promise<{
@@ -139,7 +147,8 @@ export async function clickFollowUnlockControls(page: PageLike): Promise<number>
           .trim();
         if (
           !/follow on (soundcloud|spotify|instagram|youtube)/i.test(text) &&
-          !/connect with (soundcloud|spotify|instagram|youtube)/i.test(text)
+          !/connect with (soundcloud|spotify|instagram|youtube)/i.test(text) &&
+          !/^connect (soundcloud|spotify|instagram|youtube)$/i.test(text)
         ) {
           continue;
         }
@@ -253,10 +262,7 @@ async function acceptProviderAuthorizationPage(page: PopupPage): Promise<void> {
   }
   const accepted = await clickAuthorizationControl(page);
   if (accepted) return;
-  // SoundCloud paused forced follow APIs: profile popups have no Connect
-  // button, and the gate is supposed to continue without one.
-  if (isSafeSoundCloudUrl(url) && !isSafeSoundCloudConnectUrl(url)) return;
-  throw new Error("Provider authorization changed: accept control missing");
+  // Opening the provider tab is enough; do not require like/follow/OAuth.
 }
 
 async function acceptProviderPopups(
@@ -285,15 +291,12 @@ async function acceptProviderPopups(
 
 async function unlockFollowWallIfPresent(
   page: PageLike,
-  gateUrl: string,
-  hasSessionCookies: boolean,
+  _gateUrl: string,
+  _hasSessionCookies: boolean,
   context: GateContext,
 ): Promise<void> {
   const wallText = await readWallText(page);
   if (!looksLikeSocialFollowWall(wallText)) return;
-  if (!hasSessionCookies) {
-    throw new ManualDownloadRequiredError(gateUrl, "Follow/unlock required");
-  }
   await clickFollowUnlockControls(page);
   await acceptProviderPopups(context, page);
 }
@@ -304,16 +307,6 @@ async function rejectIfContactCaptureGate(page: PageLike): Promise<void> {
     throw new Error(
       "No free download on this track — this gate only collects a phone number or RSVP, not a file.",
     );
-  }
-}
-
-async function rejectIfStillFollowWall(
-  page: PageLike,
-  gateUrl: string,
-): Promise<void> {
-  const wallText = await readWallText(page);
-  if (looksLikeSocialFollowWall(wallText)) {
-    throw new ManualDownloadRequiredError(gateUrl, "Follow/unlock required");
   }
 }
 
@@ -335,9 +328,15 @@ export function isCapturedGateFilename(name: string): boolean {
 const DOWNLOAD_LABEL =
   /^(download|download track|get track|free download|unlock|claim|get free download)$/i;
 
+export function matchesDownloadLabel(text: string): boolean {
+  return DOWNLOAD_LABEL.test(text.replace(/\s+/g, " ").trim());
+}
+
 export async function clickDownloadControl(page: PageLike): Promise<boolean> {
   return Boolean(
     await page.evaluate(() => {
+      const label =
+        /^(download|download track|get track|free download|unlock|claim|get free download)$/i;
       const nodes = Array.from(
         document.querySelectorAll("a, button, input[type=submit], [role=button]"),
       );
@@ -350,13 +349,128 @@ export async function clickDownloadControl(page: PageLike): Promise<boolean> {
         )
           .replace(/\s+/g, " ")
           .trim();
-        return /download|get track|free download|unlock|claim/i.test(text);
+        return label.test(text);
       });
       if (!match) return false;
       (match as HTMLElement).click();
       return true;
     }),
   );
+}
+
+async function dismissCookieBanner(page: PageLike): Promise<void> {
+  await page.evaluate(() => {
+    const labels =
+      /^(accept all|reject non-essential|reject|accept|allow all|got it)$/i;
+    const nodes = Array.from(
+      document.querySelectorAll("a, button, [role=button]"),
+    );
+    const match = nodes.find((el) =>
+      labels.test(
+        (el.getAttribute("value") || el.textContent || "")
+          .replace(/\s+/g, " ")
+          .trim(),
+      ),
+    );
+    if (match) (match as HTMLElement).click();
+  });
+}
+
+async function fillCommentIfPresent(page: PageLike): Promise<void> {
+  const selectors = [
+    'textarea[placeholder*="comment" i]',
+    "textarea",
+    'input[placeholder*="comment" i]',
+  ];
+  for (const selector of selectors) {
+    const input = await page.$(selector);
+    if (!input) continue;
+    await input.type("nice one");
+    return;
+  }
+}
+
+async function unlockAndClickDownload(
+  page: PageLike,
+  gateUrl: string,
+  cookiesPresent: boolean,
+  context: GateContext,
+): Promise<boolean> {
+  await dismissCookieBanner(page);
+  await fillCommentIfPresent(page);
+  await rejectIfContactCaptureGate(page);
+  await unlockFollowWallIfPresent(page, gateUrl, cookiesPresent, context);
+  let clicked = await clickDownloadControl(page);
+  if (looksLikeSocialFollowWall(await readWallText(page))) {
+    await fillCommentIfPresent(page);
+    const opened = Number(await clickFollowUnlockControls(page));
+    await acceptProviderPopups(context, page);
+    clicked = (await clickDownloadControl(page)) || clicked;
+    if (!Number.isFinite(opened) || opened === 0) {
+      throw new ManualDownloadRequiredError(gateUrl, "Follow/unlock required");
+    }
+  }
+  return clicked;
+}
+
+function responseLooksLikeGateFile(response: {
+  url(): string;
+  headers(): Record<string, string>;
+}): boolean {
+  const headers = response.headers();
+  const disposition = headers["content-disposition"] ?? "";
+  const contentType = headers["content-type"] ?? "";
+  return (
+    /attachment/i.test(disposition) ||
+    /^audio\//i.test(contentType) ||
+    /application\/(zip|x-zip|octet-stream)/i.test(contentType)
+  );
+}
+
+async function captureGateFile(
+  page: PageLike,
+  downloadDir: string,
+  signal?: AbortSignal,
+): Promise<GateDownloadResult> {
+  const fromDisk = waitForDownloadedFile(downloadDir, 45_000, signal).then(
+    async (filePath) => {
+      const filename = path.basename(filePath);
+      const ext =
+        path.extname(filename).replace(/^\./, "").toLowerCase() || "bin";
+      const stat = await fs.stat(filePath);
+      return {
+        filePath,
+        filename,
+        ext,
+        title: path.parse(filename).name || null,
+        size: stat.size,
+      };
+    },
+  );
+  if (!page.waitForResponse) return fromDisk;
+  const fromNetwork = page
+    .waitForResponse(responseLooksLikeGateFile, { timeout: 45_000 })
+    .then(async (response) => {
+      const bytes = Buffer.from(await response.buffer());
+      const headers = response.headers();
+      const filename =
+        /filename\*?=(?:UTF-8''|")?([^\";]+)/i.exec(
+          headers["content-disposition"] ?? "",
+        )?.[1] ?? "gate-download.bin";
+      const ext =
+        path.extname(filename).replace(/^\./, "").toLowerCase() || "bin";
+      const filePath = path.join(downloadDir, filename);
+      await fs.writeFile(filePath, bytes);
+      return {
+        filePath,
+        filename,
+        ext,
+        title: path.parse(filename).name || null,
+        size: bytes.byteLength,
+      };
+    })
+    .catch(() => new Promise<GateDownloadResult>(() => undefined));
+  return Promise.race([fromDisk, fromNetwork]);
 }
 
 async function fillEmailIfPresent(
@@ -467,8 +581,7 @@ export async function downloadBrowserGate(params: {
         () => undefined,
       );
       await fillEmailIfPresent(page, params.email, params.name);
-      await rejectIfContactCaptureGate(page);
-      await unlockFollowWallIfPresent(
+      const clicked = await unlockAndClickDownload(
         page,
         params.gateUrl,
         params.cookies.length > 0,
@@ -477,13 +590,13 @@ export async function downloadBrowserGate(params: {
       await page.waitForNetworkIdle?.({ idleTime: 500, timeout: 8_000 }).catch(
         () => undefined,
       );
-      const clicked = await clickDownloadControl(page);
       if (!clicked && !params.captureDownload) {
         await rejectIfContactCaptureGate(page);
         throw new Error("Download control not found on gate page");
       }
-      if (clicked) await rejectIfStillFollowWall(page, params.gateUrl);
-      return await runCapture({ workDir: downloadDir, signal: params.signal });
+      return await (params.captureDownload
+        ? params.captureDownload({ workDir: downloadDir, signal: params.signal })
+        : captureGateFile(page, downloadDir, params.signal));
     } finally {
       await context.close().catch(() => undefined);
       await browser.close().catch(() => undefined);
@@ -518,8 +631,7 @@ export async function downloadBrowserGate(params: {
         () => undefined,
       );
       await fillEmailIfPresent(page, params.email, params.name);
-      await rejectIfContactCaptureGate(page);
-      await unlockFollowWallIfPresent(
+      const clicked = await unlockAndClickDownload(
         page,
         params.gateUrl,
         params.cookies.length > 0,
@@ -528,13 +640,13 @@ export async function downloadBrowserGate(params: {
       await page.waitForNetworkIdle?.({ idleTime: 800, timeout: 10_000 }).catch(
         () => undefined,
       );
-      const clicked = await clickDownloadControl(page);
       if (!clicked) {
         await rejectIfContactCaptureGate(page);
         throw new Error("Download control not found on gate page");
       }
-      await rejectIfStillFollowWall(page, params.gateUrl);
-      return runCapture({ workDir: downloadDir, signal: params.signal });
+      return params.captureDownload
+        ? params.captureDownload({ workDir: downloadDir, signal: params.signal })
+        : captureGateFile(page, downloadDir, params.signal);
     },
   });
 }

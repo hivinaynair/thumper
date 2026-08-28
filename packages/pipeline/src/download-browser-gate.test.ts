@@ -7,6 +7,7 @@ import {
   isCapturedGateFilename,
   looksLikeContactCaptureGate,
   looksLikeSocialFollowWall,
+  matchesDownloadLabel,
   providerAuthorizationControlKind,
   waitForDownloadedFile,
 } from "./download-browser-gate";
@@ -17,6 +18,15 @@ afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })),
   );
+});
+
+describe("matchesDownloadLabel", () => {
+  it("accepts the DropLoud FREE DOWNLOAD button, not the footer Free Download Gate link", () => {
+    expect(matchesDownloadLabel("FREE DOWNLOAD")).toBe(true);
+    expect(matchesDownloadLabel("Download")).toBe(true);
+    expect(matchesDownloadLabel("Free Download Gate")).toBe(false);
+    expect(matchesDownloadLabel("Free Underground Music")).toBe(false);
+  });
 });
 
 describe("providerAuthorizationControlKind", () => {
@@ -242,6 +252,72 @@ describe("downloadBrowserGate", () => {
     ).rejects.toThrow(/phone number or RSVP/);
   });
 
+  it("opens follow tabs without cookies and still captures the file", async () => {
+    const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "browser-gate-"));
+    roots.push(workDir);
+    const calls: string[] = [];
+    let evals = 0;
+    const result = await downloadBrowserGate({
+      gateUrl: "https://www.toneden.io/mayetrix/post/track",
+      email: "dj@example.com",
+      name: "DJ",
+      workDir,
+      cookies: [],
+      launcher: {
+        launch: async () => ({
+          createBrowserContext: async () => ({
+            setCookie: async () => undefined,
+            newPage: async () => ({
+              setDefaultTimeout: () => undefined,
+              goto: async () => undefined,
+              $: async () => null,
+              evaluate: async () => {
+                evals += 1;
+                if (evals <= 2) return "Thanks for visiting";
+                if (evals === 3) {
+                  calls.push("read-wall");
+                  return "STEP 1 FOLLOW ON SOUNDCLOUD";
+                }
+                if (evals === 4) {
+                  calls.push("click-follow");
+                  return 1;
+                }
+                if (evals === 5) {
+                  calls.push("click-download");
+                  return true;
+                }
+                return "Download\nManage Privacy";
+              },
+              waitForNetworkIdle: async () => undefined,
+            }),
+            close: async () => undefined,
+          }),
+          close: async () => undefined,
+        }),
+      },
+      captureDownload: async ({ workDir: dir }) => {
+        calls.push("capture");
+        const filePath = path.join(dir, "gate.wav");
+        await fs.writeFile(filePath, "WAV");
+        return {
+          filePath,
+          filename: "gate.wav",
+          ext: "wav",
+          title: null,
+          size: 3,
+        };
+      },
+    });
+
+    expect(calls).toEqual([
+      "read-wall",
+      "click-follow",
+      "click-download",
+      "capture",
+    ]);
+    expect(result.filename).toBe("gate.wav");
+  });
+
   it("clicks ToneDen follow steps when SoundCloud cookies are present", async () => {
     const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "browser-gate-"));
     roots.push(workDir);
@@ -273,15 +349,16 @@ describe("downloadBrowserGate", () => {
               evaluate: async () => {
                 evals += 1;
                 if (evals === 1) return "Thanks for visiting";
-                if (evals === 2) {
+                if (evals === 2) return "Thanks for visiting";
+                if (evals === 3) {
                   calls.push("read-wall");
                   return "STEP 1 FOLLOW ON SOUNDCLOUD\nSTEP 2 FOLLOW ON SPOTIFY";
                 }
-                if (evals === 3) {
+                if (evals === 4) {
                   calls.push("click-follow");
                   return 2;
                 }
-                if (evals === 4) {
+                if (evals === 5) {
                   calls.push("click-download");
                   return true;
                 }
@@ -404,9 +481,10 @@ describe("downloadBrowserGate", () => {
               evaluate: async () => {
                 evals += 1;
                 if (evals === 1) return "Thanks for visiting";
-                if (evals === 2) return wall;
-                if (evals === 3) return 2;
-                if (evals === 4) return true;
+                if (evals === 2) return "Thanks for visiting";
+                if (evals === 3) return wall;
+                if (evals === 4) return 2;
+                if (evals === 5) return true;
                 return authorized.length === 2
                   ? "Download\nManage Privacy"
                   : wall;
@@ -486,9 +564,10 @@ describe("downloadBrowserGate", () => {
               evaluate: async () => {
                 evals += 1;
                 if (evals === 1) return "Thanks for visiting";
-                if (evals === 2) return wall;
-                if (evals === 3) return 1;
-                if (evals === 4) return true;
+                if (evals === 2) return "Thanks for visiting";
+                if (evals === 3) return wall;
+                if (evals === 4) return 1;
+                if (evals === 5) return true;
                 return "Download\nManage Privacy";
               },
               waitForNetworkIdle: async () => undefined,
