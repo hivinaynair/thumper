@@ -6,6 +6,7 @@ import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import { NextResponse } from "next/server";
 import { getDb } from "../../../../lib/db";
+import { contentDispositionAttachment } from "../disposition";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -35,7 +36,7 @@ export async function GET(_req: Request, ctx: Ctx) {
         "Content-Type":
           target.contentType || file.mime || "application/octet-stream",
         "Content-Length": String(target.size),
-        "Content-Disposition": `attachment; filename="${file.filename.replace(/"/g, "")}"`,
+        "Content-Disposition": contentDispositionAttachment(file.filename),
         "Cache-Control": "private, no-store",
       },
     });
@@ -46,7 +47,7 @@ export async function GET(_req: Request, ctx: Ctx) {
     return new NextResponse(Readable.toWeb(stream) as ReadableStream, {
       headers: {
         "Content-Type": file.mime ?? "application/octet-stream",
-        "Content-Disposition": `attachment; filename="${file.filename.replace(/"/g, "")}"`,
+        "Content-Disposition": contentDispositionAttachment(file.filename),
       },
     });
   } catch {
