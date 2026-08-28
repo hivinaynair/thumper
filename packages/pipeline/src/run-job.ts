@@ -48,6 +48,7 @@ import { deleteDriveFile, ensurePlaylistFolder, uploadToDrive } from "./drive";
 import {
   downloadHypedditWithSpotifyFallback,
   parseInstagramNetscapeCookies,
+  parseSoundCloudNetscapeCookies,
   parseSpotifyNetscapeCookies,
   type BrowserCookie,
   type HypedditDownloadResult,
@@ -416,6 +417,7 @@ export async function processGenericGateDownload(params: {
   titleHint?: string;
   materializeSpotifyCookies?: (userId: string) => Promise<string | null>;
   materializeInstagramCookies?: (userId: string) => Promise<string | null>;
+  materializeSoundCloudCookies?: (userId: string) => Promise<string | null>;
   readCookieFile?: (filePath: string) => Promise<string>;
   unlinkCookieFile?: (filePath: string) => Promise<void>;
   directDownload?: typeof downloadDirectFile;
@@ -460,6 +462,11 @@ export async function processGenericGateDownload(params: {
       params.materializeInstagramCookies ??
         ((userId: string) => materializeCookieFile(userId, "instagram")),
       parseInstagramNetscapeCookies,
+    );
+    await loadProviderCookies(
+      params.materializeSoundCloudCookies ??
+        ((userId: string) => materializeCookieFile(userId, "soundcloud")),
+      parseSoundCloudNetscapeCookies,
     );
     downloaded = await (params.browserDownload ?? downloadBrowserGate)({
       gateUrl: params.gateUrl,
@@ -777,11 +784,21 @@ async function processTrack(params: {
       signal,
     });
     if (purchase.kind === "other" && purchase.url) {
+      if (payload.freeDownloadsOnly) {
+        throw new Error(
+          "No free download on this track — no artist download gate and no native SoundCloud original. Turn Free downloads only off to mirror it from YouTube.",
+        );
+      }
       throw new ManualDownloadRequiredError(purchase.url, purchase.title);
     }
     if (purchase.kind === "stream" && purchase.url) {
       const titledFree = /\bfree\b/i.test(purchase.title ?? "");
       if (!titledFree) {
+        if (payload.freeDownloadsOnly) {
+          throw new Error(
+            "No free download on this track — no artist download gate and no native SoundCloud original. Turn Free downloads only off to mirror it from YouTube.",
+          );
+        }
         throw new ManualDownloadRequiredError(purchase.url, purchase.title);
       }
     }

@@ -81,11 +81,12 @@ describe("processGenericGateDownload", () => {
     expect(result.downloaded.ext).toBe("mp3");
   });
 
-  it("injects Spotify and Instagram cookies into the generic browser gate", async () => {
+  it("injects Spotify, Instagram, and SoundCloud cookies into the generic browser gate", async () => {
     const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "generic-gate-"));
     roots.push(workDir);
     const spotifyPath = path.join(workDir, "spotify.txt");
     const instagramPath = path.join(workDir, "instagram.txt");
+    const soundcloudPath = path.join(workDir, "soundcloud.txt");
     await fs.writeFile(
       spotifyPath,
       ".spotify.com\tTRUE\t/\tTRUE\t2147483647\tsp_dc\tsecret",
@@ -93,6 +94,10 @@ describe("processGenericGateDownload", () => {
     await fs.writeFile(
       instagramPath,
       ".instagram.com\tTRUE\t/\tTRUE\t2147483647\tsessionid\tig",
+    );
+    await fs.writeFile(
+      soundcloudPath,
+      ".soundcloud.com\tTRUE\t/\tTRUE\t2147483647\toauth_token\tsc",
     );
     const names: string[] = [];
     const unlinked: string[] = [];
@@ -108,6 +113,7 @@ describe("processGenericGateDownload", () => {
       outputDirectory: workDir,
       materializeSpotifyCookies: async () => spotifyPath,
       materializeInstagramCookies: async () => instagramPath,
+      materializeSoundCloudCookies: async () => soundcloudPath,
       readCookieFile: (filePath) => fs.readFile(filePath, "utf8"),
       unlinkCookieFile: async (filePath) => {
         unlinked.push(filePath);
@@ -127,7 +133,7 @@ describe("processGenericGateDownload", () => {
       },
     });
 
-    expect(names).toEqual(["sp_dc", "sessionid"]);
-    expect(unlinked).toEqual([spotifyPath, instagramPath]);
+    expect(names).toEqual(["sp_dc", "sessionid", "oauth_token"]);
+    expect(unlinked).toEqual([spotifyPath, instagramPath, soundcloudPath]);
   });
 });

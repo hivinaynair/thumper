@@ -11,7 +11,10 @@ import {
   downloadHypedditWithSpotifyFallback,
   isSafeInstagramUrl,
   isSafeSpotifyAuthorizationUrl,
+  isSafeSoundCloudConnectUrl,
+  isAllowedGateControlUrl,
   parseInstagramNetscapeCookies,
+  parseSoundCloudNetscapeCookies,
   parseSpotifyNetscapeCookies,
   sniffAudioExt,
 } from "./hypeddit";
@@ -118,12 +121,12 @@ describe("downloadHypedditGate browserless contract", () => {
     const requests: Array<{ url: string; body: URLSearchParams | null }> = [];
     await runGateWithFetch(
       gateHtml({
-        steps: "sc",
+        steps: "tk",
         externalIdMarkup: `<script>window.externID = "instagram-user-17";</script>`,
       }),
       successFetch(
         gateHtml({
-          steps: "sc",
+          steps: "tk",
           externalIdMarkup: `<script>window.externID = "instagram-user-17";</script>`,
         }),
         requests,
@@ -139,7 +142,7 @@ describe("downloadHypedditGate browserless contract", () => {
   it("sends external_id parsed from a hidden field", async () => {
     const requests: Array<{ url: string; body: URLSearchParams | null }> = [];
     const html = gateHtml({
-      steps: "sc",
+      steps: "tk",
       externalIdMarkup: `<input type="hidden" name="external_id" value="hidden-user-9">`,
     });
     await runGateWithFetch(html, successFetch(html, requests));
@@ -275,6 +278,84 @@ describe("Instagram Netscape cookies", () => {
     );
 
     expect(cookies).toEqual([]);
+  });
+});
+
+describe("SoundCloud Netscape cookies", () => {
+  it("parses only SoundCloud domains for ToneDen follow unlocks", () => {
+    const cookies = parseSoundCloudNetscapeCookies(
+      [
+        "# Netscape HTTP Cookie File",
+        ".soundcloud.com\tTRUE\t/\tTRUE\t2147483647\toauth_token\tsc-secret",
+        ".example.com\tTRUE\t/\tTRUE\t2147483647\tleak\tnever",
+      ].join("\n"),
+      1_700_000_000,
+    );
+
+    expect(cookies).toEqual([
+      {
+        name: "oauth_token",
+        value: "sc-secret",
+        domain: ".soundcloud.com",
+        path: "/",
+        secure: true,
+        httpOnly: false,
+        expires: 2147483647,
+      },
+    ]);
+  });
+
+  it("allows only SoundCloud connect/oauth hosts", () => {
+    expect(
+      isSafeSoundCloudConnectUrl(
+        "https://soundcloud.com/connect?client_id=toneden",
+      ),
+    ).toBe(true);
+    expect(
+      isSafeSoundCloudConnectUrl("https://secure.soundcloud.com/oauth/authorize"),
+    ).toBe(true);
+    expect(
+      isSafeSoundCloudConnectUrl("https://soundcloud.com.evil.test/connect"),
+    ).toBe(false);
+    expect(isSafeSoundCloudConnectUrl("https://soundcloud.com/mayetrix")).toBe(
+      false,
+    );
+  });
+});
+
+describe("Hypeddit gate control hosts", () => {
+  const gate = "https://hypeddit.com/lucky/turnupthespeakersluckyflip";
+
+  it("allows same-page javascript Download handlers", () => {
+    expect(isAllowedGateControlUrl("javascript:void(0);", gate)).toBe(true);
+    expect(isAllowedGateControlUrl("javascript:void(0)", gate)).toBe(true);
+  });
+
+  it("allows Hypeddit, Spotify, Instagram, and SoundCloud hosts, including www", () => {
+    expect(
+      isAllowedGateControlUrl("https://www.hypeddit.com/track/download", gate),
+    ).toBe(true);
+    expect(
+      isAllowedGateControlUrl("https://accounts.spotify.com/authorize", gate),
+    ).toBe(true);
+    expect(
+      isAllowedGateControlUrl("https://www.instagram.com/artist/", gate),
+    ).toBe(true);
+    expect(
+      isAllowedGateControlUrl("https://soundcloud.com/connect", gate),
+    ).toBe(true);
+  });
+
+  it("refuses lookalike or unrelated download hosts", () => {
+    expect(
+      isAllowedGateControlUrl(
+        "https://hypeddit.com.evil.test/lucky/turnupthespeakersluckyflip",
+        gate,
+      ),
+    ).toBe(false);
+    expect(isAllowedGateControlUrl("https://evil.test/download", gate)).toBe(
+      false,
+    );
   });
 });
 
@@ -680,19 +761,32 @@ describe("headless Hypeddit download lifecycle", () => {
   }
 
   class FakeButton {
+    readonly id: string;
+    readonly className: string;
+    private readonly dataType: string | null;
+
     constructor(
       readonly textContent: string,
       private readonly onClick: () => void,
       readonly hidden = false,
       readonly disabled = false,
-    ) {}
+      attrs: { id?: string; className?: string; dataType?: string } = {},
+    ) {
+      this.id = attrs.id ?? "";
+      this.className = attrs.className ?? "";
+      this.dataType = attrs.dataType ?? null;
+    }
 
     click() {
       this.onClick();
     }
 
     getAttribute(name: string) {
-      return name === "aria-disabled" && this.disabled ? "true" : null;
+      if (name === "aria-disabled" && this.disabled) return "true";
+      if (name === "data-type") return this.dataType;
+      if (name === "id") return this.id || null;
+      if (name === "class") return this.className || null;
+      return null;
     }
 
     getClientRects() {
@@ -705,8 +799,10 @@ describe("headless Hypeddit download lifecycle", () => {
       text: string,
       readonly href: string,
       onClick: () => void,
+      hidden = false,
+      disabled = false,
     ) {
-      super(text, onClick);
+      super(text, onClick, hidden, disabled);
     }
   }
 
@@ -823,8 +919,9 @@ describe("headless Hypeddit download lifecycle", () => {
         return this.state.missing === "get-track"
           ? []
           : [
-              new FakeButton(
+              new FakeAnchor(
                 this.state.landingLabel ?? "Get Track",
+                "javascript:void(0);",
                 () => {
                   this.state.started = true;
                   this.state.calls.push("get-track");
@@ -843,7 +940,27 @@ describe("headless Hypeddit download lifecycle", () => {
           }),
         ];
       }
-      if (next && ["sc", "tk", "yt", "fb"].includes(next)) {
+      if (next === "sc") {
+        return this.state.missing === "client-next"
+          ? []
+          : [
+              new FakeButton(
+                "Follow it's murph",
+                () => {
+                  this.state.calls.push("soundcloud-follow");
+                  removeStep(this.state, "sc");
+                },
+                false,
+                false,
+                { className: "hype-btn hype-btn-soundcloud" },
+              ),
+              new FakeButton("Next", () => {
+                this.state.calls.push("client-skip:sc");
+                removeStep(this.state, "sc");
+              }),
+            ];
+      }
+      if (next && ["tk", "yt", "fb"].includes(next)) {
         return this.state.missing === "client-next"
           ? []
           : [
@@ -857,7 +974,7 @@ describe("headless Hypeddit download lifecycle", () => {
         return this.state.missing === "instagram-connect"
           ? []
           : [
-              new FakeButton("Follow on Instagram", () => {
+              new FakeButton("Follow sidepiece", () => {
                 this.state.calls.push("instagram-connect");
                 this.state.abortOnConnect?.abort();
                 if (this.state.sessionFailure === "instagram-same-tab-login") {
@@ -878,24 +995,34 @@ describe("headless Hypeddit download lifecycle", () => {
         return this.state.missing === "connect"
           ? []
           : [
-              new FakeButton("Connect Spotify", () => {
-                this.state.calls.push("spotify-connect");
-                this.state.abortOnConnect?.abort();
-                if (this.state.sessionFailure === "same-tab-login") {
-                  this.currentUrl = "https://accounts.spotify.com/login";
-                }
-                if (this.state.sessionFailure === "callback-url") {
-                  this.currentUrl =
-                    "https://hypeddit.com/spotify/callback?error=session_expired";
-                }
-                if (
-                  this.state.popup === "none" &&
-                  this.state.confirmSpotifyAction
-                ) {
-                  this.state.oauthReturned = true;
-                  removeStep(this.state, "sp");
-                }
-              }),
+              new FakeButton(
+                "Connect",
+                () => {
+                  this.state.calls.push("spotify-connect");
+                  this.state.abortOnConnect?.abort();
+                  if (this.state.sessionFailure === "same-tab-login") {
+                    this.currentUrl = "https://accounts.spotify.com/login";
+                  }
+                  if (this.state.sessionFailure === "callback-url") {
+                    this.currentUrl =
+                      "https://hypeddit.com/spotify/callback?error=session_expired";
+                  }
+                  if (
+                    this.state.popup === "none" &&
+                    this.state.confirmSpotifyAction
+                  ) {
+                    this.state.oauthReturned = true;
+                    removeStep(this.state, "sp");
+                  }
+                },
+                false,
+                false,
+                {
+                  id: "login_to_sp",
+                  className: "hype-btn hype-btn-spotify",
+                  dataType: "spotify",
+                },
+              ),
               ...(this.state.staleControl
                 ? [
                     new FakeButton(
@@ -940,6 +1067,8 @@ describe("headless Hypeddit download lifecycle", () => {
             [
               "#validateEmailAddress",
               'input[name="validateEmailAddress"]',
+              "#email_address",
+              'input[name="email_address"]',
               'input[type="email"]',
             ].includes(selector)
           ) {

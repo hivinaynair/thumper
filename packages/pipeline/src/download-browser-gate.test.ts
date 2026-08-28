@@ -5,7 +5,9 @@ import path from "node:path";
 import {
   downloadBrowserGate,
   isCapturedGateFilename,
+  looksLikeContactCaptureGate,
   looksLikeSocialFollowWall,
+  providerAuthorizationControlKind,
   waitForDownloadedFile,
 } from "./download-browser-gate";
 
@@ -15,6 +17,15 @@ afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })),
   );
+});
+
+describe("providerAuthorizationControlKind", () => {
+  it("accepts SoundCloud profile follow labels, not only a bare Connect", () => {
+    expect(providerAuthorizationControlKind("Connect")).toBe("accept");
+    expect(providerAuthorizationControlKind("Follow ROBUSTT ²")).toBe("accept");
+    expect(providerAuthorizationControlKind("Following")).toBe("done");
+    expect(providerAuthorizationControlKind("Like")).toBe(null);
+  });
 });
 
 describe("downloadBrowserGate", () => {
@@ -172,7 +183,6 @@ describe("downloadBrowserGate", () => {
   it("fails as a manual download when the page is a follow/unlock wall", async () => {
     const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "browser-gate-"));
     roots.push(workDir);
-    let evals = 0;
     await expect(
       downloadBrowserGate({
         gateUrl: "https://www.toneden.io/aeonmode/post/track",
@@ -188,11 +198,8 @@ describe("downloadBrowserGate", () => {
                 setDefaultTimeout: () => undefined,
                 goto: async () => undefined,
                 $: async () => null,
-                evaluate: async () => {
-                  evals += 1;
-                  if (evals === 1) return true;
-                  return "STEP 1 FOLLOW ON SOUNDCLOUD\nSTEP 2 FOLLOW ON SPOTIFY";
-                },
+                evaluate: async () =>
+                  "STEP 1 FOLLOW ON SOUNDCLOUD\nSTEP 2 FOLLOW ON SPOTIFY",
                 waitForNetworkIdle: async () => undefined,
               }),
               close: async () => undefined,
@@ -202,6 +209,364 @@ describe("downloadBrowserGate", () => {
         },
       }),
     ).rejects.toThrow(/Follow\/unlock required|Manual download required/);
+  });
+
+  it("skips Laylo/Vault RSVP pages as not a file gate", async () => {
+    const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "browser-gate-"));
+    roots.push(workDir);
+    await expect(
+      downloadBrowserGate({
+        gateUrl: "https://laylo.com/arlobeats/WQeRBm",
+        email: "dj@example.com",
+        name: "DJ",
+        workDir,
+        cookies: [],
+        launcher: {
+          launch: async () => ({
+            createBrowserContext: async () => ({
+              setCookie: async () => undefined,
+              newPage: async () => ({
+                setDefaultTimeout: () => undefined,
+                goto: async () => undefined,
+                $: async () => null,
+                evaluate: async () =>
+                  "Get a text with the download link\nRSVP by SMS\nPut your phone number in",
+                waitForNetworkIdle: async () => undefined,
+              }),
+              close: async () => undefined,
+            }),
+            close: async () => undefined,
+          }),
+        },
+      }),
+    ).rejects.toThrow(/phone number or RSVP/);
+  });
+
+  it("clicks ToneDen follow steps when SoundCloud cookies are present", async () => {
+    const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "browser-gate-"));
+    roots.push(workDir);
+    const calls: string[] = [];
+    let evals = 0;
+    const result = await downloadBrowserGate({
+      gateUrl: "https://www.toneden.io/mayetrix/post/track",
+      email: "dj@example.com",
+      name: "DJ",
+      workDir,
+      cookies: [
+        {
+          name: "oauth_token",
+          value: "sc",
+          domain: ".soundcloud.com",
+          path: "/",
+          secure: true,
+          httpOnly: false,
+        },
+      ],
+      launcher: {
+        launch: async () => ({
+          createBrowserContext: async () => ({
+            setCookie: async () => undefined,
+            newPage: async () => ({
+              setDefaultTimeout: () => undefined,
+              goto: async () => undefined,
+              $: async () => null,
+              evaluate: async () => {
+                evals += 1;
+                if (evals === 1) return "Thanks for visiting";
+                if (evals === 2) {
+                  calls.push("read-wall");
+                  return "STEP 1 FOLLOW ON SOUNDCLOUD\nSTEP 2 FOLLOW ON SPOTIFY";
+                }
+                if (evals === 3) {
+                  calls.push("click-follow");
+                  return 2;
+                }
+                if (evals === 4) {
+                  calls.push("click-download");
+                  return true;
+                }
+                calls.push("read-unlocked");
+                return "Download\nManage Privacy";
+              },
+              waitForNetworkIdle: async () => undefined,
+            }),
+            close: async () => undefined,
+          }),
+          close: async () => undefined,
+        }),
+      },
+      captureDownload: async ({ workDir: dir }) => {
+        calls.push("capture");
+        const filePath = path.join(dir, "gate.wav");
+        await fs.writeFile(filePath, "WAV");
+        return {
+          filePath,
+          filename: "gate.wav",
+          ext: "wav",
+          title: null,
+          size: 3,
+        };
+      },
+    });
+
+    expect(calls).toEqual([
+      "read-wall",
+      "click-follow",
+      "click-download",
+      "read-unlocked",
+      "capture",
+    ]);
+    expect(result.filename).toBe("gate.wav");
+  });
+
+  it("accepts SoundCloud and Spotify OAuth popups before unlocking ToneDen", async () => {
+    const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "browser-gate-"));
+    roots.push(workDir);
+    const authorized: string[] = [];
+    const wall =
+      "STEP 1 FOLLOW ON SOUNDCLOUD\nSTEP 2 FOLLOW ON SPOTIFY\nUNLOCK PROGRESS";
+    const popups = [
+      {
+        url: () => "https://soundcloud.com/connect?client_id=toneden",
+        evaluate: async () => {
+          authorized.push("soundcloud");
+          return true;
+        },
+      },
+      {
+        url: () => "https://accounts.spotify.com/authorize?client_id=toneden",
+        evaluate: async () => {
+          authorized.push("spotify");
+          return true;
+        },
+      },
+    ];
+    let evals = 0;
+
+    const result = await downloadBrowserGate({
+      gateUrl:
+        "https://www.toneden.io/mayetrix/post/skrillex-nitepunk-soma-mayetrix-remix",
+      email: "dj@example.com",
+      name: "DJ",
+      workDir,
+      cookies: [
+        {
+          name: "oauth_token",
+          value: "sc",
+          domain: ".soundcloud.com",
+          path: "/",
+          secure: true,
+          httpOnly: false,
+        },
+        {
+          name: "sp_dc",
+          value: "sp",
+          domain: ".spotify.com",
+          path: "/",
+          secure: true,
+          httpOnly: true,
+        },
+      ],
+      launcher: {
+        launch: async () => ({
+          createBrowserContext: async () => ({
+            setCookie: async () => undefined,
+            waitForTarget: async (
+              predicate: (target: {
+                url(): string;
+                opener(): unknown;
+                page(): Promise<unknown>;
+              }) => boolean,
+            ) => {
+              const popup = popups.shift();
+              if (!popup) {
+                const error = new Error("timeout");
+                error.name = "TimeoutError";
+                throw error;
+              }
+              const target = {
+                url: () => popup.url(),
+                opener: () => "main",
+                page: async () => popup,
+              };
+              if (!predicate(target)) {
+                const error = new Error("timeout");
+                error.name = "TimeoutError";
+                throw error;
+              }
+              return target;
+            },
+            newPage: async () => ({
+              target: () => "main",
+              setDefaultTimeout: () => undefined,
+              goto: async () => undefined,
+              $: async () => null,
+              evaluate: async () => {
+                evals += 1;
+                if (evals === 1) return "Thanks for visiting";
+                if (evals === 2) return wall;
+                if (evals === 3) return 2;
+                if (evals === 4) return true;
+                return authorized.length === 2
+                  ? "Download\nManage Privacy"
+                  : wall;
+              },
+              waitForNetworkIdle: async () => undefined,
+            }),
+            close: async () => undefined,
+          }),
+          close: async () => undefined,
+        }),
+      },
+      captureDownload: async ({ workDir: dir }) => {
+        const filePath = path.join(dir, "gate.wav");
+        await fs.writeFile(filePath, "WAV");
+        return {
+          filePath,
+          filename: "gate.wav",
+          ext: "wav",
+          title: null,
+          size: 3,
+        };
+      },
+    });
+
+    expect(authorized).toEqual(["soundcloud", "spotify"]);
+    expect(result.filename).toBe("gate.wav");
+  });
+
+  it("continues when a SoundCloud profile popup has no Connect button", async () => {
+    const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "browser-gate-"));
+    roots.push(workDir);
+    const wall =
+      "STEP 1 FOLLOW ON SOUNDCLOUD\nUNLOCK PROGRESS";
+    let evals = 0;
+    let popups = 1;
+
+    const result = await downloadBrowserGate({
+      gateUrl: "https://www.toneden.io/mayetrix/post/track",
+      email: "dj@example.com",
+      name: "DJ",
+      workDir,
+      cookies: [
+        {
+          name: "oauth_token",
+          value: "sc",
+          domain: ".soundcloud.com",
+          path: "/",
+          secure: true,
+          httpOnly: false,
+        },
+      ],
+      launcher: {
+        launch: async () => ({
+          createBrowserContext: async () => ({
+            setCookie: async () => undefined,
+            waitForTarget: async () => {
+              if (popups <= 0) {
+                const error = new Error("timeout");
+                error.name = "TimeoutError";
+                throw error;
+              }
+              popups -= 1;
+              return {
+                url: () => "https://soundcloud.com/robusttofficial2",
+                opener: () => "main",
+                page: async () => ({
+                  url: () => "https://soundcloud.com/robusttofficial2",
+                  evaluate: async () => false,
+                }),
+              };
+            },
+            newPage: async () => ({
+              target: () => "main",
+              setDefaultTimeout: () => undefined,
+              goto: async () => undefined,
+              $: async () => null,
+              evaluate: async () => {
+                evals += 1;
+                if (evals === 1) return "Thanks for visiting";
+                if (evals === 2) return wall;
+                if (evals === 3) return 1;
+                if (evals === 4) return true;
+                return "Download\nManage Privacy";
+              },
+              waitForNetworkIdle: async () => undefined,
+            }),
+            close: async () => undefined,
+          }),
+          close: async () => undefined,
+        }),
+      },
+      captureDownload: async ({ workDir: dir }) => {
+        const filePath = path.join(dir, "gate.wav");
+        await fs.writeFile(filePath, "WAV");
+        return {
+          filePath,
+          filename: "gate.wav",
+          ext: "wav",
+          title: null,
+          size: 3,
+        };
+      },
+    });
+
+    expect(result.filename).toBe("gate.wav");
+  });
+
+  it("refuses a ToneDen follow popup on a lookalike host", async () => {
+    const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "browser-gate-"));
+    roots.push(workDir);
+    let accepted = false;
+    await expect(
+      downloadBrowserGate({
+        gateUrl: "https://www.toneden.io/mayetrix/post/track",
+        email: "dj@example.com",
+        name: "DJ",
+        workDir,
+        cookies: [
+          {
+            name: "oauth_token",
+            value: "sc",
+            domain: ".soundcloud.com",
+            path: "/",
+            secure: true,
+            httpOnly: false,
+          },
+        ],
+        launcher: {
+          launch: async () => ({
+            createBrowserContext: async () => ({
+              setCookie: async () => undefined,
+              waitForTarget: async () => ({
+                url: () => "https://soundcloud.com.evil.test/connect",
+                opener: () => "main",
+                page: async () => ({
+                  url: () => "https://soundcloud.com.evil.test/connect",
+                  evaluate: async () => {
+                    accepted = true;
+                    return true;
+                  },
+                }),
+              }),
+              newPage: async () => ({
+                target: () => "main",
+                setDefaultTimeout: () => undefined,
+                goto: async () => undefined,
+                $: async () => null,
+                evaluate: async () => {
+                  return "STEP 1 FOLLOW ON SOUNDCLOUD";
+                },
+                waitForNetworkIdle: async () => undefined,
+              }),
+              close: async () => undefined,
+            }),
+            close: async () => undefined,
+          }),
+        },
+      }),
+    ).rejects.toThrow(/soundcloud\.com|Refusing/);
+    expect(accepted).toBe(false);
   });
 });
 
@@ -213,6 +578,18 @@ describe("looksLikeSocialFollowWall", () => {
       ),
     ).toBe(true);
     expect(looksLikeSocialFollowWall("Download\nManage Privacy")).toBe(false);
+  });
+});
+
+describe("looksLikeContactCaptureGate", () => {
+  it("detects Laylo SMS and Vault RSVP pages", () => {
+    expect(
+      looksLikeContactCaptureGate(
+        "Get a text with the download link\nRSVP by SMS\nPut your phone number in",
+      ),
+    ).toBe(true);
+    expect(looksLikeContactCaptureGate("Tap to RSVP")).toBe(true);
+    expect(looksLikeContactCaptureGate("Follow on SoundCloud")).toBe(false);
   });
 });
 

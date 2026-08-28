@@ -136,6 +136,13 @@ describe("cookieProvidersNeeded", () => {
       ),
     ).toEqual(["spotify"]);
   });
+
+  it("asks for SoundCloud cookies on a ToneDen session failure", () => {
+    const error =
+      "SoundCloud session is no longer usable — refresh SoundCloud cookies and retry.";
+    expect(cookieNeedsRefresh(error)).toBe(true);
+    expect(cookieProvidersNeeded(error)).toEqual(["soundcloud"]);
+  });
 });
 
 describe("retryButtonLabel", () => {

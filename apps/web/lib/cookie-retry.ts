@@ -14,7 +14,7 @@ export type RetryableJob = {
 };
 
 const COOKIE_REFRESH_RE =
-  /bot check|stale cookies|no playable formats|Sign in to confirm|Re-sync|Sync YouTube cookies|refresh (Spotify|Instagram) cookies/i;
+  /bot check|stale cookies|no playable formats|Sign in to confirm|Re-sync|Sync YouTube cookies|refresh (Spotify|Instagram|SoundCloud) cookies/i;
 
 export function cookieNeedsRefresh(error: string | null | undefined): boolean {
   if (!error) return false;
@@ -26,7 +26,9 @@ export function cookieProvidersNeeded(
 ): Array<"youtube" | "soundcloud" | "spotify" | "instagram"> {
   if (/refresh Instagram cookies/i.test(error)) return ["instagram"];
   if (/refresh Spotify cookies/i.test(error)) return ["spotify"];
-  if (/Sync SoundCloud cookies/i.test(error)) return ["soundcloud"];
+  if (/refresh SoundCloud cookies|Sync SoundCloud cookies/i.test(error)) {
+    return ["soundcloud"];
+  }
   return ["youtube"];
 }
 

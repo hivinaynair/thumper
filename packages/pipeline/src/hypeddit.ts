@@ -90,6 +90,17 @@ function isInstagramCookieHost(hostname: string): boolean {
   return hostname === "instagram.com" || hostname.endsWith(".instagram.com");
 }
 
+function isSoundCloudCookieHost(hostname: string): boolean {
+  return hostname === "soundcloud.com" || hostname.endsWith(".soundcloud.com");
+}
+
+export function parseSoundCloudNetscapeCookies(
+  text: string,
+  nowSeconds = Math.floor(Date.now() / 1000),
+): BrowserCookie[] {
+  return parseNetscapeCookiesForHost(text, isSoundCloudCookieHost, nowSeconds);
+}
+
 export function parseSpotifyNetscapeCookies(
   text: string,
   nowSeconds = Math.floor(Date.now() / 1000),
@@ -123,6 +134,59 @@ export function isSafeInstagramUrl(url: string): boolean {
     return (
       parsed.protocol === "https:" &&
       (hostname === "instagram.com" || hostname.endsWith(".instagram.com"))
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function isSafeSoundCloudUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    return (
+      parsed.protocol === "https:" &&
+      (hostname === "soundcloud.com" || hostname.endsWith(".soundcloud.com"))
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function isSafeSoundCloudConnectUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.toLowerCase();
+    return (
+      isSafeSoundCloudUrl(url) &&
+      (path.includes("/connect") || path.includes("/oauth"))
+    );
+  } catch {
+    return false;
+  }
+}
+
+const GATE_CONTROL_ALLOWED_ROOTS = [
+  "hypeddit.com",
+  "spotify.com",
+  "instagram.com",
+  "soundcloud.com",
+] as const;
+
+export function isAllowedGateControlUrl(
+  href: string,
+  currentUrl: string,
+): boolean {
+  try {
+    const current = new URL(currentUrl);
+    const target = new URL(href, currentUrl);
+    const protocol = target.protocol.toLowerCase();
+    if (protocol === "javascript:") return true;
+    if (protocol !== "https:" && protocol !== "http:") return false;
+    const host = target.hostname.toLowerCase();
+    if (host === current.hostname.toLowerCase()) return true;
+    return GATE_CONTROL_ALLOWED_ROOTS.some(
+      (root) => host === root || host.endsWith(`.${root}`),
     );
   } catch {
     return false;
@@ -605,7 +669,7 @@ type BrowserGatePayload = {
   size: number | null;
 };
 
-const BROWSER_TIMEOUT_MS = 20_000;
+const BROWSER_TIMEOUT_MS = 45_000;
 const POPUP_TIMEOUT_MS = 5_000;
 
 function ensureNotAborted(signal?: AbortSignal): void {
@@ -634,46 +698,112 @@ async function clickExactControl(
   page: Page,
   labels: string[],
   signal?: AbortSignal,
+  identity?: {
+    ids?: string[];
+    dataTypes?: string[];
+    classTokens?: string[];
+    textPrefixes?: string[];
+  },
 ): Promise<void> {
   const clicked = await withAbort(
-    page.evaluate((allowedLabels) => {
-      const normalized = new Set(
-        allowedLabels.map((label) => label.trim().toLowerCase()),
-      );
-      const controls = Array.from(
-        document.querySelectorAll<HTMLButtonElement | HTMLAnchorElement>(
-          "button, a",
-        ),
-      );
-      const control = controls.find((element) => {
-        const disabled =
-          ("disabled" in element && Boolean(element.disabled)) ||
-          element.getAttribute("aria-disabled") === "true";
-        const visible = !element.hidden && element.getClientRects().length > 0;
-        return (
-          !disabled &&
-          visible &&
-          normalized.has((element.textContent ?? "").trim().toLowerCase())
+    page.evaluate(
+      ({
+        allowedLabels,
+        allowedRoots,
+        ids,
+        dataTypes,
+        classTokens,
+        textPrefixes,
+      }) => {
+        const normalized = new Set(
+          allowedLabels.map((label) => label.trim().toLowerCase()),
         );
-      });
-      if (!control) return false;
-      if (control instanceof HTMLAnchorElement && control.href) {
-        const target = new URL(control.href, window.location.href);
-        const current = new URL(window.location.href);
-        const host = target.hostname.toLowerCase();
-        const allowed =
-          host === current.hostname.toLowerCase() ||
-          host === "spotify.com" ||
-          host.endsWith(".spotify.com") ||
-          host === "instagram.com" ||
-          host.endsWith(".instagram.com");
-        if (!allowed) {
-          throw new Error(`Refusing gate control host: ${target.hostname}`);
+        const allowedIds = new Set(ids.map((id) => id.trim().toLowerCase()));
+        const allowedDataTypes = new Set(
+          dataTypes.map((type) => type.trim().toLowerCase()),
+        );
+        const allowedClassTokens = new Set(
+          classTokens.map((token) => token.trim().toLowerCase()),
+        );
+        const allowedPrefixes = textPrefixes.map((prefix) =>
+          prefix.trim().toLowerCase(),
+        );
+        const controls = Array.from(
+          document.querySelectorAll<HTMLButtonElement | HTMLAnchorElement>(
+            "button, a",
+          ),
+        );
+        const control = controls.find((element) => {
+          const className = (
+            (typeof element.className === "string" ? element.className : "") ||
+            element.getAttribute("class") ||
+            ""
+          ).toLowerCase();
+          const classTokensOnEl = new Set(
+            className.split(/\s+/).filter(Boolean),
+          );
+          if (classTokensOnEl.has("hide") || classTokensOnEl.has("hidden")) {
+            return false;
+          }
+          const disabled =
+            ("disabled" in element && Boolean(element.disabled)) ||
+            element.getAttribute("aria-disabled") === "true";
+          const visible = !element.hidden && element.getClientRects().length > 0;
+          if (disabled || !visible) return false;
+          const text = (element.textContent ?? "").trim().toLowerCase();
+          if (normalized.has(text)) return true;
+          if (allowedPrefixes.some((prefix) => text.startsWith(prefix))) {
+            return true;
+          }
+          const id = (
+            element.id ||
+            element.getAttribute("id") ||
+            ""
+          ).toLowerCase();
+          if (id && allowedIds.has(id)) return true;
+          const dataType = (
+            element.getAttribute("data-type") || ""
+          ).toLowerCase();
+          if (dataType && allowedDataTypes.has(dataType)) return true;
+          for (const token of allowedClassTokens) {
+            if (classTokensOnEl.has(token)) return true;
+          }
+          return false;
+        });
+        if (!control) return false;
+        if (control instanceof HTMLAnchorElement && control.href) {
+          let target: URL;
+          try {
+            target = new URL(control.href, window.location.href);
+          } catch {
+            throw new Error(`Refusing gate control host: ${control.href}`);
+          }
+          const protocol = target.protocol.toLowerCase();
+          const host = target.hostname.toLowerCase();
+          const currentHost = window.location.hostname.toLowerCase();
+          const allowed =
+            protocol === "javascript:" ||
+            ((protocol === "https:" || protocol === "http:") &&
+              (host === currentHost ||
+                allowedRoots.some(
+                  (root) => host === root || host.endsWith(`.${root}`),
+                )));
+          if (!allowed) {
+            throw new Error(`Refusing gate control host: ${target.hostname}`);
+          }
         }
-      }
-      control.click();
-      return true;
-    }, labels),
+        control.click();
+        return true;
+      },
+      {
+        allowedLabels: labels,
+        allowedRoots: [...GATE_CONTROL_ALLOWED_ROOTS],
+        ids: identity?.ids ?? [],
+        dataTypes: identity?.dataTypes ?? [],
+        classTokens: identity?.classTokens ?? [],
+        textPrefixes: identity?.textPrefixes ?? [],
+      },
+    ),
     signal,
   );
   if (!clicked) {
@@ -882,6 +1012,10 @@ async function fillEmailStep(
           document.querySelector<HTMLInputElement>(
             'input[name="validateEmailAddress"]',
           ) ??
+          document.querySelector<HTMLInputElement>("#email_address") ??
+          document.querySelector<HTMLInputElement>(
+            'input[name="email_address"]',
+          ) ??
           document.querySelector<HTMLInputElement>('input[type="email"]');
         if (!emailInput) return false;
         const setValue = (input: HTMLInputElement, value: string) => {
@@ -906,7 +1040,11 @@ async function fillEmailStep(
   );
   if (!filled)
     throw new Error("Hypeddit email step changed: email field missing");
-  await clickExactControl(page, ["Continue", "Submit", "Next"], signal);
+  await clickExactControl(
+    page,
+    ["Continue", "Submit", "Next", "Share email address"],
+    signal,
+  );
   await waitForStepProgression(page, "email", signal);
 }
 
@@ -1011,10 +1149,24 @@ async function completeInstagramActionPage(
       );
       const textOf = (element: HTMLElement) =>
         (element.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase();
-      if (controls.some((element) => alreadyDone.has(textOf(element)))) {
+      if (
+        controls.some((element) => {
+          const text = textOf(element);
+          return (
+            alreadyDone.has(text) ||
+            [...alreadyDone].some((label) => text.startsWith(`${label} `))
+          );
+        })
+      ) {
         return true;
       }
-      const control = controls.find((element) => labels.has(textOf(element)));
+      const control = controls.find((element) => {
+        const text = textOf(element);
+        return (
+          labels.has(text) ||
+          [...labels].some((label) => text.startsWith(`${label} `))
+        );
+      });
       if (!control) return false;
       control.click();
       return true;
@@ -1162,6 +1314,11 @@ async function automateSpotifyGate(params: {
             "Instagram Connect",
           ],
           signal,
+          {
+            textPrefixes: ["follow "],
+            dataTypes: ["instagram"],
+            classTokens: ["hype-btn-instagram"],
+          },
         ),
       waitForPopup: () =>
         waitForProviderPopup(context, openerTarget, isSafeInstagramUrl, signal),
@@ -1184,6 +1341,11 @@ async function automateSpotifyGate(params: {
           page,
           ["Connect Spotify", "Connect with Spotify", "Spotify Connect"],
           signal,
+          {
+            ids: ["login_to_sp"],
+            dataTypes: ["spotify"],
+            classTokens: ["hype-btn-spotify"],
+          },
         ),
       waitForPopup: () =>
         waitForProviderPopup(
@@ -1330,34 +1492,48 @@ export async function downloadHypedditWithSpotifyFallback(
         ((filePath: string) => fs.readFile(filePath, "utf8"));
       const cookies: BrowserCookie[] = [];
 
+      const loadCookies = async (
+        cookiePath: string | null,
+        parse: (text: string) => BrowserCookie[],
+        missingMessage: string,
+        required: boolean,
+      ) => {
+        if (!cookiePath) {
+          if (required) throw new Error(missingMessage);
+          return;
+        }
+        cookiePaths.push(cookiePath);
+        let cookieText: string;
+        try {
+          cookieText = await readCookieFile(cookiePath);
+        } catch {
+          if (required) throw new Error(missingMessage);
+          return;
+        }
+        const parsed = parse(cookieText);
+        if (parsed.length === 0) {
+          if (required) throw new Error(missingMessage);
+          return;
+        }
+        cookies.push(...parsed);
+      };
+
       for (const step of error.steps) {
         if (step === "sp") {
-          const cookiePath = await materializeSpotifyCookies(params.userId);
-          if (!cookiePath) throw new Error(SPOTIFY_SESSION_NEEDED);
-          cookiePaths.push(cookiePath);
-          let cookieText: string;
-          try {
-            cookieText = await readCookieFile(cookiePath);
-          } catch {
-            throw new Error(SPOTIFY_SESSION_NEEDED);
-          }
-          const parsed = parseSpotifyNetscapeCookies(cookieText);
-          if (parsed.length === 0) throw new Error(SPOTIFY_SESSION_NEEDED);
-          cookies.push(...parsed);
+          await loadCookies(
+            await materializeSpotifyCookies(params.userId),
+            parseSpotifyNetscapeCookies,
+            SPOTIFY_SESSION_NEEDED,
+            true,
+          );
         }
         if (step === "ig") {
-          const cookiePath = await materializeInstagramCookies(params.userId);
-          if (!cookiePath) throw new Error(INSTAGRAM_SESSION_NEEDED);
-          cookiePaths.push(cookiePath);
-          let cookieText: string;
-          try {
-            cookieText = await readCookieFile(cookiePath);
-          } catch {
-            throw new Error(INSTAGRAM_SESSION_NEEDED);
-          }
-          const parsed = parseInstagramNetscapeCookies(cookieText);
-          if (parsed.length === 0) throw new Error(INSTAGRAM_SESSION_NEEDED);
-          cookies.push(...parsed);
+          await loadCookies(
+            await materializeInstagramCookies(params.userId),
+            parseInstagramNetscapeCookies,
+            INSTAGRAM_SESSION_NEEDED,
+            true,
+          );
         }
       }
 

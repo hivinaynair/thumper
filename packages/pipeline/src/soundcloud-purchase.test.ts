@@ -3,7 +3,31 @@ import {
   classifySoundCloudPurchaseUrl,
   ManualDownloadRequiredError,
   isManualDownloadRequiredError,
+  soundCloudPurchaseApiUrl,
 } from "./soundcloud-purchase";
+
+describe("soundCloudPurchaseApiUrl", () => {
+  it("fetches playlist children by track id instead of resolving the api-v2 URL", () => {
+    const url = soundCloudPurchaseApiUrl(
+      "https://api-v2.soundcloud.com/tracks/2218829702",
+      "testclientid",
+    );
+    expect(url.pathname).toBe("/tracks/2218829702");
+    expect(url.searchParams.get("client_id")).toBe("testclientid");
+    expect(url.searchParams.get("url")).toBeNull();
+  });
+
+  it("still resolves permalinks through /resolve", () => {
+    const url = soundCloudPurchaseApiUrl(
+      "https://soundcloud.com/crankdat/work-crankdat-remix",
+      "testclientid",
+    );
+    expect(url.pathname).toBe("/resolve");
+    expect(url.searchParams.get("url")).toBe(
+      "https://soundcloud.com/crankdat/work-crankdat-remix",
+    );
+  });
+});
 
 describe("classifySoundCloudPurchaseUrl", () => {
   it("detects hypeddit hosts", () => {
