@@ -22,10 +22,8 @@ from pathlib import Path
 import modal
 
 try:
-    from .playlist_fanout import spawn_fanout_children
     from .subprocess_retry import run_process_job_command, run_sweep_command
 except ImportError:
-    from playlist_fanout import spawn_fanout_children
     from subprocess_retry import run_process_job_command, run_sweep_command
 
 APP_NAME = "thumper-worker"
@@ -144,6 +142,11 @@ def _run_process_job(job_id: str) -> str:
 )
 def process_job(job_id: str) -> str:
     output = _run_process_job(job_id)
+    try:
+        from .playlist_fanout import spawn_fanout_children
+    except ImportError:
+        from playlist_fanout import spawn_fanout_children
+
     spawn_fanout_children(job_id, process_job.spawn)
     return output
 
