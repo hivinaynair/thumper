@@ -481,9 +481,16 @@ describe("Instagram authorization state machine", () => {
 });
 
 describe("Spotify browser fallback selection", () => {
-  it("shows a cookie refresh message without launching when cookies are missing", async () => {
+  it("launches Chromium for Spotify without cookies because opening the tab is enough", async () => {
     let launched = false;
-    const promise = downloadHypedditWithSpotifyFallback({
+    const expected = {
+      filePath: "/tmp/master.flac",
+      ext: "flac",
+      filename: "master.flac",
+      title: "master",
+      size: 4,
+    };
+    const result = await downloadHypedditWithSpotifyFallback({
       gateUrl: "https://hypeddit.com/artist/track",
       email: "listener@example.com",
       name: "Listener",
@@ -494,17 +501,17 @@ describe("Spotify browser fallback selection", () => {
         throw new BrowserRequiredError(["sp"]);
       },
       materializeSpotifyCookies: async () => null,
-      browserDownload: async () => {
+      browserDownload: async ({ cookies }) => {
         launched = true;
-        throw new Error("must not launch");
+        expect(cookies).toEqual([]);
+        return expected;
       },
       readCookieFile: async () => "",
       unlinkCookieFile: async () => undefined,
     });
 
-    expect(promise).rejects.toThrow("refresh Spotify cookies");
-    await promise.catch(() => undefined);
-    expect(launched).toBe(false);
+    expect(launched).toBe(true);
+    expect(result).toBe(expected);
   });
 
   it("does not use the browser for non-typed browserless failures", async () => {
@@ -1064,6 +1071,7 @@ describe("headless Hypeddit download lifecycle", () => {
                 () => {
                   this.state.calls.push("spotify-connect");
                   this.state.abortOnConnect?.abort();
+                  this.state.openTabDone.push("sp");
                   if (this.state.sessionFailure === "same-tab-login") {
                     this.currentUrl = "https://accounts.spotify.com/login";
                   }
@@ -1375,9 +1383,7 @@ describe("headless Hypeddit download lifecycle", () => {
       "client-skip:tk",
       "client-skip:yt",
       "client-skip:fb",
-      "marketing-opt-out",
       "spotify-connect",
-      "spotify-accept",
       "download",
       "context-close",
       "browser-close",
@@ -1475,50 +1481,46 @@ describe("headless Hypeddit download lifecycle", () => {
     expect(state.calls).toContain("download");
   });
 
-  it("fails closed when Hypeddit does not confirm its configured Spotify action", async () => {
+  it("opens the Spotify tab and downloads without waiting for nwSteps to drop sp", async () => {
     const state = createState({
       steps: ["sp"],
       confirmSpotifyAction: false,
     });
     const run = await runBrowserState(state);
+    await run.resultPromise;
 
-    expect(run.resultPromise).rejects.toThrow("configured Spotify action");
-    await run.resultPromise.catch(() => undefined);
-    expect(state.calls).not.toContain("download");
-    expect(state.calls.slice(-2)).toEqual(["context-close", "browser-close"]);
+    expect(state.calls).toContain("spotify-connect");
+    expect(state.calls).not.toContain("spotify-accept");
+    expect(state.calls).toContain("download");
+    expect(state.steps).toContain("sp");
   });
 
   for (const pendingStateAfterOAuth of ["missing", "unparseable"] as const) {
-    it(`fails closed when authoritative pending-step state is ${pendingStateAfterOAuth} after OAuth`, async () => {
+    it(`still downloads when nwSteps is ${pendingStateAfterOAuth} after opening Spotify`, async () => {
       const state = createState({
         steps: ["sp"],
         pendingStateAfterOAuth,
       });
       const run = await runBrowserState(state);
+      await run.resultPromise;
 
-      expect(run.resultPromise).rejects.toThrow(
-        "authoritative Hypeddit pending-step state",
-      );
-      await run.resultPromise.catch(() => undefined);
-      expect(state.calls).not.toContain("download");
-      expect(state.calls.slice(-2)).toEqual(["context-close", "browser-close"]);
+      expect(state.calls).toContain("spotify-connect");
+      expect(state.calls).toContain("download");
     });
   }
 
   for (const staleControl of ["visible", "hidden", "disabled"] as const) {
-    it(`rejects a ${staleControl} stale Next/Download control while sp remains pending`, async () => {
+    it(`does not click a ${staleControl} stale Next/Download control on the Spotify step`, async () => {
       const state = createState({
         steps: ["sp"],
         confirmSpotifyAction: false,
         staleControl,
       });
       const run = await runBrowserState(state);
+      await run.resultPromise;
 
-      expect(run.resultPromise).rejects.toThrow("configured Spotify action");
-      await run.resultPromise.catch(() => undefined);
-      expect(state.calls).not.toContain("download");
+      expect(state.calls).toContain("download");
       expect(state.calls).not.toContain("stale-control");
-      expect(state.calls.slice(-2)).toEqual(["context-close", "browser-close"]);
     });
   }
 
@@ -1645,26 +1647,25 @@ describe("headless Hypeddit download lifecycle", () => {
     });
   }
 
-  it("rejects unsafe Spotify popup hosts without accepting authorization", async () => {
+  it("ignores an unsafe Spotify popup host after opening the gate tab", async () => {
     const state = createState({ steps: ["sp"], popup: "unsafe" });
     const run = await runBrowserState(state);
+    await run.resultPromise;
 
-    expect(run.resultPromise).rejects.toThrow("configured Spotify action");
-    await run.resultPromise.catch(() => undefined);
+    expect(state.calls).toContain("spotify-connect");
     expect(state.calls).not.toContain("spotify-accept");
-    expect(state.calls.slice(-2)).toEqual(["context-close", "browser-close"]);
+    expect(state.calls).toContain("download");
   });
 
   for (const sessionFailure of [
     "same-tab-login",
-    "popup-login",
     "callback-url",
     "callback-alert",
   ] as const) {
     it(`maps ${sessionFailure} Spotify expiry to the cookie refresh message`, async () => {
       const state = createState({
         steps: ["sp"],
-        popup: sessionFailure === "popup-login" ? "spotify" : "none",
+        popup: "none",
         sessionFailure,
       });
       const run = await runBrowserState(state);
@@ -1677,6 +1678,19 @@ describe("headless Hypeddit download lifecycle", () => {
       expect(state.calls.slice(-2)).toEqual(["context-close", "browser-close"]);
     });
   }
+
+  it("still downloads after a Spotify popup login because opening the tab is enough", async () => {
+    const state = createState({
+      steps: ["sp"],
+      popup: "spotify",
+      sessionFailure: "popup-login",
+    });
+    const run = await runBrowserState(state);
+    await run.resultPromise;
+
+    expect(state.calls).toContain("spotify-connect");
+    expect(state.calls).toContain("download");
+  });
 
   it("propagates cancellation and still closes the context and browser", async () => {
     const controller = new AbortController();

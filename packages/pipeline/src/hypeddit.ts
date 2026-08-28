@@ -892,15 +892,45 @@ async function completeOpenTabStep(
   signal?: AbortSignal,
 ): Promise<void> {
   await clickUndoneProviderActions(page, signal);
+  if (step === "sp") {
+    await clickControlIfPresent(
+      page,
+      ["Connect Spotify", "Connect with Spotify", "Spotify Connect", "Connect"],
+      signal,
+      {
+        ids: ["login_to_sp"],
+        dataTypes: ["spotify"],
+        classTokens: ["hype-btn-spotify"],
+      },
+    );
+    await rejectExpiredSpotifySession(page, signal);
+  }
   const channel = await clickControlIfPresent(page, [], signal, {
     ids: [`skipper_${step}_channel`],
   });
   const next = await clickControlIfPresent(page, [], signal, {
     ids: [`skipper_${step}_next`],
   });
-  if (!channel && !next) {
+  if (!channel && !next && step !== "sp") {
     await clickExactControl(page, ["Skip", "Next"], signal);
   }
+  await withAbort(
+    page.evaluate((pending) => {
+      if (typeof document.createElement !== "function") return;
+      const existing = Array.from(
+        document.querySelectorAll<HTMLInputElement>(
+          'input[name="skip_gate_steps[]"]',
+        ),
+      );
+      if (existing.some((input) => input.value === pending)) return;
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = "skip_gate_steps[]";
+      input.value = pending;
+      (document.querySelector("form") ?? document.body).appendChild(input);
+    }, step),
+    signal,
+  );
 }
 
 async function readPageSteps(
@@ -1370,7 +1400,7 @@ async function automateSpotifyGate(params: {
   name: string;
   signal?: AbortSignal;
 }): Promise<BrowserGatePayload> {
-  const { page, context, signal } = params;
+  const { page, signal } = params;
   page.setDefaultTimeout(BROWSER_TIMEOUT_MS);
   await withAbort(
     page.goto(params.gateUrl, {
@@ -1390,48 +1420,18 @@ async function automateSpotifyGate(params: {
     await fillEmailStep(page, params.email, params.name, signal);
   }
 
-  const completeSpotifyStep = async () => {
-    await optOutOptionalMarketing(page, signal);
-    const openerTarget = page.target();
-    await authorizeSpotifyAndConfirmHypedditAction({
-      signal,
-      clickConnect: () =>
-        clickExactControl(
-          page,
-          ["Connect Spotify", "Connect with Spotify", "Spotify Connect"],
-          signal,
-          {
-            ids: ["login_to_sp"],
-            dataTypes: ["spotify"],
-            classTokens: ["hype-btn-spotify"],
-          },
-        ),
-      waitForPopup: () =>
-        waitForProviderPopup(
-          context,
-          openerTarget,
-          isSafeSpotifyAuthorizationUrl,
-          signal,
-        ),
-      acceptAuthorization: (popup) =>
-        acceptSpotifyAuthorizationPage(popup as Page, signal),
-      // Hypeddit's callback performs the configured follow/save. We never guess
-      // or click a provider action; only positive Hypeddit progression unlocks.
-      waitForHypedditActionConfirmation: async () => {
-        await rejectExpiredSpotifySession(page, signal);
-        await confirmHypedditConfiguredSpotifyAction(page, signal);
-      },
-    });
-  };
-
   for (const step of steps) {
     if (step === "email") continue;
-    if (step === "sc" || step === "ig" || step === "tk" || step === "yt" || step === "fb") {
+    if (
+      step === "sc" ||
+      step === "ig" ||
+      step === "tk" ||
+      step === "yt" ||
+      step === "fb" ||
+      step === "sp"
+    ) {
       await completeOpenTabStep(page, step, signal);
       continue;
-    }
-    if (step === "sp") {
-      await completeSpotifyStep();
     }
   }
 
@@ -1476,6 +1476,9 @@ export async function downloadHypedditGateWithBrowser(params: {
   if (params.signal?.aborted) throw new ProcessCancelledError();
 
   const bytes = Buffer.from(payload.bytes);
+  if (!sniffAudioExt(bytes) && bytes.byteLength < 10_000) {
+    throw new Error("Hypeddit did not grant an audio file");
+  }
   const claimedExt =
     payload.claimedExt.toLowerCase() ||
     extFromNameOrType(payload.filename, null);
@@ -1578,7 +1581,7 @@ export async function downloadHypedditWithSpotifyFallback(
             await materializeSpotifyCookies(params.userId),
             parseSpotifyNetscapeCookies,
             SPOTIFY_SESSION_NEEDED,
-            true,
+            false,
           );
         }
         if (step === "ig") {
