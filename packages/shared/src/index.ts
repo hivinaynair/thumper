@@ -251,6 +251,8 @@ export function looksLikePlaylistUrl(url: string): boolean {
 export function sanitizeFilename(name: string, maxLen = 120): string {
   return (
     name
+      .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+      .replace(/[\u201C\u201D\u201E]/g, '"')
       .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "")
       .replace(/\s+/g, " ")
       .trim()

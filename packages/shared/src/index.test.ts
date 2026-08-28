@@ -46,6 +46,12 @@ describe("sanitizeFilename", () => {
   it("strips illegal characters", () => {
     expect(sanitizeFilename("a/b:c*d?.wav")).toBe("abcd.wav");
   });
+
+  it("turns a curly apostrophe into ASCII so Disclosure downloads", () => {
+    expect(
+      sanitizeFilename("Disclosure - She\u2019s Gone, Dance On.flac"),
+    ).toBe("Disclosure - She's Gone, Dance On.flac");
+  });
 });
 
 describe("trackDisplayName", () => {
