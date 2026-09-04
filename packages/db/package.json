@@ -9,6 +9,7 @@
   "scripts": {
     "generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate",
+    "test": "bun test",
     "check-types": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0"
   },
