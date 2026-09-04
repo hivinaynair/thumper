@@ -7,12 +7,7 @@ import {
   jobsToRetry,
   retryButtonLabel,
 } from "../../lib/cookie-retry";
-import {
-  COOKIE_SYNC_EXTENSION_VERSION,
-  COOKIE_SYNC_RELOAD_MESSAGE,
-  cookieSyncMissingInstagram,
-  isCookieSyncTooOld,
-} from "./cookie-sync";
+import { COOKIE_SYNC_EXTENSION_VERSION } from "./cookie-sync";
 import { HYPEDDIT_ORIGINAL_COPY } from "./result-copy";
 
 type DjTier = "master" | "club" | "marginal" | "unsuitable";
@@ -89,7 +84,6 @@ type CookieStatus = {
   youtube: CookieProviderStatus;
   soundcloud: CookieProviderStatus;
   spotify: CookieProviderStatus;
-  instagram: CookieProviderStatus;
 };
 
 type SyncResult = {
@@ -101,7 +95,6 @@ type SyncResult = {
     youtube?: { status: string; reason?: string };
     soundcloud?: { status: string; reason?: string };
     spotify?: { status: string; reason?: string };
-    instagram?: { status: string; reason?: string };
   };
 };
 
@@ -302,7 +295,6 @@ export default function DownloaderPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [messageTone, setMessageTone] = useState<"ok" | "error">("ok");
   const [extensionReady, setExtensionReady] = useState(false);
-  const [extensionVersion, setExtensionVersion] = useState<string | null>(null);
   const extensionReadyRef = useRef(false);
 
   useEffect(() => {
@@ -347,9 +339,6 @@ export default function DownloaderPage() {
         data.type === "extension-ready"
       ) {
         setExtensionReady(true);
-        setExtensionVersion(
-          typeof data.version === "string" ? data.version : "",
-        );
       }
     };
     window.addEventListener("focus", onFocus);
@@ -447,16 +436,6 @@ export default function DownloaderPage() {
     setMessage(null);
     try {
       const result = await requestExtensionSync();
-      if (
-        cookieSyncMissingInstagram(result) ||
-        (typeof result.version === "string" &&
-          isCookieSyncTooOld(result.version))
-      ) {
-        setMessageTone("error");
-        setMessage(COOKIE_SYNC_RELOAD_MESSAGE);
-        if (result.ok) await refreshCookies();
-        return;
-      }
       if (!result.ok) {
         setMessageTone("error");
         setMessage(result.error || result.message || "Cookie refresh failed");
@@ -476,15 +455,7 @@ export default function DownloaderPage() {
     try {
       if (extensionReady) {
         const result = await requestExtensionSync();
-        if (
-          cookieSyncMissingInstagram(result) ||
-          (typeof result.version === "string" &&
-            isCookieSyncTooOld(result.version))
-        ) {
-          setMessageTone("error");
-          setMessage(COOKIE_SYNC_RELOAD_MESSAGE);
-          if (result.ok) await refreshCookies();
-        } else if (result.ok) {
+        if (result.ok) {
           await refreshCookies();
         }
       }
@@ -512,8 +483,7 @@ export default function DownloaderPage() {
   const anyCookiesPresent = Boolean(
     cookies?.youtube.present ||
     cookies?.soundcloud.present ||
-    cookies?.spotify.present ||
-    cookies?.instagram?.present,
+    cookies?.spotify.present,
   );
   const youtubeStale =
     Boolean(cookies?.youtube.present) &&
@@ -521,8 +491,6 @@ export default function DownloaderPage() {
   const failedNeedRefresh = jobs.some(
     (job) => job.status === "failed" && cookieNeedsRefresh(job.error),
   );
-  const cookieSyncTooOld =
-    extensionReady && isCookieSyncTooOld(extensionVersion);
 
   return (
     <main>
@@ -533,11 +501,11 @@ export default function DownloaderPage() {
           </div>
           <aside
             className="cookie-sync"
-            title="Synced Spotify and Instagram sessions authorize the real follow/save requested by Hypeddit gates."
+            title="Your synced Spotify session authorizes the real follow/save requested by Hypeddit gates."
           >
             <p className="cookie-sync-disclosure">
-              Synced Spotify and Instagram sessions authorize the real
-              follow/save requested by Hypeddit gates.
+              Your synced Spotify session authorizes the real follow/save
+              requested by Hypeddit gates.
             </p>
             <div className="cookie-sync-top">
               <span className="cookie-sync-label">Cookies</span>
@@ -547,7 +515,6 @@ export default function DownloaderPage() {
                     ["youtube", "YT"],
                     ["soundcloud", "SC"],
                     ["spotify", "SP"],
-                    ["instagram", "IG"],
                   ] as const
                 ).map(([key, label]) => {
                   const status = cookies?.[key];
@@ -605,17 +572,6 @@ export default function DownloaderPage() {
                     already installed), then reload this page
                   </li>
                 </ol>
-              </div>
-            ) : cookieSyncTooOld ? (
-              <div className="cookie-sync-hint">
-                <p>
-                  This Cookie Sync build never opens Instagram —{" "}
-                  <a href="/thumper-extension.zip" download>
-                    download v{COOKIE_SYNC_EXTENSION_VERSION}
-                  </a>
-                  , then Reload on <code>chrome://extensions</code> and refresh
-                  this page.
-                </p>
               </div>
             ) : failedNeedRefresh ? (
               <div className="cookie-sync-hint">

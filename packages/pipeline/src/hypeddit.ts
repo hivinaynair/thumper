@@ -87,10 +87,6 @@ function isSpotifyCookieHost(hostname: string): boolean {
   return hostname === "spotify.com" || hostname.endsWith(".spotify.com");
 }
 
-function isInstagramCookieHost(hostname: string): boolean {
-  return hostname === "instagram.com" || hostname.endsWith(".instagram.com");
-}
-
 function isSoundCloudCookieHost(hostname: string): boolean {
   return hostname === "soundcloud.com" || hostname.endsWith(".soundcloud.com");
 }
@@ -109,32 +105,12 @@ export function parseSpotifyNetscapeCookies(
   return parseNetscapeCookiesForHost(text, isSpotifyCookieHost, nowSeconds);
 }
 
-export function parseInstagramNetscapeCookies(
-  text: string,
-  nowSeconds = Math.floor(Date.now() / 1000),
-): BrowserCookie[] {
-  return parseNetscapeCookiesForHost(text, isInstagramCookieHost, nowSeconds);
-}
-
 export function isSafeSpotifyAuthorizationUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     return (
       parsed.protocol === "https:" &&
       parsed.hostname.toLowerCase() === "accounts.spotify.com"
-    );
-  } catch {
-    return false;
-  }
-}
-
-export function isSafeInstagramUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    const hostname = parsed.hostname.toLowerCase();
-    return (
-      parsed.protocol === "https:" &&
-      (hostname === "instagram.com" || hostname.endsWith(".instagram.com"))
     );
   } catch {
     return false;
@@ -170,7 +146,6 @@ export function isSafeSoundCloudConnectUrl(url: string): boolean {
 const GATE_CONTROL_ALLOWED_ROOTS = [
   "hypeddit.com",
   "spotify.com",
-  "instagram.com",
   "soundcloud.com",
 ] as const;
 
@@ -246,24 +221,6 @@ export async function authorizeSpotifyAndConfirmHypedditAction(params: {
     isSafeAuthorizationUrl: isSafeSpotifyAuthorizationUrl,
     unsafeHostMessage:
       "Refusing Spotify authorization outside accounts.spotify.com",
-  });
-}
-
-/**
- * Instagram only authorizes or follows from instagram.com. Popup follow/OAuth
- * acceptance alone is never success: Hypeddit must drop `ig` from pending steps.
- */
-export async function authorizeInstagramAndConfirmHypedditAction(params: {
-  signal?: AbortSignal;
-  clickConnect: () => Promise<unknown>;
-  waitForPopup: () => Promise<ProviderAuthorizationPage | null>;
-  acceptAuthorization: (page: ProviderAuthorizationPage) => Promise<unknown>;
-  waitForHypedditActionConfirmation: () => Promise<unknown>;
-}): Promise<void> {
-  await authorizeProviderAndConfirmHypedditAction({
-    ...params,
-    isSafeAuthorizationUrl: isSafeInstagramUrl,
-    unsafeHostMessage: "Refusing Instagram action outside instagram.com",
   });
 }
 
@@ -450,7 +407,7 @@ class CookieJar {
 
 /**
  * Browserless Hypeddit unlock for email + client-side social steps.
- * Signals before submission when Spotify, Instagram, or an unknown step needs
+ * Signals before submission when Spotify or an unknown step needs
  * a browser.
  */
 export async function downloadHypedditGate(params: {
@@ -728,8 +685,6 @@ export function isAllowedGateControlHref(
       host === current ||
       host === "spotify.com" ||
       host.endsWith(".spotify.com") ||
-      host === "instagram.com" ||
-      host.endsWith(".instagram.com") ||
       host === "soundcloud.com" ||
       host.endsWith(".soundcloud.com")
     );
@@ -1059,32 +1014,11 @@ async function confirmHypedditConfiguredSpotifyAction(
   }
 }
 
-async function confirmHypedditConfiguredInstagramAction(
-  page: Page,
-  signal?: AbortSignal,
-): Promise<void> {
-  try {
-    await waitForStepProgression(page, "ig", signal);
-  } catch (error) {
-    if (signal?.aborted) throw new ProcessCancelledError();
-    if (error instanceof Error && error.name === "TimeoutError") {
-      throw new Error(
-        "Hypeddit did not confirm its configured Instagram action (follow)",
-      );
-    }
-    throw error;
-  }
-}
-
 const SPOTIFY_REFRESH_MESSAGE =
   "Spotify session is no longer usable — refresh Spotify cookies and retry.";
-const INSTAGRAM_REFRESH_MESSAGE =
-  "Instagram session is no longer usable — refresh Instagram cookies and retry.";
 const SPOTIFY_SESSION_NEEDED =
   "Hypeddit Spotify authorization needs a usable session — refresh Spotify cookies and retry.";
-const INSTAGRAM_SESSION_NEEDED =
-  "Hypeddit Instagram authorization needs a usable session — refresh Instagram cookies and retry.";
-const BROWSER_SOCIAL_STEPS = new Set(["sp", "ig", "sc"]);
+const BROWSER_SOCIAL_STEPS = new Set(["sp", "sc"]);
 
 async function rejectExpiredSpotifySession(
   page: Page,
@@ -1121,46 +1055,6 @@ async function rejectExpiredSpotifySession(
     signal,
   );
   if (expired) throw new Error(SPOTIFY_REFRESH_MESSAGE);
-}
-
-async function rejectExpiredInstagramSession(
-  page: Page,
-  signal?: AbortSignal,
-): Promise<void> {
-  const expired = await withAbort(
-    page.evaluate(() => {
-      const url = new URL(window.location.href);
-      const host = url.hostname.toLowerCase();
-      if (
-        (host === "instagram.com" || host.endsWith(".instagram.com")) &&
-        url.pathname.includes("/accounts/login")
-      ) {
-        return true;
-      }
-      if (
-        Array.from(url.searchParams.keys()).some((key) =>
-          /(?:instagram|oauth|auth)?.*error/i.test(key),
-        ) ||
-        (url.pathname.includes("callback") && url.searchParams.has("error"))
-      ) {
-        return true;
-      }
-      const alert = document.querySelector(
-        '[role="alert"], .alert, .error, .error-message',
-      );
-      return Boolean(
-        alert &&
-        /instagram|oauth|authoriz|session|login/i.test(
-          alert.textContent ?? "",
-        ) &&
-        /error|fail|denied|expired|invalid|login/i.test(
-          alert.textContent ?? "",
-        ),
-      );
-    }),
-    signal,
-  );
-  if (expired) throw new Error(INSTAGRAM_REFRESH_MESSAGE);
 }
 
 async function fillEmailStep(
@@ -1274,74 +1168,6 @@ async function acceptSpotifyAuthorizationPage(
   );
   if (!accepted) {
     throw new Error("Spotify authorization changed: accept control missing");
-  }
-}
-
-async function completeInstagramActionPage(
-  page: Page,
-  signal?: AbortSignal,
-): Promise<void> {
-  await withAbort(
-    page.waitForFunction(
-      () => {
-        const host = window.location.hostname.toLowerCase();
-        return host === "instagram.com" || host.endsWith(".instagram.com");
-      },
-      { timeout: BROWSER_TIMEOUT_MS, signal },
-    ),
-    signal,
-  );
-  if (!isSafeInstagramUrl(page.url())) {
-    throw new Error("Refusing Instagram action outside instagram.com");
-  }
-  if (new URL(page.url()).pathname.includes("/accounts/login")) {
-    throw new Error(INSTAGRAM_REFRESH_MESSAGE);
-  }
-  const accepted = await withAbort(
-    page.evaluate(() => {
-      const labels = new Set([
-        "follow",
-        "follow back",
-        "allow",
-        "authorize",
-        "agree",
-        "accept",
-        "continue",
-      ]);
-      const alreadyDone = new Set(["following", "requested"]);
-      const controls = Array.from(
-        document.querySelectorAll<HTMLElement>("button, a, [role='button']"),
-      );
-      const textOf = (element: HTMLElement) =>
-        (element.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase();
-      if (
-        controls.some((element) => {
-          const text = textOf(element);
-          return (
-            alreadyDone.has(text) ||
-            [...alreadyDone].some((label) => text.startsWith(`${label} `))
-          );
-        })
-      ) {
-        return true;
-      }
-      const control = controls.find((element) => {
-        const text = textOf(element);
-        return (
-          labels.has(text) ||
-          [...labels].some((label) => text.startsWith(`${label} `))
-        );
-      });
-      if (!control) return false;
-      control.click();
-      return true;
-    }),
-    signal,
-  );
-  if (!accepted) {
-    throw new Error(
-      "Instagram authorization changed: follow/allow control missing",
-    );
   }
 }
 
@@ -1459,7 +1285,7 @@ async function automateSpotifyGate(params: {
   });
 
   const steps = await readPageSteps(page, signal);
-  const supported = new Set(["email", "sc", "ig", "tk", "yt", "fb", "sp"]);
+  const supported = new Set(["email", "sc", "tk", "yt", "fb", "sp"]);
   const unknown = steps.filter((step) => !supported.has(step));
   if (unknown.length > 0) throw new BrowserRequiredError(unknown);
 
@@ -1471,7 +1297,6 @@ async function automateSpotifyGate(params: {
     if (step === "email") continue;
     if (
       step === "sc" ||
-      step === "ig" ||
       step === "tk" ||
       step === "yt" ||
       step === "fb" ||
@@ -1553,7 +1378,6 @@ export async function downloadHypedditGateWithBrowser(params: {
 export type SpotifyFallbackDependencies = {
   browserlessDownload: typeof downloadHypedditGate;
   materializeSpotifyCookies: (userId: string) => Promise<string | null>;
-  materializeInstagramCookies: (userId: string) => Promise<string | null>;
   readCookieFile: (cookiePath: string) => Promise<string>;
   unlinkCookieFile: (cookiePath: string) => Promise<unknown>;
   browserDownload: (
@@ -1588,9 +1412,6 @@ export async function downloadHypedditWithSpotifyFallback(
       const materializeSpotifyCookies =
         params.materializeSpotifyCookies ??
         ((userId: string) => materializeCookieFile(userId, "spotify"));
-      const materializeInstagramCookies =
-        params.materializeInstagramCookies ??
-        ((userId: string) => materializeCookieFile(userId, "instagram"));
       const readCookieFile =
         params.readCookieFile ??
         ((filePath: string) => fs.readFile(filePath, "utf8"));
@@ -1628,14 +1449,6 @@ export async function downloadHypedditWithSpotifyFallback(
             await materializeSpotifyCookies(params.userId),
             parseSpotifyNetscapeCookies,
             SPOTIFY_SESSION_NEEDED,
-            false,
-          );
-        }
-        if (step === "ig") {
-          await loadCookies(
-            await materializeInstagramCookies(params.userId),
-            parseInstagramNetscapeCookies,
-            INSTAGRAM_SESSION_NEEDED,
             false,
           );
         }

@@ -1,5 +1,5 @@
 export type CookieStatusMap = Record<
-  "youtube" | "soundcloud" | "spotify" | "instagram",
+  "youtube" | "soundcloud" | "spotify",
   { present: boolean; updatedAt: string | null }
 >;
 
@@ -14,7 +14,7 @@ export type RetryableJob = {
 };
 
 const COOKIE_REFRESH_RE =
-  /bot check|stale cookies|no playable formats|Sign in to confirm|Re-sync|Sync YouTube cookies|refresh (Spotify|Instagram|SoundCloud) cookies/i;
+  /bot check|stale cookies|no playable formats|Sign in to confirm|Re-sync|Sync YouTube cookies|refresh (Spotify|SoundCloud) cookies/i;
 
 export function cookieNeedsRefresh(error: string | null | undefined): boolean {
   if (!error) return false;
@@ -23,8 +23,7 @@ export function cookieNeedsRefresh(error: string | null | undefined): boolean {
 
 export function cookieProvidersNeeded(
   error: string,
-): Array<"youtube" | "soundcloud" | "spotify" | "instagram"> {
-  if (/refresh Instagram cookies/i.test(error)) return ["instagram"];
+): Array<"youtube" | "soundcloud" | "spotify"> {
   if (/refresh Spotify cookies/i.test(error)) return ["spotify"];
   if (/refresh SoundCloud cookies|Sync SoundCloud cookies/i.test(error)) {
     return ["soundcloud"];
@@ -58,7 +57,7 @@ export function missingCookiesForRetry(
   cookies: CookieStatusMap | null,
 ): string | null {
   if (!cookies) return "Sync cookies before retrying";
-  const needed = new Set<"youtube" | "soundcloud" | "spotify" | "instagram">();
+  const needed = new Set<"youtube" | "soundcloud" | "spotify">();
   for (const target of targets) {
     if (!target.error) continue;
     for (const provider of cookieProvidersNeeded(target.error)) {
@@ -69,7 +68,6 @@ export function missingCookiesForRetry(
     youtube: "YouTube",
     soundcloud: "SoundCloud",
     spotify: "Spotify",
-    instagram: "Instagram",
   };
   for (const provider of needed) {
     if (!cookies[provider]?.present) {

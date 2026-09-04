@@ -81,55 +81,23 @@ describe("processHypedditOriginalDownload", () => {
     expect(result.artifact.action).toBe("preserve-original");
   });
 
-  it("materializes Instagram cookies when the gate requires a follow", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "run-job-hypeddit-"));
-    roots.push(root);
-    const cookiePath = path.join(root, "instagram.txt");
-    await fs.writeFile(
-      cookiePath,
-      ".instagram.com\tTRUE\t/\tTRUE\t2147483647\tsessionid\tsecret",
-    );
-    const calls: string[] = [];
-
-    const result = await processHypedditOriginalDownload({
+  it("refuses an Instagram gate instead of automating the follow", async () => {
+    let browserLaunches = 0;
+    const promise = processHypedditOriginalDownload({
       ...baseParams(),
       fallbackDependencies: {
         browserlessDownload: async () => {
           throw new BrowserRequiredError(["ig"]);
         },
-        materializeInstagramCookies: async () => {
-          calls.push("materialize");
-          return cookiePath;
+        browserDownload: async () => {
+          browserLaunches += 1;
+          throw new Error("should not launch");
         },
-        readCookieFile: (filePath) => fs.readFile(filePath, "utf8"),
-        browserDownload: async ({ cookies }) => {
-          calls.push(`browser:${cookies[0]?.name}`);
-          return {
-            filePath: "/work/hypeddit.mp3",
-            ext: "mp3",
-            filename: "Artist upload.mp3",
-            title: "Track",
-            size: 123,
-          };
-        },
-        unlinkCookieFile: async (filePath) => {
-          calls.push("unlink");
-          await fs.unlink(filePath);
-        },
-      },
-      planArtifact: (input) => {
-        calls.push(`route:${input.downloadedPath}`);
-        return { action: "preserve-original" } as never;
       },
     });
 
-    expect(calls).toEqual([
-      "materialize",
-      "browser:sessionid",
-      "unlink",
-      "route:/work/hypeddit.mp3",
-    ]);
-    expect(result.downloaded.filename).toBe("Artist upload.mp3");
+    await expect(promise).rejects.toBeInstanceOf(BrowserRequiredError);
+    expect(browserLaunches).toBe(0);
   });
 
   it("does not launch or route when the Spotify cookie is missing", async () => {

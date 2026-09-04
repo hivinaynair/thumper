@@ -25,7 +25,7 @@ document.getElementById("sync").addEventListener("click", async () => {
       }
       msg.textContent =
         response.message ||
-        "Refreshed. Stay signed in to YouTube/SoundCloud/Spotify/Instagram in this browser.";
+        "Refreshed. Stay signed in to YouTube/SoundCloud/Spotify in this browser.";
     },
   );
 });

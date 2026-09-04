@@ -12,7 +12,6 @@ const ProviderSchema = z.enum([
   "youtube",
   "soundcloud",
   "spotify",
-  "instagram",
 ]);
 
 export async function GET() {

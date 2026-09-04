@@ -4,7 +4,6 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { BrowserLauncher } from "./hypeddit-browser";
 import {
-  isSafeInstagramUrl,
   isSafeSoundCloudUrl,
   isSafeSpotifyAuthorizationUrl,
   type BrowserCookie,
@@ -71,7 +70,6 @@ export function looksLikeSocialFollowWall(text: string): boolean {
   return (
     /follow on soundcloud/.test(normalized) ||
     /follow on spotify/.test(normalized) ||
-    /follow on instagram/.test(normalized) ||
     /follow on youtube/.test(normalized) ||
     /follow to (unlock|download)/.test(normalized) ||
     /connect with soundcloud/.test(normalized) ||
@@ -150,9 +148,9 @@ export async function clickFollowUnlockControls(page: PageLike): Promise<number>
           .replace(/\s+/g, " ")
           .trim();
         if (
-          !/follow on (soundcloud|spotify|instagram|youtube)/i.test(text) &&
-          !/connect with (soundcloud|spotify|instagram|youtube)/i.test(text) &&
-          !/^connect (soundcloud|spotify|instagram|youtube)$/i.test(text)
+          !/follow on (soundcloud|spotify|youtube)/i.test(text) &&
+          !/connect with (soundcloud|spotify|youtube)/i.test(text) &&
+          !/^connect (soundcloud|spotify|youtube)$/i.test(text)
         ) {
           continue;
         }
@@ -171,8 +169,7 @@ function isSettledPopupUrl(url: string): boolean {
 function isSafeProviderAuthorizationUrl(url: string): boolean {
   return (
     isSafeSpotifyAuthorizationUrl(url) ||
-    isSafeSoundCloudUrl(url) ||
-    isSafeInstagramUrl(url)
+    isSafeSoundCloudUrl(url)
   );
 }
 
@@ -188,9 +185,6 @@ function providerLoginRefreshMessage(url: string): string | null {
     }
     if (host === "soundcloud.com" || host.endsWith(".soundcloud.com")) {
       return "SoundCloud session is no longer usable — refresh SoundCloud cookies and retry.";
-    }
-    if (host === "instagram.com" || host.endsWith(".instagram.com")) {
-      return "Instagram session is no longer usable — refresh Instagram cookies and retry.";
     }
   } catch {
     return null;
@@ -261,7 +255,7 @@ async function acceptProviderAuthorizationPage(page: PopupPage): Promise<void> {
   if (loginMessage) throw new Error(loginMessage);
   if (!isSafeProviderAuthorizationUrl(url)) {
     throw new Error(
-      `Refusing follow authorization outside SoundCloud, Spotify, or Instagram (${url})`,
+      `Refusing follow authorization outside SoundCloud or Spotify (${url})`,
     );
   }
   const accepted = await clickAuthorizationControl(page);

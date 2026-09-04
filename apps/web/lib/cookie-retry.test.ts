@@ -110,7 +110,6 @@ describe("missingCookiesForRetry", () => {
         youtube: { present: false, updatedAt: null },
         soundcloud: { present: true, updatedAt: null },
         spotify: { present: false, updatedAt: null },
-        instagram: { present: false, updatedAt: null },
       }),
     ).toBe("Sync YouTube cookies before retrying");
   });
@@ -122,7 +121,6 @@ describe("missingCookiesForRetry", () => {
         youtube: { present: true, updatedAt: "2026-08-28T10:00:00.000Z" },
         soundcloud: { present: true, updatedAt: null },
         spotify: { present: false, updatedAt: null },
-        instagram: { present: false, updatedAt: null },
       }),
     ).toBeNull();
   });

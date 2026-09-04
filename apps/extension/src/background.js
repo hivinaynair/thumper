@@ -3,15 +3,12 @@ const PROVIDERS = {
   soundcloud: [".soundcloud.com"],
   // sp_dc lives on .spotify.com; accounts.* is needed for Hypeddit OAuth.
   spotify: [".spotify.com"],
-  // sessionid lives on .instagram.com; used for Hypeddit Instagram follows.
-  instagram: [".instagram.com", "instagram.com"],
 };
 
 const WARM_URLS = {
   youtube: "https://www.youtube.com/",
   soundcloud: "https://soundcloud.com/",
   spotify: "https://open.spotify.com/",
-  instagram: "https://www.instagram.com/",
 };
 
 const AUTH_COOKIE_NAMES = {
@@ -24,10 +21,9 @@ const AUTH_COOKIE_NAMES = {
   ]),
   soundcloud: new Set(["oauth_token", "oauth_token_refresh"]),
   spotify: new Set(["sp_dc", "sp_key"]),
-  instagram: new Set(["sessionid", "ds_user_id"]),
 };
 
-const SYNC_PROVIDERS = ["youtube", "soundcloud", "spotify", "instagram"];
+const SYNC_PROVIDERS = ["youtube", "soundcloud", "spotify"];
 
 function getCookiesForDomains(domains) {
   return Promise.all(
@@ -161,7 +157,6 @@ const SKIP_REASONS = {
   youtube: "Not signed in to YouTube in this browser",
   soundcloud: "Not signed in to SoundCloud — skipped",
   spotify: "Not signed in to Spotify — skipped",
-  instagram: "Not signed in to Instagram — skipped",
 };
 
 async function syncAll(origin) {
@@ -169,7 +164,6 @@ async function syncAll(origin) {
     youtube: { status: "pending" },
     soundcloud: { status: "pending" },
     spotify: { status: "pending" },
-    instagram: { status: "pending" },
   };
 
   for (const provider of SYNC_PROVIDERS) {
@@ -192,7 +186,7 @@ async function syncAll(origin) {
     return {
       ok: false,
       error:
-        "No signed-in sessions found for YouTube, SoundCloud, Spotify, or Instagram",
+        "No signed-in sessions found for YouTube, SoundCloud, or Spotify",
       results,
     };
   }
@@ -208,8 +202,6 @@ function summarize(results) {
   if (results.soundcloud.status === "skipped") parts.push("SoundCloud skipped");
   if (results.spotify.status === "synced") parts.push("Spotify refreshed");
   if (results.spotify.status === "skipped") parts.push("Spotify skipped");
-  if (results.instagram?.status === "synced") parts.push("Instagram refreshed");
-  if (results.instagram?.status === "skipped") parts.push("Instagram skipped");
   return parts.join(" · ");
 }
 
