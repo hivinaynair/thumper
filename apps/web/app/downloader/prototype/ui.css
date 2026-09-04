@@ -1,0 +1,147 @@
+/**
+ * PROTOTYPE — Tailwind + shadcn, themed onto the app's bronze/obsidian palette.
+ *
+ * Two deliberate constraints:
+ *
+ * 1. NO PREFLIGHT. Tailwind's reset is global and would flatten every style in
+ *    app/globals.css, so the theme and utility layers are imported on their own.
+ * 2. TOKENS ARE SCOPED to `.pv-ui`. globals.css already defines `--muted`,
+ *    `--accent` and `--border` with different meanings; defining shadcn's on
+ *    :root would silently repaint the shipped pages.
+ */
+@layer theme, base, components;
+@import "tailwindcss/theme.css" layer(theme);
+
+/*
+ * Utilities are imported UNLAYERED on purpose. globals.css styles `input,
+ * select, textarea` outside any cascade layer, and unlayered CSS beats layered
+ * CSS no matter the specificity — so utilities inside a layer would silently
+ * lose to it and shadcn's components would inherit the old form styling.
+ */
+@import "tailwindcss/utilities.css";
+
+@source "../../";
+@source "../../../components";
+
+.pv-ui {
+  --pv-background: #141414;
+  --pv-foreground: #ede6dc;
+  --pv-card: #1b1b1b;
+  --pv-card-foreground: #ede6dc;
+  --pv-popover: #191919;
+  --pv-popover-foreground: #ede6dc;
+  --pv-primary: #c9963e;
+  --pv-primary-foreground: #141414;
+  --pv-secondary: #242424;
+  --pv-secondary-foreground: #ede6dc;
+  --pv-muted: #202020;
+  --pv-muted-foreground: #8a8a8a;
+  --pv-accent: #2a2318;
+  --pv-accent-foreground: #e0b45c;
+  --pv-destructive: #d4655a;
+  --pv-destructive-foreground: #141414;
+  --pv-border: rgba(92, 92, 92, 0.32);
+  --pv-input: rgba(92, 92, 92, 0.42);
+  --pv-ring: #c9963e;
+  --pv-radius: 0.375rem;
+
+  background: var(--pv-background);
+  color: var(--pv-foreground);
+}
+
+@theme inline {
+  --color-background: var(--pv-background);
+  --color-foreground: var(--pv-foreground);
+  --color-card: var(--pv-card);
+  --color-card-foreground: var(--pv-card-foreground);
+  --color-popover: var(--pv-popover);
+  --color-popover-foreground: var(--pv-popover-foreground);
+  --color-primary: var(--pv-primary);
+  --color-primary-foreground: var(--pv-primary-foreground);
+  --color-secondary: var(--pv-secondary);
+  --color-secondary-foreground: var(--pv-secondary-foreground);
+  --color-muted: var(--pv-muted);
+  --color-muted-foreground: var(--pv-muted-foreground);
+  --color-accent: var(--pv-accent);
+  --color-accent-foreground: var(--pv-accent-foreground);
+  --color-destructive: var(--pv-destructive);
+  --color-destructive-foreground: var(--pv-destructive-foreground);
+  --color-border: var(--pv-border);
+  --color-input: var(--pv-input);
+  --color-ring: var(--pv-ring);
+
+  --radius-sm: calc(var(--pv-radius) - 2px);
+  --radius-md: var(--pv-radius);
+  --radius-lg: calc(var(--pv-radius) + 2px);
+  --radius-xl: calc(var(--pv-radius) + 6px);
+}
+
+/* Verdict tiers keep their meaning across every variant. */
+.pv-ui {
+  --tier-original: #e0b45c;
+  --tier-master: #7a9e6e;
+  --tier-club: #c9963e;
+  --tier-marginal: #b07a63;
+  --tier-unsuitable: #d4655a;
+  --tier-pending: #8a8a8a;
+}
+
+/*
+ * The slice of Tailwind preflight that shadcn actually depends on, scoped to
+ * `.pv-ui` and parked in @layer base so every utility still outranks it.
+ *
+ * Without this the ghost Button variant sets no background class — it assumes
+ * preflight already made buttons transparent — so it falls back to the UA's
+ * grey `buttonface`, and Radix's SelectTrigger renders black `buttontext` on a
+ * dark card.
+ */
+@layer base {
+  .pv-ui *,
+  .pv-ui *::before,
+  .pv-ui *::after {
+    box-sizing: border-box;
+    border: 0 solid var(--pv-border);
+  }
+  .pv-ui button,
+  .pv-ui input,
+  .pv-ui select,
+  .pv-ui textarea {
+    width: auto;
+    margin: 0;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    background: transparent;
+    border-radius: 0;
+  }
+  .pv-ui button {
+    cursor: pointer;
+    text-transform: none;
+  }
+  .pv-ui button:disabled {
+    cursor: default;
+  }
+  .pv-ui :is(h1, h2, h3, h4, h5, h6) {
+    margin: 0;
+    font-size: inherit;
+    font-weight: inherit;
+  }
+  .pv-ui :is(p, ul, ol, dl, dd, figure) {
+    margin: 0;
+    padding: 0;
+  }
+  .pv-ui :is(ul, ol) {
+    list-style: none;
+  }
+  .pv-ui a {
+    color: inherit;
+    text-decoration: inherit;
+  }
+  .pv-ui svg {
+    display: block;
+  }
+  .pv-ui ::placeholder {
+    color: var(--pv-muted-foreground);
+    opacity: 1;
+  }
+}

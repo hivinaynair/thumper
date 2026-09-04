@@ -14,12 +14,24 @@ import {
   isCookieSyncTooOld,
 } from "./cookie-sync";
 import { HYPEDDIT_ORIGINAL_COPY } from "./result-copy";
+// PROTOTYPE — throwaway, see ./prototype/README.md. Remove with the variants.
+import { PrototypeSwitcher } from "../components/prototype-switcher";
+import "./prototype/prototype.css";
+import { VariantAConsole } from "./prototype/variant-a-console";
+import { VariantBFocus } from "./prototype/variant-b-focus";
+import { VariantCFeed } from "./prototype/variant-c-feed";
+import {
+  VARIANT_KEYS,
+  VARIANT_NAMES,
+  type DownloaderViewModel,
+  type VariantKey,
+} from "./prototype/view-model";
 
-type DjTier = "master" | "club" | "marginal" | "unsuitable";
+export type DjTier = "master" | "club" | "marginal" | "unsuitable";
 
 const CLUB_READY_KEY = "thumper.clubReadyOnly";
 
-type Job = {
+export type Job = {
   id: string;
   status: string;
   stage: string;
@@ -85,7 +97,7 @@ type CookieProviderStatus = {
   updatedAt: string | null;
 };
 
-type CookieStatus = {
+export type CookieStatus = {
   youtube: CookieProviderStatus;
   soundcloud: CookieProviderStatus;
   spotify: CookieProviderStatus;
@@ -105,7 +117,7 @@ type SyncResult = {
   };
 };
 
-type PlaylistRollup = {
+export type PlaylistRollup = {
   total: number;
   done: number;
   failed: number;
@@ -308,6 +320,28 @@ export default function DownloaderPage() {
   useEffect(() => {
     extensionReadyRef.current = extensionReady;
   }, [extensionReady]);
+
+  // PROTOTYPE — variant switching. Read from the URL after mount rather than
+  // useSearchParams so the page needs no Suspense boundary.
+  const [variant, setVariant] = useState<VariantKey>("0");
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get("variant");
+    if (fromUrl && (VARIANT_KEYS as readonly string[]).includes(fromUrl)) {
+      setVariant(fromUrl as VariantKey);
+    }
+  }, []);
+  const changeVariant = (next: VariantKey) => {
+    setVariant(next);
+    const params = new URLSearchParams(window.location.search);
+    if (next === "0") params.delete("variant");
+    else params.set("variant", next);
+    const query = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${query ? `?${query}` : ""}`,
+    );
+  };
 
   // Read after mount, not in the initializer: this page renders on the server
   // and touching localStorage during render would break hydration.
@@ -523,6 +557,41 @@ export default function DownloaderPage() {
   );
   const cookieSyncTooOld =
     extensionReady && isCookieSyncTooOld(extensionVersion);
+
+  // PROTOTYPE — everything a variant needs. Data fetching, polling and
+  // mutations stay here; only the rendered subtree swaps.
+  const vm: DownloaderViewModel = {
+    url, setUrl, destination, setDestination,
+    freeDownloadsOnly, setFreeDownloadsOnly,
+    clubReadyOnly, setClubReadyOnly,
+    busy, canQueue, gate, createJob, message, messageTone,
+    jobs, rollups, finishedCount, downloadableCount, retryingId, clearing,
+    cancelJob: (id) => void cancelJob(id),
+    clearFinishedJobs: () => void clearFinishedJobs(),
+    retryWithNewCookies: (id) => void retryWithNewCookies(id),
+    cookies, syncing,
+    syncCookies: () => void syncCookies(),
+    extensionReady, anyCookiesPresent, youtubeStale, failedNeedRefresh,
+    cookieSyncTooOld,
+  };
+  const switcher = (
+    <PrototypeSwitcher
+      variants={VARIANT_KEYS}
+      current={variant}
+      names={VARIANT_NAMES}
+      onChange={changeVariant}
+    />
+  );
+  if (variant !== "0") {
+    return (
+      <>
+        {variant === "A" ? <VariantAConsole {...vm} /> : null}
+        {variant === "B" ? <VariantBFocus {...vm} /> : null}
+        {variant === "C" ? <VariantCFeed {...vm} /> : null}
+        {switcher}
+      </>
+    );
+  }
 
   return (
     <main>
@@ -902,6 +971,7 @@ export default function DownloaderPage() {
           </div>
         </section>
       </div>
+      {switcher}
     </main>
   );
 }
