@@ -14,9 +14,9 @@ export default function HomePage() {
 					<p className="hero-kicker">Private audio harvest</p>
 					<h1>Thumper</h1>
 					<p className="hero-lede">
-						Pull tracks from YouTube and SoundCloud — or paste Spotify and we
-						mirror each song with a scored match — then encode to FLAC, WAV, or
-						ALAC.
+						Paste a YouTube or SoundCloud link and get it back as FLAC, WAV, or
+						ALAC. Spotify works too: we find each song elsewhere and skip
+						anything we can&rsquo;t confidently match.
 					</p>
 					<div className="hero-actions">
 						<Show when="signed-in">
