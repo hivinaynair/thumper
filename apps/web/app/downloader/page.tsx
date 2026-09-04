@@ -1,6 +1,6 @@
 "use client";
 
-import { detectSourceKind, trackDisplayName } from "@thumper/shared";
+import { detectSourceKind } from "@thumper/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   cookieNeedsRefresh,
@@ -8,83 +8,40 @@ import {
   retryButtonLabel,
 } from "../../lib/cookie-retry";
 import { COOKIE_SYNC_EXTENSION_VERSION } from "./cookie-sync";
-import { HYPEDDIT_ORIGINAL_COPY } from "./result-copy";
-
-type DjTier = "master" | "club" | "marginal" | "unsuitable";
+import { COOKIE_SYNC_DISCLOSURE } from "./result-copy";
+import { ChevronDown, Loader2, RefreshCw } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import {
+  groupJobs,
+  jobLabel,
+  playlistRollup,
+  rollupSummary,
+  verdictOf,
+  type CookieStatus,
+  type Job,
+  type PlaylistRollup,
+  type VerdictTier,
+} from "./job-view";
+import { StatusDot } from "../components/status-dot";
+import "../ui-theme.css";
 
 const CLUB_READY_KEY = "thumper.clubReadyOnly";
-
-type Job = {
-  id: string;
-  status: string;
-  stage: string;
-  progress: number;
-  sourceUrl: string;
-  matchedUrl?: string | null;
-  title?: string | null;
-  artist?: string | null;
-  audioFormat: string;
-  destination: string;
-  error?: string | null;
-  result?: {
-    fileId?: string;
-    driveUrl?: string;
-    qualityLabel?: string;
-    playlist?: boolean;
-    trackCount?: number;
-    childJobIds?: string[];
-    unmatchedCount?: number;
-    matchScore?: number;
-    djTier?: DjTier;
-    djHeadline?: string;
-    warnings?: string[];
-    cutoffHz?: number;
-    sourceFormatId?: string;
-    /** SoundCloud free-download / original upload (`format_id=download`). */
-    soundcloudOriginal?: boolean;
-    /** Hypeddit artist original; WAV is tagged FLAC, other formats unchanged. */
-    hypedditOriginal?: boolean;
-    /** Non-Hypeddit purchase link — open and download manually. */
-    manualDownloadUrl?: string;
-    manualDownloadTitle?: string | null;
-    freeDownloadsOnly?: boolean;
-    clubReadyOnly?: boolean;
-    qualityRejected?: boolean;
-  } | null;
-};
-
-const TIER_LABEL: Record<DjTier, string> = {
-  master: "Master quality",
-  club: "Club-ready",
-  marginal: "Marginal quality",
-  unsuitable: "Not for club playback",
-};
-
-/**
- * The verdict headline already leads with its tier ("Marginal — lossy source,
- * rolls off at 18.2 kHz"), so emphasise that lead rather than prefixing a second
- * label and printing the word twice.
- */
-function QualityBadge({ tier, headline }: { tier: DjTier; headline?: string }) {
-  const [lead, ...rest] = (headline || TIER_LABEL[tier]).split(" — ");
-  return (
-    <div className={`quality-badge ${tier}`}>
-      <strong>{lead}</strong>
-      {rest.length ? ` — ${rest.join(" — ")}` : ""}
-    </div>
-  );
-}
-
-type CookieProviderStatus = {
-  present: boolean;
-  updatedAt: string | null;
-};
-
-type CookieStatus = {
-  youtube: CookieProviderStatus;
-  soundcloud: CookieProviderStatus;
-  spotify: CookieProviderStatus;
-};
 
 type SyncResult = {
   ok?: boolean;
@@ -97,53 +54,6 @@ type SyncResult = {
     spotify?: { status: string; reason?: string };
   };
 };
-
-type PlaylistRollup = {
-  total: number;
-  done: number;
-  failed: number;
-  pending: number;
-  failedTracks: Job[];
-};
-
-function jobLabel(job: Job): string {
-  if (job.title || job.artist) return trackDisplayName(job.artist, job.title);
-  return job.sourceUrl;
-}
-
-/**
- * A playlist parent finishes as soon as its tracks are queued, so the only
- * honest progress report is the live state of its children.
- */
-function playlistRollup(
-  job: Job,
-  byId: Map<string, Job>,
-): PlaylistRollup | null {
-  if (!job.result?.playlist) return null;
-  const children = (job.result.childJobIds ?? [])
-    .map((id) => byId.get(id))
-    .filter((child): child is Job => Boolean(child));
-  if (children.length === 0) return null;
-
-  const failedTracks = children.filter(
-    (child) => child.status === "failed" || child.status === "cancelled",
-  );
-  const done = children.filter((child) => child.status === "completed").length;
-  return {
-    total: children.length,
-    done,
-    failed: failedTracks.length,
-    pending: children.length - done - failedTracks.length,
-    failedTracks,
-  };
-}
-
-function rollupSummary(rollup: PlaylistRollup): string {
-  const parts = [`${rollup.done}/${rollup.total} downloaded`];
-  if (rollup.failed) parts.push(`${rollup.failed} failed`);
-  if (rollup.pending) parts.push(`${rollup.pending} in progress`);
-  return parts.join(" · ");
-}
 
 /** Mark cookies stale after this — Google rotates sessions often. */
 const COOKIE_STALE_MS = 12 * 60 * 60 * 1000;
@@ -280,6 +190,30 @@ function requestExtensionSync(timeoutMs = 45000): Promise<SyncResult> {
     );
   });
 }
+
+const TIER_TEXT: Record<VerdictTier, string> = {
+  original: "text-[var(--ui-tier-original)]",
+  master: "text-[var(--ui-tier-master)]",
+  club: "text-[var(--ui-tier-club)]",
+  marginal: "text-[var(--ui-tier-marginal)]",
+  unsuitable: "text-[var(--ui-tier-unsuitable)]",
+  pending: "text-muted-foreground",
+};
+
+const TIER_RULE: Record<VerdictTier, string> = {
+  original: "border-[var(--ui-tier-original)]",
+  master: "border-[var(--ui-tier-master)]",
+  club: "border-[var(--ui-tier-club)]",
+  marginal: "border-[var(--ui-tier-marginal)]",
+  unsuitable: "border-[var(--ui-tier-unsuitable)]",
+  pending: "border-border",
+};
+
+const COOKIE_PROVIDERS = [
+  ["youtube", "YouTube"],
+  ["soundcloud", "SoundCloud"],
+  ["spotify", "Spotify"],
+] as const;
 
 export default function DownloaderPage() {
   const [url, setUrl] = useState("");
@@ -492,372 +426,377 @@ export default function DownloaderPage() {
     (job) => job.status === "failed" && cookieNeedsRefresh(job.error),
   );
 
-  return (
-    <main>
-      <div className="stack">
-        <header className="page-head">
-          <div className="page-head-main">
-            <h1>Downloader</h1>
-          </div>
-          <aside
-            className="cookie-sync"
-            title="Your synced Spotify session authorizes the real follow/save requested by Hypeddit gates."
-          >
-            <p className="cookie-sync-disclosure">
-              Your synced Spotify session authorizes the real follow/save
-              requested by Hypeddit gates.
-            </p>
-            <div className="cookie-sync-top">
-              <span className="cookie-sync-label">Cookies</span>
-              <ul className="cookie-sync-list">
-                {(
-                  [
-                    ["youtube", "YT"],
-                    ["soundcloud", "SC"],
-                    ["spotify", "SP"],
-                  ] as const
-                ).map(([key, label]) => {
-                  const status = cookies?.[key];
-                  const present = status?.present ?? false;
-                  const stale =
-                    present && isCookieStale(status?.updatedAt ?? null);
-                  const age = formatSyncedAge(status?.updatedAt ?? null);
-                  return (
-                    <li
-                      key={key}
-                      className={`cookie-sync-chip${present ? (stale ? " is-stale" : " is-synced") : " is-missing"}`}
-                      title={
-                        present
-                          ? `${stale ? "Stale — " : ""}Updated ${formatSyncedAt(status?.updatedAt ?? null)}`
-                          : "Not synced yet"
-                      }
-                    >
-                      <span className="cookie-sync-dot" aria-hidden="true" />
-                      {label}
-                      {present && age ? (
-                        <span className="cookie-sync-age">{age}</span>
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ul>
-              <button
-                type="button"
-                className={`cookie-sync-btn${youtubeStale || failedNeedRefresh ? " is-urgent" : ""}`}
-                onClick={() => void syncCookies()}
-                disabled={syncing || !extensionReady}
-              >
-                {syncing
-                  ? "Refreshing…"
-                  : anyCookiesPresent
-                    ? "Refresh"
-                    : "Sync"}
-              </button>
-            </div>
-            {!extensionReady ? (
-              <div className="cookie-sync-hint">
-                <p>
-                  Extension not detected —{" "}
-                  <a href="/thumper-extension.zip" download>
-                    download v{COOKIE_SYNC_EXTENSION_VERSION}
-                  </a>
-                </p>
-                <ol className="install-steps">
-                  <li>Unzip the download</li>
-                  <li>
-                    Open <code>chrome://extensions</code>, enable Developer mode
-                  </li>
-                  <li>
-                    Load unpacked → pick the unzipped folder (or Reload if
-                    already installed), then reload this page
-                  </li>
-                </ol>
-              </div>
-            ) : failedNeedRefresh ? (
-              <div className="cookie-sync-hint">
-                <p>
-                  A job failed on stale/blocked cookies — Refresh, then Retry
-                  with new cookies on the failed tracks.
-                </p>
-              </div>
-            ) : youtubeStale ? (
-              <div className="cookie-sync-hint">
-                <p>
-                  YouTube session looks older than 12h. Refresh before the next
-                  download.
-                </p>
-              </div>
-            ) : null}
-          </aside>
-        </header>
+  // "Checking cookie sync…" is a load state, not a failure; painting it in the
+  // error tone makes a healthy page read as broken on arrival.
+  const checkingCookies = !cookies;
+  const notice = message ?? (checkingCookies ? null : gate.reason);
+  const noticeIsError = message ? messageTone === "error" : !gate.ready;
+  const { topLevel, childrenOf } = groupJobs(jobs);
+  const driveSelected = destination === "drive" || destination === "both";
 
-        <form className="panel" onSubmit={createJob}>
-          <h2>New job</h2>
-          <label>
-            URL
-            <input
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="YouTube, SoundCloud, or Spotify"
-              required
-            />
-          </label>
-          <div className="row">
-            <label>
-              Destination
-              <select
-                value={destination}
-                onChange={(e) => setDestination(e.target.value)}
-              >
-                <option value="browser">Browser</option>
-                <option value="drive">Google Drive</option>
-                <option value="both">Both</option>
-              </select>
-            </label>
+  return (
+    <div className="ui-scope min-h-screen">
+      <div className="mx-auto max-w-2xl px-5 pt-10 pb-28">
+        <h1 className="mb-5 text-lg font-semibold tracking-tight">Downloader</h1>
+
+        <form
+          onSubmit={createJob}
+          className="rounded-xl border border-border bg-card p-5 shadow-lg shadow-black/30"
+        >
+          <Input
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="Paste a YouTube, SoundCloud, or Spotify link"
+            required
+            className="h-12 border-input bg-background text-base md:text-base"
+          />
+
+          <div className="mt-3 flex items-center gap-3">
+            <Select value={destination} onValueChange={setDestination}>
+              <SelectTrigger className="w-44 bg-background">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="browser">Browser</SelectItem>
+                <SelectItem value="drive">Google Drive</SelectItem>
+                <SelectItem value="both">Both</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Button type="submit" disabled={!canQueue} className="ml-auto">
+              {busy ? (
+                <>
+                  <Loader2 className="animate-spin" /> Queuing
+                </>
+              ) : (
+                "Queue download"
+              )}
+            </Button>
           </div>
-          {destination === "drive" || destination === "both" ? (
-            <p className="panel-note">
+
+          {driveSelected ? (
+            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
               Drive needs Google connected with <code>drive.file</code> — open
               your account menu, reconnect Google, then queue again.
             </p>
           ) : null}
-          <label className="check-row">
-            <input
-              type="checkbox"
-              checked={freeDownloadsOnly}
-              onChange={(e) => setFreeDownloadsOnly(e.target.checked)}
-            />
-            <span>
-              Free downloads only (artist gates)
-              <span className="check-row-hint">
-                Skip streams and YouTube mirrors. Tracks without a native
-                SoundCloud download or a file gate (Hypeddit, ToneDen, DropLoud,
-                Laylo, GateRush, Dropbox, and similar) fail so playlist fills
-                stay masters-only.
-              </span>
-            </span>
-          </label>
-          <label className="check-row">
-            <input
-              type="checkbox"
-              checked={clubReadyOnly}
-              onChange={(e) => {
-                setClubReadyOnly(e.target.checked);
-                window.localStorage.setItem(
-                  CLUB_READY_KEY,
-                  String(e.target.checked),
-                );
-              }}
-            />
-            <span>
-              Club-ready only
-              <span className="check-row-hint">
-                Rejects anything whose audio stops short of 19 kHz — a lossy
-                stream, whatever the file says it is.
-              </span>
-            </span>
-          </label>
-          <div>
-            <button className="btn" type="submit" disabled={!canQueue}>
-              {busy ? "Queuing…" : "Queue download"}
-            </button>
-          </div>
-          {gate.reason ? (
-            <p className={`flash${gate.ready ? "" : " error"}`}>
-              {gate.reason}
-            </p>
-          ) : null}
-          {message ? (
-            <p className={`flash${messageTone === "error" ? " error" : ""}`}>
-              {message}
+
+          <Collapsible className="mt-4">
+            <CollapsibleTrigger className="group flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
+              <ChevronDown className="size-3.5 transition-transform group-data-[state=open]:rotate-180" />
+              Filters
+            </CollapsibleTrigger>
+            <CollapsibleContent className="space-y-3 pt-3">
+              <label className="flex cursor-pointer gap-2.5">
+                <Checkbox
+                  checked={freeDownloadsOnly}
+                  onCheckedChange={(v) => setFreeDownloadsOnly(v === true)}
+                  className="mt-0.5"
+                />
+                <span className="text-xs leading-relaxed text-muted-foreground">
+                  <span className="text-foreground">
+                    Free downloads only (artist gates)
+                  </span>{" "}
+                  — skip streams and YouTube mirrors. Tracks without a native
+                  SoundCloud download or a file gate (Hypeddit, ToneDen,
+                  DropLoud, Laylo, GateRush, Dropbox, and similar) fail, so
+                  playlist fills stay masters-only.
+                </span>
+              </label>
+              <label className="flex cursor-pointer gap-2.5">
+                <Checkbox
+                  checked={clubReadyOnly}
+                  onCheckedChange={(v) => {
+                    setClubReadyOnly(v === true);
+                    window.localStorage.setItem(CLUB_READY_KEY, String(v === true));
+                  }}
+                  className="mt-0.5"
+                />
+                <span className="text-xs leading-relaxed text-muted-foreground">
+                  <span className="text-foreground">Club-ready only</span> —
+                  rejects anything whose audio stops short of 19 kHz, a lossy
+                  stream whatever the file says it is.
+                </span>
+              </label>
+            </CollapsibleContent>
+          </Collapsible>
+
+          {notice ? (
+            <p
+              className={`mt-4 rounded-md border px-3 py-2 text-xs ${
+                noticeIsError
+                  ? "border-destructive/40 bg-destructive/10 text-destructive"
+                  : "border-border bg-muted text-muted-foreground"
+              }`}
+            >
+              {notice}
             </p>
           ) : null}
         </form>
 
-        <section className="panel">
-          <div className="panel-head">
-            <h2>Jobs</h2>
+        <p className="mt-5 text-[11px] leading-relaxed text-muted-foreground">
+          {COOKIE_SYNC_DISCLOSURE}
+        </p>
+
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Sessions</span>
+          {COOKIE_PROVIDERS.map(([key, label]) => {
+            const status = cookies?.[key];
+            const present = status?.present ?? false;
+            const stale = present && isCookieStale(status?.updatedAt ?? null);
+            const age = formatSyncedAge(status?.updatedAt ?? null);
+            return (
+              <Badge
+                key={key}
+                variant="outline"
+                title={
+                  present
+                    ? `${stale ? "Stale — " : ""}Updated ${formatSyncedAt(status?.updatedAt ?? null)}`
+                    : "Not synced yet"
+                }
+                className="gap-1.5 border-border font-normal text-muted-foreground"
+              >
+                <span
+                  className={`size-1.5 rounded-full ${
+                    checkingCookies
+                      ? "bg-muted-foreground/40"
+                      : !present
+                        ? "bg-[var(--ui-tier-unsuitable)]"
+                        : stale
+                          ? "bg-[var(--ui-tier-marginal)]"
+                          : "bg-[var(--ui-tier-master)]"
+                  }`}
+                />
+                {label}
+                {present && age ? (
+                  <span className="text-[10px] opacity-70">{age}</span>
+                ) : null}
+              </Badge>
+            );
+          })}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => void syncCookies()}
+            disabled={syncing || !extensionReady}
+          >
+            <RefreshCw className={syncing ? "animate-spin" : ""} />
+            {anyCookiesPresent ? "Refresh" : "Sync"}
+          </Button>
+
+          <span className="ml-auto flex gap-2">
             {downloadableCount > 0 ? (
-              // A plain <a> to a streaming API route, not a page: the browser
-              // writes it straight to disk instead of buffering in the tab.
-              // eslint-disable-next-line @next/next/no-html-link-for-pages
-              <a className="btn" href="/api/files/zip">
-                {`Download all (${downloadableCount})`}
-              </a>
+              <Button asChild variant="secondary" size="sm">
+                {/* A plain <a> to a streaming API route, not a page: the browser
+                    writes it straight to disk instead of buffering in the tab. */}
+                {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+                <a href="/api/files/zip">Download all ({downloadableCount})</a>
+              </Button>
             ) : null}
             {finishedCount > 0 ? (
-              <button
+              <Button
                 type="button"
-                className="btn ghost"
+                variant="ghost"
+                size="sm"
                 disabled={clearing}
                 onClick={() => void clearFinishedJobs()}
               >
                 {clearing ? "Clearing…" : "Clear finished"}
-              </button>
+              </Button>
             ) : null}
+          </span>
+        </div>
+
+        {!extensionReady ? (
+          <div className="mt-3 rounded-md border border-border bg-muted px-3 py-2.5 text-xs text-muted-foreground">
+            <p>
+              Extension not detected —{" "}
+              <a
+                href="/thumper-extension.zip"
+                download
+                className="text-primary underline underline-offset-2"
+              >
+                download v{COOKIE_SYNC_EXTENSION_VERSION}
+              </a>
+            </p>
+            <ol className="mt-1.5 list-decimal space-y-0.5 pl-4">
+              <li>Unzip the download</li>
+              <li>
+                Open <code>chrome://extensions</code>, enable Developer mode
+              </li>
+              <li>
+                Load unpacked → pick the unzipped folder (or Reload if already
+                installed), then reload this page
+              </li>
+            </ol>
           </div>
-          <div className="jobs">
-            {jobs.length === 0 ? (
-              <p className="muted">No jobs yet.</p>
-            ) : (
-              jobs.map((job) => {
-                const retryTargets = jobsToRetry(job, jobs);
-                return (
-                <article key={job.id} className="job">
-                  <div className="job-head">
-                    <div className="job-title">{jobLabel(job)}</div>
-                    <span className={`badge status-${job.status}`}>
-                      {job.status}
-                    </span>
-                  </div>
-                  <div className="job-meta">
+        ) : failedNeedRefresh ? (
+          <p className="mt-3 rounded-md border border-border bg-muted px-3 py-2.5 text-xs text-muted-foreground">
+            A job failed on stale or blocked cookies — Refresh, then retry the
+            failed tracks.
+          </p>
+        ) : youtubeStale ? (
+          <p className="mt-3 rounded-md border border-border bg-muted px-3 py-2.5 text-xs text-muted-foreground">
+            YouTube session looks older than 12h. Refresh before the next
+            download.
+          </p>
+        ) : null}
+
+        <Separator className="my-6" />
+
+        {topLevel.length === 0 ? (
+          <p className="py-16 text-center text-sm text-muted-foreground">
+            Nothing queued yet.
+          </p>
+        ) : (
+          <div className="space-y-7">
+            {topLevel.map((job) => {
+              const verdict = verdictOf(job);
+              const kids = childrenOf(job.id);
+              const rollup = rollups.get(job.id);
+              const retryTargets = jobsToRetry(job, jobs);
+              return (
+                <article key={job.id} className="relative pl-5">
+                  <span className="absolute top-1.5 left-0">
+                    <StatusDot status={job.status} />
+                  </span>
+
+                  <h2 className="text-[15px] leading-tight font-semibold">
+                    {jobLabel(job)}
+                  </h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
                     {job.stage} · {job.audioFormat} · {job.destination}
-                    {job.result?.freeDownloadsOnly
-                      ? " · free downloads only"
-                      : ""}
+                    {job.result?.freeDownloadsOnly ? " · free downloads only" : ""}
                     {job.result?.clubReadyOnly ? " · club-ready only" : ""}
-                    {job.result?.playlist
-                      ? ` · playlist (${job.result.trackCount ?? "?"} tracks${
-                          job.result.unmatchedCount
-                            ? `, ${job.result.unmatchedCount} unmatched`
-                            : ""
-                        })`
+                    {rollup ? ` · ${rollupSummary(rollup)}` : ""}
+                    {job.result?.unmatchedCount
+                      ? ` · ${job.result.unmatchedCount} unmatched`
                       : ""}
-                    {rollups.has(job.id)
-                      ? ` · ${rollupSummary(rollups.get(job.id)!)}`
-                      : ""}
-                    {job.result?.matchScore
-                      ? ` · match ${job.result.matchScore}`
-                      : ""}
-                    {job.result?.qualityLabel
-                      ? ` · ${job.result.qualityLabel}`
-                      : ""}
-                    {job.matchedUrl ? ` · mirror ${job.matchedUrl}` : ""}
-                  </div>
-                  <div className="bar">
-                    <span style={{ width: `${job.progress}%` }} />
-                  </div>
-                  {job.result?.hypedditOriginal ? (
-                    <div className="quality-badge original">
-                      <strong>Artist original</strong>
-                      {` — ${HYPEDDIT_ORIGINAL_COPY}`}
+                    {job.result?.matchScore ? ` · match ${job.result.matchScore}` : ""}
+                  </p>
+
+                  {job.status === "running" || job.status === "queued" ? (
+                    <div className="mt-2.5 h-0.5 w-full overflow-hidden rounded bg-muted">
+                      <span
+                        className="block h-full bg-primary transition-[width]"
+                        style={{ width: `${job.progress}%` }}
+                      />
                     </div>
                   ) : null}
-                  {job.result?.soundcloudOriginal ? (
-                    <div className="quality-badge original">
-                      <strong>SoundCloud original</strong>
-                      {" — free download (artist upload, not a stream)"}
-                    </div>
-                  ) : null}
-                  {job.result?.manualDownloadUrl ? (
-                    <div className="quality-badge unsuitable">
-                      <strong>Download manually</strong>
-                      {" — this link is a stream or store page, not a file gate. "}
-                      <a
-                        href={job.result.manualDownloadUrl}
-                        target="_blank"
-                        rel="noreferrer"
+
+                  {verdict.tier !== "pending" ? (
+                    <p
+                      className={`mt-3 border-l-2 bg-muted/50 py-2 pl-3 text-[13px] leading-relaxed ${TIER_RULE[verdict.tier]}`}
+                    >
+                      <span
+                        className={`font-semibold tracking-wide uppercase ${TIER_TEXT[verdict.tier]}`}
                       >
-                        Open gate
-                      </a>
-                      {", then use Retag to tag it."}
-                    </div>
+                        {verdict.lead}
+                      </span>
+                      {verdict.detail ? (
+                        <span className="text-muted-foreground"> — {verdict.detail}</span>
+                      ) : null}
+                    </p>
                   ) : null}
-                  {job.result?.qualityRejected ? (
-                    <div className="quality-badge unsuitable">
-                      <strong>Not club-ready</strong>
-                    </div>
-                  ) : null}
-                  {job.result?.djTier &&
-                  job.result.djTier !== "master" &&
-                  !job.result.qualityRejected ? (
-                    <QualityBadge
-                      tier={job.result.djTier}
-                      headline={job.result.djHeadline}
-                    />
-                  ) : null}
+
                   {job.result?.warnings?.length ? (
-                    <ul className="job-warnings">
-                      {job.result.warnings.map((w) => (
-                        <li key={w}>{w}</li>
+                    <ul className="mt-2 space-y-1 pl-4 text-xs text-muted-foreground">
+                      {job.result.warnings.map((warning) => (
+                        <li key={warning} className="list-disc">
+                          {warning}
+                        </li>
                       ))}
                     </ul>
                   ) : null}
-                  {rollups.get(job.id)?.failedTracks.length ? (
-                    <div className="job-error">
-                      {rollups.get(job.id)!.failed} of{" "}
-                      {rollups.get(job.id)!.total} tracks failed:
-                      <ul className="job-warnings">
-                        {rollups.get(job.id)!.failedTracks.map((track) => (
-                          <li key={track.id}>
-                            {jobLabel(track)}
-                            {track.error ? ` — ${track.error}` : ""}
+
+                  {kids.length > 0 ? (
+                    <ul className="mt-3 space-y-1.5 border-l border-border pl-3">
+                      {kids.map((kid) => {
+                        const kidVerdict = verdictOf(kid);
+                        return (
+                          <li key={kid.id} className="flex items-center gap-2.5 text-xs">
+                            <StatusDot status={kid.status} />
+                            <span className="flex-1 truncate text-muted-foreground">
+                              {jobLabel(kid)}
+                            </span>
+                            <span
+                              title={kidVerdict.detail ?? undefined}
+                              className={`text-[10px] font-medium tracking-wider uppercase ${TIER_TEXT[kidVerdict.tier]}`}
+                            >
+                              {kidVerdict.lead}
+                            </span>
+                            {kid.result?.fileId ? (
+                              <Button
+                                asChild
+                                variant="secondary"
+                                size="sm"
+                                className="h-6 px-2 text-[11px]"
+                              >
+                                <a href={`/api/files/${kid.result.fileId}`}>Get</a>
+                              </Button>
+                            ) : null}
                           </li>
-                        ))}
-                      </ul>
-                    </div>
+                        );
+                      })}
+                    </ul>
                   ) : null}
-                  {job.error ? (
-                    <div className="job-error">{job.error}</div>
-                  ) : null}
-                  <div className="job-actions">
+
+                  <div className="mt-3 flex flex-wrap gap-2">
                     {job.status === "queued" || job.status === "running" ? (
-                      <button
+                      <Button
                         type="button"
-                        className="btn ghost"
+                        variant="ghost"
+                        size="sm"
                         onClick={() => void cancelJob(job.id)}
                       >
                         Cancel
-                      </button>
+                      </Button>
                     ) : null}
                     {retryTargets.length > 0 ? (
-                      <button
+                      <Button
                         type="button"
-                        className="btn"
+                        variant="secondary"
+                        size="sm"
                         disabled={retryingId !== null}
                         onClick={() => void retryWithNewCookies(job.id)}
                       >
                         {retryingId === job.id
                           ? "Retrying…"
                           : retryButtonLabel(retryTargets.length)}
-                      </button>
+                      </Button>
                     ) : null}
                     {job.result?.fileId ? (
-                      <a
-                        className="btn"
-                        href={`/api/files/${job.result.fileId}`}
-                      >
-                        Download
-                      </a>
+                      <Button asChild size="sm">
+                        <a href={`/api/files/${job.result.fileId}`}>Download</a>
+                      </Button>
                     ) : null}
                     {job.result?.driveUrl ? (
-                      <a
-                        className="btn secondary"
-                        href={job.result.driveUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Open in Drive
-                      </a>
+                      <Button asChild variant="secondary" size="sm">
+                        <a href={job.result.driveUrl} target="_blank" rel="noreferrer">
+                          Open in Drive
+                        </a>
+                      </Button>
                     ) : null}
                     {job.result?.manualDownloadUrl ? (
-                      <a
-                        className="btn secondary"
-                        href={job.result.manualDownloadUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Open Free Download
-                      </a>
+                      <Button asChild variant="secondary" size="sm">
+                        <a
+                          href={job.result.manualDownloadUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open gate
+                        </a>
+                      </Button>
                     ) : null}
                   </div>
                 </article>
-                );
-              })
-            )}
+              );
+            })}
           </div>
-        </section>
+        )}
       </div>
-    </main>
+    </div>
   );
 }
