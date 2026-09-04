@@ -35,7 +35,7 @@ export type BrowserLauncher = {
 
 /**
  * Worker-only value import. Provider-neutral pipeline and web route imports
- * reach this module only when a Spotify or Instagram gate actually needs Chromium.
+ * reach this module only when a Spotify gate actually needs Chromium.
  */
 export async function withSecureHypedditBrowser<T>(params: {
   cookies: BrowserCookie[];

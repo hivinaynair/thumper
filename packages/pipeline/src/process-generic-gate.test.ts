@@ -64,7 +64,6 @@ describe("processGenericGateDownload", () => {
       requestedFormat: "flac",
       outputDirectory: workDir,
       materializeSpotifyCookies: async () => null,
-      materializeInstagramCookies: async () => null,
       browserDownload: async ({ gateUrl, email }) => {
         expect(gateUrl).toContain("toneden.io");
         expect(email).toBe("dj@example.com");
@@ -82,19 +81,14 @@ describe("processGenericGateDownload", () => {
     expect(result.downloaded.ext).toBe("mp3");
   });
 
-  it("injects Spotify, Instagram, and SoundCloud cookies into the generic browser gate", async () => {
+  it("injects Spotify and SoundCloud cookies into the generic browser gate", async () => {
     const workDir = await fs.mkdtemp(path.join(os.tmpdir(), "generic-gate-"));
     roots.push(workDir);
     const spotifyPath = path.join(workDir, "spotify.txt");
-    const instagramPath = path.join(workDir, "instagram.txt");
     const soundcloudPath = path.join(workDir, "soundcloud.txt");
     await fs.writeFile(
       spotifyPath,
       ".spotify.com\tTRUE\t/\tTRUE\t2147483647\tsp_dc\tsecret",
-    );
-    await fs.writeFile(
-      instagramPath,
-      ".instagram.com\tTRUE\t/\tTRUE\t2147483647\tsessionid\tig",
     );
     await fs.writeFile(
       soundcloudPath,
@@ -113,7 +107,6 @@ describe("processGenericGateDownload", () => {
       requestedFormat: "flac",
       outputDirectory: workDir,
       materializeSpotifyCookies: async () => spotifyPath,
-      materializeInstagramCookies: async () => instagramPath,
       materializeSoundCloudCookies: async () => soundcloudPath,
       readCookieFile: (filePath) => fs.readFile(filePath, "utf8"),
       unlinkCookieFile: async (filePath) => {
@@ -134,8 +127,8 @@ describe("processGenericGateDownload", () => {
       },
     });
 
-    expect(names).toEqual(["sp_dc", "sessionid", "oauth_token"]);
-    expect(unlinked).toEqual([spotifyPath, instagramPath, soundcloudPath]);
+    expect(names).toEqual(["sp_dc", "oauth_token"]);
+    expect(unlinked).toEqual([spotifyPath, soundcloudPath]);
   });
 
   it("fails closed on a Laylo RSVP drop with no hosted file", async () => {

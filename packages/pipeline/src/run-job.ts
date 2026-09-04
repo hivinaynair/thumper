@@ -47,7 +47,6 @@ import {
 import { deleteDriveFile, ensurePlaylistFolder, uploadToDrive } from "./drive";
 import {
   downloadHypedditWithSpotifyFallback,
-  parseInstagramNetscapeCookies,
   parseSoundCloudNetscapeCookies,
   parseSpotifyNetscapeCookies,
   type BrowserCookie,
@@ -416,7 +415,6 @@ export async function processGenericGateDownload(params: {
   artistHint?: string;
   titleHint?: string;
   materializeSpotifyCookies?: (userId: string) => Promise<string | null>;
-  materializeInstagramCookies?: (userId: string) => Promise<string | null>;
   materializeSoundCloudCookies?: (userId: string) => Promise<string | null>;
   readCookieFile?: (filePath: string) => Promise<string>;
   unlinkCookieFile?: (filePath: string) => Promise<void>;
@@ -474,11 +472,6 @@ export async function processGenericGateDownload(params: {
       params.materializeSpotifyCookies ??
         ((userId: string) => materializeCookieFile(userId, "spotify")),
       parseSpotifyNetscapeCookies,
-    );
-    await loadProviderCookies(
-      params.materializeInstagramCookies ??
-        ((userId: string) => materializeCookieFile(userId, "instagram")),
-      parseInstagramNetscapeCookies,
     );
     await loadProviderCookies(
       params.materializeSoundCloudCookies ??

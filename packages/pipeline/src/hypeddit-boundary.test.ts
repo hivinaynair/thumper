@@ -37,7 +37,7 @@ describe("Hypeddit worker-only browser boundary", () => {
     }
 
     const cookiesRoute = sources[sources.length - 1] ?? "";
-    expect(cookiesRoute).toContain("instagram");
+    expect(cookiesRoute).toContain("spotify");
   });
 
   it("configures a dedicated Chromium wrapper on the Modal worker image", async () => {

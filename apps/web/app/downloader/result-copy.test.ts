@@ -11,18 +11,16 @@ test("describes Hypeddit originals without claiming every file becomes FLAC", ()
 
 test("discloses the real Spotify account action authorized by a synced session", () => {
   expect(HYPEDDIT_ORIGINAL_COPY).toContain(
-    "your synced sessions authorize the real follow/save requested by the gate",
+    "your synced session authorizes the real follow/save requested by the gate",
   );
 });
 
-test("shows the Spotify and Instagram action disclosure before the cookie-sync action", async () => {
+test("shows the Spotify action disclosure before the cookie-sync action", async () => {
   const source = await fs.readFile(
     path.join(import.meta.dir, "page.tsx"),
     "utf8",
   );
-  const disclosure = source.indexOf(
-    "Synced Spotify and Instagram sessions authorize the real follow/save requested by Hypeddit gates.",
-  );
+  const disclosure = source.indexOf("cookie-sync-disclosure");
   const syncButton = source.indexOf("className={`cookie-sync-btn");
 
   expect(disclosure).toBeGreaterThanOrEqual(0);

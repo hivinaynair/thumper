@@ -48,7 +48,6 @@ export type CookieProvider =
   | "youtube"
   | "soundcloud"
   | "spotify"
-  | "instagram"
   | "patreon";
 
 function cookieKey(userId: string, provider: CookieProvider): string {
@@ -79,14 +78,14 @@ export type CookieProviderStatus = {
 };
 
 export type CookieStatusMap = Record<
-  "youtube" | "soundcloud" | "spotify" | "instagram",
+  "youtube" | "soundcloud" | "spotify",
   CookieProviderStatus
 >;
 
 export async function getCookieStatus(
   userId: string,
 ): Promise<CookieStatusMap> {
-  const providers = ["youtube", "soundcloud", "spotify", "instagram"] as const;
+  const providers = ["youtube", "soundcloud", "spotify"] as const;
   const out = {} as CookieStatusMap;
   for (const provider of providers) {
     const meta = await headObject(cookieKey(userId, provider));

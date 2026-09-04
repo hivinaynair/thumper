@@ -9,7 +9,7 @@ const zip = join(extensionDir, "dist", "thumper-extension.zip");
 const publicDir = join(here, "..", "public");
 
 // Always rebuild. A leftover zip from an older Cookie Sync would be copied
-// onto the site, and Refresh would never open Instagram.
+// onto the site and ship stale sync behaviour.
 console.log("[copy-extension] building extension");
 execFileSync("bun", ["./build.mjs"], {
   cwd: extensionDir,
