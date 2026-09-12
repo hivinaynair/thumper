@@ -2,7 +2,7 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { isRetagInput, RETAG_INPUT_LABEL, type StemRole } from "@thumper/shared";
-import { Download, Loader2, RotateCcw, Upload } from "lucide-react";
+import { Download, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,7 +14,10 @@ import {
 } from "@/components/ui/select";
 import { StatusDot } from "../components/status-dot";
 import "../ui-theme.css";
+import "../downloader/downloader.css";
+import "../audio-tools.css";
 import { readJson, uploadAudio } from "@/lib/upload-audio";
+import { AudioUpload } from "../components/audio-upload";
 
 type StemFile = {
   fileId: string;
@@ -172,13 +175,17 @@ export default function StemsPage() {
   const queued = tracks.filter((t) => t.jobId || t.error);
 
   return (
-    <div className="ui-scope min-h-screen">
-      <div className="mx-auto max-w-2xl px-5 pt-10 pb-28">
-        <h1 className="text-lg font-semibold tracking-tight">Stem separation</h1>
-        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-          Split a track into instrumental and vocals. One pass produces both — download whichever
-          you need.
-        </p>
+    <div className="ui-scope downloader min-h-screen">
+      <div className="downloader-shell">
+        <header className="downloader-heading">
+          <div>
+            <h1>Separate vocals and music</h1>
+            <p>
+              Split your tracks into vocals and instrumental audio. Preview and download each part.
+            </p>
+          </div>
+          <span className="downloader-format">Audio format: FLAC</span>
+        </header>
 
         {step !== "upload" ? (
           <div className="mt-5 flex items-center">
@@ -188,6 +195,11 @@ export default function StemsPage() {
               size="sm"
               className="ml-auto h-7 text-xs"
               onClick={reset}
+              disabled={
+                busy ||
+                (step === "working" &&
+                  tracks.some((t) => t.jobId && !TERMINAL.includes(t.job?.status ?? "queued")))
+              }
             >
               <RotateCcw /> Start over
             </Button>
@@ -195,152 +207,165 @@ export default function StemsPage() {
         ) : null}
 
         {error ? (
-          <p className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <p
+            role="alert"
+            className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+          >
             {error}
           </p>
         ) : null}
         {progressNote ? (
-          <p className="mt-4 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
+          <p
+            role="status"
+            className="mt-4 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground"
+          >
             {progressNote}
           </p>
         ) : null}
 
         {step === "upload" ? (
-          <>
-            <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card p-4">
-              <span className="text-xs text-muted-foreground">Deliver to</span>
+          <div>
+            <section className="downloader-composer">
+              <div className="downloader-section-title">
+                <h2>Upload audio</h2>
+              </div>
+              <p className="downloader-description">
+                Choose where to save your files before uploading.
+              </p>
+              <label className="downloader-label" htmlFor="stems-destination">
+                Save to
+              </label>
               <Select value={destination} onValueChange={setDestination}>
-                <SelectTrigger className="h-8 w-44 bg-background text-xs">
+                <SelectTrigger id="stems-destination" className="w-full bg-background">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="browser">Browser download</SelectItem>
+                <SelectContent position="popper" align="start" sideOffset={6}>
+                  <SelectItem value="browser">This device</SelectItem>
                   <SelectItem value="drive">Google Drive</SelectItem>
-                  <SelectItem value="both">Both</SelectItem>
+                  <SelectItem value="both">Device + Google Drive</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
-
-            <div className="mt-4 rounded-xl border border-border bg-card p-5 shadow-lg shadow-black/30">
-              <label
-                className={`flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed border-input px-6 py-10 text-center transition-colors hover:border-primary/60 hover:bg-muted/50 ${
-                  busy ? "pointer-events-none opacity-60" : ""
-                }`}
-              >
-                {busy ? (
-                  <Loader2 className="size-5 animate-spin text-muted-foreground" />
-                ) : (
-                  <Upload className="size-5 text-muted-foreground" />
-                )}
-                <span className="text-sm font-medium">
-                  {busy ? "Working…" : "Choose audio files"}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {RETAG_INPUT_LABEL} — up to 500 MB each
-                </span>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  className="sr-only"
-                  accept=".wav,.mp3,.m4a,.flac,audio/wav,audio/x-wav,audio/mpeg,audio/mp4,audio/x-m4a,audio/flac"
-                  multiple
-                  disabled={busy}
-                  onChange={(e) => void onFiles(e.target.files)}
-                />
-              </label>
-            </div>
-          </>
-        ) : null}
-
-        {queued.length > 0 ? (
-          <div className="mt-6 space-y-7">
-            {queued.map((t) => {
-              const job = t.job;
-              const stems = job?.result?.stemFiles ?? [];
-              const failed = Boolean(t.error) || job?.status === "failed";
-              return (
-                <article key={t.id} className="relative pl-5">
-                  <span className="absolute top-1.5 left-0">
-                    <StatusDot status={failed ? "failed" : (job?.status ?? "queued")} />
-                  </span>
-                  <h2 className="truncate text-[15px] leading-tight font-semibold">
-                    {job?.title || t.filename}
-                  </h2>
-
-                  {job && job.status !== "completed" && !failed ? (
-                    <>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {job.stage} · {job.progress}%
-                      </p>
-                      <div className="mt-2.5 h-0.5 w-full overflow-hidden rounded bg-muted">
-                        <span
-                          className="block h-full bg-primary transition-[width]"
-                          style={{ width: `${job.progress}%` }}
-                        />
-                      </div>
-                    </>
-                  ) : null}
-
-                  {t.error || job?.error ? (
-                    <p className="mt-3 border-l-2 border-[var(--ui-tier-unsuitable)] bg-muted/50 py-2 pl-3 text-[13px] text-[var(--ui-tier-unsuitable)]">
-                      {t.error || job?.error}
-                    </p>
-                  ) : null}
-
-                  {stems.length > 0 ? (
-                    <div className="mt-3 space-y-3">
-                      {stems.map((s) => (
-                        <div key={s.fileId} className="rounded-lg border border-border bg-card p-3">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold capitalize">{s.role}</span>
-                            <span className="text-[11px] text-muted-foreground">
-                              {formatSize(s.sizeBytes)}
-                            </span>
-                            <div className="ml-auto flex gap-2">
-                              <Button asChild size="sm" variant="secondary">
-                                <a href={`/api/files/${s.fileId}`}>
-                                  <Download /> FLAC
-                                </a>
-                              </Button>
-                              {s.driveUrl ? (
-                                <Button asChild size="sm" variant="ghost">
-                                  <a href={s.driveUrl} target="_blank" rel="noreferrer">
-                                    Drive
-                                  </a>
-                                </Button>
-                              ) : null}
-                            </div>
-                          </div>
-                          {/* biome-ignore lint/a11y/useMediaCaption: a separated
-                              stem has no caption track to provide. */}
-                          <audio
-                            controls
-                            preload="none"
-                            className="mt-2 h-9 w-full"
-                            src={`/api/files/${s.fileId}`}
-                          />
-                        </div>
-                      ))}
-                      {stems.length > 1 ? (
-                        <Button asChild size="sm" variant="outline">
-                          <a href={`/api/files/zip?jobId=${job?.id}`}>
-                            <Download /> Download both (zip)
-                          </a>
-                        </Button>
-                      ) : null}
-                    </div>
-                  ) : null}
-
-                  {job?.result?.stemModel ? (
-                    <p className="mt-2 font-mono text-[10px] text-muted-foreground/60">
-                      {job.result.stemModel}
-                    </p>
-                  ) : null}
-                </article>
-              );
-            })}
+              {destination !== "browser" ? (
+                <p className="downloader-description">
+                  Connect Google Drive from your account menu before uploading.
+                </p>
+              ) : null}
+              <AudioUpload
+                busy={busy}
+                inputRef={fileInputRef}
+                onFiles={(files) => void onFiles(files)}
+              />
+              <p className="downloader-description">
+                Separation starts as soon as you choose your files.
+              </p>
+            </section>
           </div>
         ) : null}
+
+        <section className="downloader-queue" aria-labelledby="stems-results">
+          <div className="downloader-queue-heading">
+            <div>
+              <h2 id="stems-results">
+                Your tracks <span>{queued.length}</span>
+              </h2>
+              <p className="downloader-description">
+                Follow progress and listen to the separated audio here.
+              </p>
+            </div>
+          </div>
+          {queued.length === 0 ? (
+            <div className="downloader-empty">
+              <h3>No tracks yet</h3>
+              <p>Choose audio files above to get started.</p>
+            </div>
+          ) : null}
+          {queued.length > 0 ? (
+            <div className="mt-6 space-y-7">
+              {queued.map((t) => {
+                const job = t.job;
+                const stems = job?.result?.stemFiles ?? [];
+                const failed = Boolean(t.error) || job?.status === "failed";
+                return (
+                  <article key={t.id} className="downloader-job relative pl-5">
+                    <span className="absolute top-1.5 left-0">
+                      <StatusDot status={failed ? "failed" : (job?.status ?? "queued")} />
+                    </span>
+                    <h2 className="truncate text-[15px] leading-tight font-semibold">
+                      {job?.title || t.filename}
+                    </h2>
+
+                    {job && job.status !== "completed" && !failed ? (
+                      <>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {job.stage} · {job.progress}%
+                        </p>
+                        <div className="mt-2.5 h-0.5 w-full overflow-hidden rounded bg-muted">
+                          <span
+                            className="block h-full bg-primary transition-[width]"
+                            style={{ width: `${job.progress}%` }}
+                          />
+                        </div>
+                      </>
+                    ) : null}
+
+                    {t.error || job?.error ? (
+                      <p className="mt-3 border-l-2 border-[var(--ui-tier-unsuitable)] bg-muted/50 py-2 pl-3 text-[13px] text-[var(--ui-tier-unsuitable)]">
+                        {t.error || job?.error}
+                      </p>
+                    ) : null}
+
+                    {stems.length > 0 ? (
+                      <div className="mt-3 space-y-3">
+                        {stems.map((s) => (
+                          <div
+                            key={s.fileId}
+                            className="rounded-lg border border-border bg-card p-3"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-semibold capitalize">{s.role}</span>
+                              <span className="text-[11px] text-muted-foreground">
+                                {formatSize(s.sizeBytes)}
+                              </span>
+                              <div className="ml-auto flex gap-2">
+                                <Button asChild size="sm" variant="secondary">
+                                  <a href={`/api/files/${s.fileId}`}>
+                                    <Download /> FLAC
+                                  </a>
+                                </Button>
+                                {s.driveUrl ? (
+                                  <Button asChild size="sm" variant="ghost">
+                                    <a href={s.driveUrl} target="_blank" rel="noreferrer">
+                                      Drive
+                                    </a>
+                                  </Button>
+                                ) : null}
+                              </div>
+                            </div>
+                            {/* biome-ignore lint/a11y/useMediaCaption: a separated
+                              stem has no caption track to provide. */}
+                            <audio
+                              controls
+                              preload="none"
+                              className="mt-2 h-9 w-full"
+                              src={`/api/files/${s.fileId}`}
+                            />
+                          </div>
+                        ))}
+                        {stems.length > 1 ? (
+                          <Button asChild size="sm" variant="outline">
+                            <a href={`/api/files/zip?jobId=${job?.id}`}>
+                              <Download /> Download both (zip)
+                            </a>
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
+        </section>
       </div>
     </div>
   );

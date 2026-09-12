@@ -1,12 +1,11 @@
 "use client";
 
 import { detectSourceKind } from "@thumper/shared";
-import { ChevronDown, Loader2, RefreshCw } from "lucide-react";
+import { ArrowDownToLine, AudioLines, Link2, Loader2, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -15,7 +14,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { cookieNeedsRefresh, jobsToRetry, retryButtonLabel } from "../../lib/cookie-retry";
 import {
   type CookieProviderKey,
@@ -35,6 +33,7 @@ import {
   verdictOf,
 } from "./job-view";
 import "../ui-theme.css";
+import "./downloader.css";
 
 const CLUB_READY_KEY = "thumper.clubReadyOnly";
 
@@ -89,39 +88,17 @@ function cookiesReadyForUrl(
   if (!cookies) {
     return { ready: false, reason: "Checking cookie sync…" };
   }
-  const kind = url.trim() ? detectSourceKind(url.trim()) : null;
-  if (!kind || (kind !== "youtube" && kind !== "soundcloud" && kind !== "spotify")) {
-    if (!cookies.youtube.present && !cookies.soundcloud.present) {
-      return {
-        ready: false,
-        reason: "Sync cookies with the Chrome extension before queuing",
-      };
-    }
-    return { ready: true, reason: null };
-  }
-  if (kind === "youtube" && !cookies.youtube.present) {
+  if (!cookies.youtube.present) {
     return {
       ready: false,
-      reason: "Sync YouTube cookies before queuing YouTube downloads",
+      reason: "Connect your YouTube account before adding downloads.",
     };
   }
+  const kind = url.trim() ? detectSourceKind(url.trim()) : null;
   if (kind === "soundcloud" && !cookies.soundcloud.present) {
     return {
       ready: false,
       reason: "Sync SoundCloud cookies before queuing SoundCloud downloads",
-    };
-  }
-  if (kind === "soundcloud" && !cookies.youtube.present) {
-    return {
-      ready: true,
-      reason:
-        "Tip: sync YouTube cookies too — after free downloads, SoundCloud tracks prefer YouTube mirrors",
-    };
-  }
-  if (kind === "spotify" && !cookies.youtube.present && !cookies.soundcloud.present) {
-    return {
-      ready: false,
-      reason: "Sync YouTube or SoundCloud cookies before queuing Spotify mirrors",
     };
   }
   if (
@@ -131,8 +108,7 @@ function cookiesReadyForUrl(
   ) {
     return {
       ready: true,
-      reason:
-        "YouTube cookies look stale — hit Refresh so Modal isn’t stuck with a rotated session",
+      reason: "Your YouTube session may have expired. Refresh it before your next download.",
     };
   }
   return { ready: true, reason: null };
@@ -222,15 +198,7 @@ const PROVIDER_SITES: Record<CookieProviderKey, { label: string; url: string }> 
  * beside the Sync button rather than down in the job list where the old
  * install steps lived.
  */
-function CookieSetupPanel({
-  state,
-  syncing,
-  onSync,
-}: {
-  state: CookieSetupState;
-  syncing: boolean;
-  onSync: () => Promise<void>;
-}) {
+function CookieSetupPanel({ state }: { state: CookieSetupState }) {
   if (state.step === "ready") return null;
 
   // Same vocabulary as the session dots: amber for "works, but attend to it",
@@ -259,7 +227,7 @@ function CookieSetupPanel({
 
   return (
     <div
-      className="mt-3 rounded-md border border-border border-l-2 bg-muted px-3 py-2.5 text-xs text-muted-foreground"
+      className="downloader-cookie-setup mt-3 rounded-md border border-border border-l-2 bg-muted px-3 py-2.5 text-xs text-muted-foreground"
       style={{ borderLeftColor: accent }}
     >
       {state.step === "install" ? (
@@ -326,20 +294,6 @@ function CookieSetupPanel({
             ? "A job failed on stale or blocked cookies. Refresh, then retry the failed tracks."
             : "YouTube session looks older than 12h. Refresh before the next download."}
         </p>
-      ) : null}
-
-      {state.step !== "install" && state.step !== "update" ? (
-        <Button
-          type="button"
-          size="sm"
-          variant="secondary"
-          className="mt-2 h-7 text-xs"
-          disabled={syncing}
-          onClick={() => void onSync()}
-        >
-          <RefreshCw className={syncing ? "animate-spin" : ""} />
-          {state.step === "sync" ? "Sync sessions" : "Refresh sessions"}
-        </Button>
       ) : null}
     </div>
   );
@@ -467,7 +421,7 @@ export default function DownloaderPage() {
     return new Map(entries);
   }, [jobs]);
   const gate = useMemo(() => cookiesReadyForUrl(url, cookies), [url, cookies]);
-  const canQueue = !busy && gate.ready;
+  const canQueue = !busy && gate.ready && url.trim().length > 0;
   const finishedCount = jobs.filter(
     (job) => job.status === "completed" || job.status === "failed" || job.status === "cancelled",
   ).length;
@@ -485,7 +439,7 @@ export default function DownloaderPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          url,
+          url: url.trim(),
           audioFormat: "flac",
           destination,
           clubReadyOnly,
@@ -495,6 +449,8 @@ export default function DownloaderPage() {
       if (!res.ok) throw new Error(data.error ?? "Failed");
       setUrl("");
       await refreshJobs();
+      setMessageTone("ok");
+      setMessage("Added to your queue. You can paste another link.");
     } catch (err) {
       setMessageTone("error");
       setMessage(err instanceof Error ? err.message : "Failed");
@@ -504,8 +460,14 @@ export default function DownloaderPage() {
   }
 
   async function cancelJob(id: string) {
-    await fetch(`/api/jobs/${id}`, { method: "DELETE" });
-    await refreshJobs();
+    try {
+      const res = await fetch(`/api/jobs/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Could not cancel this download. Try again.");
+      await refreshJobs();
+    } catch (err) {
+      setMessageTone("error");
+      setMessage(err instanceof Error ? err.message : "Could not cancel this download.");
+    }
   }
 
   async function clearFinishedJobs() {
@@ -594,63 +556,87 @@ export default function DownloaderPage() {
   });
   const checkingCookies = !cookies;
   const notice = message ?? (checkingCookies ? null : gate.reason);
-  const noticeIsError = message ? messageTone === "error" : !gate.ready;
+  const noticeIsError = Boolean(message && messageTone === "error");
   const { topLevel, childrenOf } = groupJobs(jobs);
   const driveSelected = destination === "drive" || destination === "both";
 
   return (
-    <div className="ui-scope min-h-screen">
-      <div className="mx-auto max-w-2xl px-5 pt-10 pb-28">
-        <h1 className="mb-5 text-lg font-semibold tracking-tight">Downloader</h1>
-
-        <form
-          onSubmit={createJob}
-          className="rounded-xl border border-border bg-card p-5 shadow-lg shadow-black/30"
-        >
-          <Input
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="Paste a YouTube, SoundCloud, or Spotify link"
-            required
-            className="h-12 border-input bg-background text-base md:text-base"
-          />
-
-          <div className="mt-3 flex items-center gap-3">
-            <Select value={destination} onValueChange={setDestination}>
-              <SelectTrigger className="w-44 bg-background">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="browser">Browser</SelectItem>
-                <SelectItem value="drive">Google Drive</SelectItem>
-                <SelectItem value="both">Both</SelectItem>
-              </SelectContent>
-            </Select>
-
-            <Button type="submit" disabled={!canQueue} className="ml-auto">
-              {busy ? (
-                <>
-                  <Loader2 className="animate-spin" /> Queuing
-                </>
-              ) : (
-                "Queue download"
-              )}
-            </Button>
+    <div className="ui-scope downloader min-h-screen">
+      <div className="downloader-shell">
+        <header className="downloader-heading">
+          <div>
+            <h1>Download music</h1>
+            <p>Save audio from YouTube, SoundCloud and Spotify links.</p>
           </div>
+          <span className="downloader-format">
+            <AudioLines size={16} /> Audio format: FLAC
+          </span>
+        </header>
 
-          {driveSelected ? (
-            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-              Drive needs Google connected with <code>drive.file</code> — open your account menu,
-              reconnect Google, then queue again.
+        <div className="downloader-workspace">
+          <form onSubmit={createJob} className="downloader-composer">
+            <div className="downloader-section-title">
+              <Link2 size={18} />
+              <h2>New download</h2>
+            </div>
+            <p className="downloader-description">Add a single track or an entire playlist.</p>
+            <label htmlFor="download-url" className="downloader-label">
+              Track or playlist link
+            </label>
+            <Input
+              id="download-url"
+              type="url"
+              autoComplete="off"
+              spellCheck={false}
+              aria-describedby="download-help"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="Paste your link here…"
+              required
+              className="h-12 border-input bg-background text-base md:text-base"
+            />
+
+            <div className="downloader-options">
+              <div>
+                <label htmlFor="download-destination" className="downloader-label">
+                  Save to
+                </label>
+                <Select value={destination} onValueChange={setDestination}>
+                  <SelectTrigger id="download-destination" className="w-full bg-background">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent position="popper" align="start" sideOffset={6}>
+                    <SelectItem value="browser">This device</SelectItem>
+                    <SelectItem value="drive">Google Drive</SelectItem>
+                    <SelectItem value="both">Device + Google Drive</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button type="submit" disabled={!canQueue} className="downloader-submit">
+                {busy ? (
+                  <>
+                    <Loader2 className="animate-spin" /> Queuing
+                  </>
+                ) : (
+                  <>
+                    <ArrowDownToLine /> Add to queue
+                  </>
+                )}
+              </Button>
+            </div>
+
+            {driveSelected ? (
+              <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+                Connect Google Drive from your account menu before downloading to Drive.
+              </p>
+            ) : null}
+
+            <p id="download-help" className="downloader-description mt-3">
+              {destination === "browser"
+                ? "Download finished files from your queue below."
+                : "Files will be saved to your connected Google Drive."}
             </p>
-          ) : null}
-
-          <Collapsible className="mt-4">
-            <CollapsibleTrigger className="group flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
-              <ChevronDown className="size-3.5 transition-transform group-data-[state=open]:rotate-180" />
-              Filters
-            </CollapsibleTrigger>
-            <CollapsibleContent className="space-y-3 pt-3">
+            <div className="downloader-quality">
               {/* biome-ignore lint/a11y/noLabelWithoutControl: wraps the shadcn Checkbox, which biome cannot resolve to an input element. */}
               <label className="flex cursor-pointer gap-2.5">
                 <Checkbox
@@ -662,237 +648,311 @@ export default function DownloaderPage() {
                   className="mt-0.5"
                 />
                 <span className="text-xs leading-relaxed text-muted-foreground">
-                  <span className="text-foreground">Club-ready only</span> — rejects anything whose
-                  audio stops short of 19 kHz, a lossy stream whatever the file says it is.
+                  <span className="text-foreground">Club-ready only</span> — skips tracks with a
+                  frequency cutoff below 19 kHz. Passing this check doesn’t mean the audio is
+                  lossless.
                 </span>
               </label>
-            </CollapsibleContent>
-          </Collapsible>
+            </div>
 
-          {notice ? (
-            <p
-              className={`mt-4 rounded-md border px-3 py-2 text-xs ${
-                noticeIsError
-                  ? "border-destructive/40 bg-destructive/10 text-destructive"
-                  : "border-border bg-muted text-muted-foreground"
-              }`}
-            >
-              {notice}
-            </p>
-          ) : null}
-        </form>
-
-        <div className="mt-5 flex flex-wrap items-center gap-2">
-          <span className="text-xs text-muted-foreground">Sessions</span>
-          {COOKIE_PROVIDERS.map(([key, label]) => {
-            const status = cookies?.[key];
-            const present = status?.present ?? false;
-            const stale = present && isCookieStale(status?.updatedAt ?? null);
-            const age = formatSyncedAge(status?.updatedAt ?? null);
-            return (
-              <Badge
-                key={key}
-                variant="outline"
-                title={
-                  present
-                    ? `${stale ? "Stale — " : ""}Updated ${formatSyncedAt(status?.updatedAt ?? null)}`
-                    : "Not synced yet"
-                }
-                className="gap-1.5 border-border font-normal text-muted-foreground"
+            {notice ? (
+              <p
+                role={noticeIsError ? "alert" : "status"}
+                className={`mt-4 rounded-md border px-3 py-2 text-xs ${
+                  noticeIsError
+                    ? "border-destructive/40 bg-destructive/10 text-destructive"
+                    : "border-border bg-muted text-muted-foreground"
+                }`}
               >
-                <span
-                  className={`size-1.5 rounded-full ${
-                    checkingCookies
-                      ? "bg-muted-foreground/40"
-                      : !present
-                        ? "bg-[var(--ui-tier-unsuitable)]"
-                        : stale
-                          ? "bg-[var(--ui-tier-marginal)]"
-                          : "bg-[var(--ui-tier-master)]"
-                  }`}
-                />
-                {label}
-                {present && age ? <span className="text-[10px] opacity-70">{age}</span> : null}
-              </Badge>
-            );
-          })}
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs"
-            onClick={() => void syncCookies()}
-            disabled={syncing || !extensionReady}
-          >
-            <RefreshCw className={syncing ? "animate-spin" : ""} />
-            {anyCookiesPresent ? "Refresh" : "Sync"}
-          </Button>
-
-          <span className="ml-auto flex gap-2">
-            {downloadableCount > 0 ? (
-              <Button asChild variant="secondary" size="sm">
-                {/* A plain <a> to a streaming API route, not a page: the browser
-                    writes it straight to disk instead of buffering in the tab. */}
-                <a href="/api/files/zip">Download all ({downloadableCount})</a>
-              </Button>
+                {notice}
+                {!message && !gate.ready ? (
+                  <>
+                    {" "}
+                    ·{" "}
+                    <a href="#connections-heading" className="underline underline-offset-2">
+                      View setup
+                    </a>
+                  </>
+                ) : null}
+              </p>
             ) : null}
-            {finishedCount > 0 ? (
+          </form>
+
+          <aside
+            className="downloader-connections downloader-session-card"
+            data-ready={setupState.step === "ready"}
+            aria-labelledby="connections-heading"
+          >
+            <div className="downloader-section-title">
+              <h2 id="connections-heading" tabIndex={-1}>
+                Connections
+              </h2>
+            </div>
+            <p className="downloader-description">
+              Connect your YouTube account through the Chrome extension to start downloading.
+            </p>
+            <div className="downloader-sessions">
+              {COOKIE_PROVIDERS.map(([key, label]) => {
+                const status = cookies?.[key];
+                const present = status?.present ?? false;
+                const stale = present && isCookieStale(status?.updatedAt ?? null);
+                const age = formatSyncedAge(status?.updatedAt ?? null);
+                return (
+                  <Badge
+                    key={key}
+                    variant="outline"
+                    title={
+                      present
+                        ? `${stale ? "Stale — " : ""}Updated ${formatSyncedAt(status?.updatedAt ?? null)}`
+                        : "Not synced yet"
+                    }
+                    className="downloader-session gap-1.5 border-border font-normal text-muted-foreground"
+                  >
+                    <span
+                      className={`size-1.5 rounded-full ${
+                        checkingCookies
+                          ? "bg-muted-foreground/40"
+                          : !present
+                            ? "bg-[var(--ui-tier-unsuitable)]"
+                            : stale
+                              ? "bg-[var(--ui-tier-marginal)]"
+                              : "bg-[var(--ui-tier-master)]"
+                      }`}
+                    />
+                    {label}
+                    <span className="ml-auto text-xs">
+                      {checkingCookies
+                        ? "Checking…"
+                        : !present
+                          ? "Not connected"
+                          : stale
+                            ? "Refresh needed"
+                            : "Ready"}
+                    </span>
+                    {present && age ? <span className="text-[10px] opacity-70">{age}</span> : null}
+                  </Badge>
+                );
+              })}
               <Button
                 type="button"
-                variant="ghost"
-                size="sm"
-                disabled={clearing}
-                onClick={() => void clearFinishedJobs()}
+                variant="outline"
+                className="h-10 w-full mt-2"
+                onClick={() => void syncCookies()}
+                disabled={syncing || !extensionReady}
               >
-                {clearing ? "Clearing…" : "Clear finished"}
+                <RefreshCw className={syncing ? "animate-spin" : ""} />
+                {syncing
+                  ? "Connecting…"
+                  : anyCookiesPresent
+                    ? "Refresh connections"
+                    : "Connect accounts"}
               </Button>
-            ) : null}
-          </span>
+            </div>
+            <CookieSetupPanel state={setupState} />
+          </aside>
         </div>
 
-        <CookieSetupPanel state={setupState} syncing={syncing} onSync={syncCookies} />
-
-        <Separator className="my-6" />
-
-        {topLevel.length === 0 ? (
-          <p className="py-16 text-center text-sm text-muted-foreground">Nothing queued yet.</p>
-        ) : (
-          <div className="space-y-7">
-            {topLevel.map((job) => {
-              const verdict = verdictOf(job);
-              const kids = childrenOf(job.id);
-              const rollup = rollups.get(job.id);
-              const retryTargets = jobsToRetry(job, jobs);
-              return (
-                <article key={job.id} className="relative pl-5">
-                  <span className="absolute top-1.5 left-0">
-                    <StatusDot status={job.status} />
-                  </span>
-
-                  <h2 className="text-[15px] leading-tight font-semibold">{jobLabel(job)}</h2>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {job.stage} · {job.audioFormat} · {job.destination}
-                    {job.result?.clubReadyOnly ? " · club-ready only" : ""}
-                    {rollup ? ` · ${rollupSummary(rollup)}` : ""}
-                    {job.result?.unmatchedCount ? ` · ${job.result.unmatchedCount} unmatched` : ""}
-                    {job.result?.matchScore ? ` · match ${job.result.matchScore}` : ""}
-                  </p>
-
-                  {job.status === "running" || job.status === "queued" ? (
-                    <div className="mt-2.5 h-0.5 w-full overflow-hidden rounded bg-muted">
-                      <span
-                        className="block h-full bg-primary transition-[width]"
-                        style={{ width: `${job.progress}%` }}
-                      />
-                    </div>
-                  ) : null}
-
-                  {verdict.tier !== "pending" ? (
-                    <p
-                      className={`mt-3 border-l-2 bg-muted/50 py-2 pl-3 text-[13px] leading-relaxed ${TIER_RULE[verdict.tier]}`}
-                    >
-                      <span
-                        className={`font-semibold tracking-wide uppercase ${TIER_TEXT[verdict.tier]}`}
-                      >
-                        {verdict.lead}
-                      </span>
-                      {verdict.detail ? (
-                        <span className="text-muted-foreground"> — {verdict.detail}</span>
-                      ) : null}
-                    </p>
-                  ) : null}
-
-                  {job.result?.warnings?.length ? (
-                    <ul className="mt-2 space-y-1 pl-4 text-xs text-muted-foreground">
-                      {job.result.warnings.map((warning) => (
-                        <li key={warning} className="list-disc">
-                          {warning}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-
-                  {kids.length > 0 ? (
-                    <ul className="mt-3 space-y-1.5 border-l border-border pl-3">
-                      {kids.map((kid) => {
-                        const kidVerdict = verdictOf(kid);
-                        return (
-                          <li key={kid.id} className="flex items-center gap-2.5 text-xs">
-                            <StatusDot status={kid.status} />
-                            <span className="flex-1 truncate text-muted-foreground">
-                              {jobLabel(kid)}
-                            </span>
-                            <span
-                              title={kidVerdict.detail ?? undefined}
-                              className={`text-[10px] font-medium tracking-wider uppercase ${TIER_TEXT[kidVerdict.tier]}`}
-                            >
-                              {kidVerdict.lead}
-                            </span>
-                            {kid.result?.fileId ? (
-                              <Button
-                                asChild
-                                variant="secondary"
-                                size="sm"
-                                className="h-6 px-2 text-[11px]"
-                              >
-                                <a href={`/api/files/${kid.result.fileId}`}>Get</a>
-                              </Button>
-                            ) : null}
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  ) : null}
-
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {job.status === "queued" || job.status === "running" ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => void cancelJob(job.id)}
-                      >
-                        Cancel
-                      </Button>
-                    ) : null}
-                    {retryTargets.length > 0 ? (
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        disabled={retryingId !== null}
-                        onClick={() => void retryWithNewCookies(job.id)}
-                      >
-                        {retryingId === job.id
-                          ? "Retrying…"
-                          : retryButtonLabel(retryTargets.length)}
-                      </Button>
-                    ) : null}
-                    {job.result?.fileId ? (
-                      <Button asChild size="sm">
-                        <a href={`/api/files/${job.result.fileId}`}>Download</a>
-                      </Button>
-                    ) : null}
-                    {job.result?.driveUrl ? (
-                      <Button asChild variant="secondary" size="sm">
-                        <a href={job.result.driveUrl} target="_blank" rel="noreferrer">
-                          Open in Drive
-                        </a>
-                      </Button>
-                    ) : null}
-                    {job.result?.manualDownloadUrl ? (
-                      <Button asChild variant="secondary" size="sm">
-                        <a href={job.result.manualDownloadUrl} target="_blank" rel="noreferrer">
-                          Open link
-                        </a>
-                      </Button>
-                    ) : null}
-                  </div>
-                </article>
-              );
-            })}
+        <section className="downloader-queue" aria-labelledby="queue-heading">
+          <div className="downloader-queue-heading">
+            <div>
+              <h2 id="queue-heading">
+                Download queue <span>{topLevel.length}</span>
+              </h2>
+              <p className="downloader-description">
+                Track your downloads and save completed files.
+              </p>
+            </div>
+            <span className="ml-auto flex gap-2">
+              {downloadableCount > 0 ? (
+                <Button asChild variant="secondary" size="sm">
+                  {/* A plain <a> to a streaming API route, not a page: the browser
+                    writes it straight to disk instead of buffering in the tab. */}
+                  <a href="/api/files/zip">Download all ({downloadableCount})</a>
+                </Button>
+              ) : null}
+              {finishedCount > 0 ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={clearing}
+                  onClick={() => void clearFinishedJobs()}
+                >
+                  {clearing ? "Clearing…" : "Clear finished"}
+                </Button>
+              ) : null}
+            </span>
           </div>
-        )}
+
+          {topLevel.length === 0 ? (
+            <div className="downloader-empty">
+              <div className="downloader-empty-icon">
+                <AudioLines size={26} />
+              </div>
+              <h3>No downloads yet</h3>
+              <p>
+                Paste a track or playlist link above.
+                <br />
+                Your downloads will appear here.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-7">
+              {topLevel.map((job) => {
+                const verdict = verdictOf(job);
+                const kids = childrenOf(job.id);
+                const rollup = rollups.get(job.id);
+                const retryTargets = jobsToRetry(job, jobs);
+                return (
+                  <article key={job.id} className="downloader-job relative pl-5">
+                    <span className="absolute top-1.5 left-0">
+                      <StatusDot status={job.status} />
+                    </span>
+
+                    <h3 className="break-words text-[15px] leading-tight font-semibold">
+                      {jobLabel(job)}
+                    </h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {job.stage} · {job.audioFormat} · {job.destination}
+                      {job.result?.clubReadyOnly ? " · club-ready only" : ""}
+                      {rollup ? ` · ${rollupSummary(rollup)}` : ""}
+                      {job.result?.unmatchedCount
+                        ? ` · ${job.result.unmatchedCount} unmatched`
+                        : ""}
+                      {job.result?.matchScore ? ` · match ${job.result.matchScore}` : ""}
+                    </p>
+
+                    {job.status === "running" || job.status === "queued" ? (
+                      <div
+                        role="progressbar"
+                        aria-label={`${jobLabel(job)} progress`}
+                        aria-valuenow={Math.min(100, Math.max(0, job.progress))}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        className="mt-2.5 h-1 w-full overflow-hidden rounded bg-muted"
+                      >
+                        <span
+                          className="block h-full bg-primary transition-[width]"
+                          style={{ width: `${Math.min(100, Math.max(0, job.progress))}%` }}
+                        />
+                      </div>
+                    ) : null}
+
+                    {verdict.tier !== "pending" ? (
+                      <p
+                        className={`mt-3 border-l-2 bg-muted/50 py-2 pl-3 text-[13px] leading-relaxed ${TIER_RULE[verdict.tier]}`}
+                      >
+                        <span
+                          className={`font-semibold tracking-wide uppercase ${TIER_TEXT[verdict.tier]}`}
+                        >
+                          {verdict.lead}
+                        </span>
+                        {verdict.detail ? (
+                          <span className="text-muted-foreground"> — {verdict.detail}</span>
+                        ) : null}
+                      </p>
+                    ) : null}
+
+                    {job.result?.warnings?.length ? (
+                      <ul className="mt-2 space-y-1 pl-4 text-xs text-muted-foreground">
+                        {job.result.warnings.map((warning) => (
+                          <li key={warning} className="list-disc">
+                            {warning}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+
+                    {kids.length > 0 ? (
+                      <ul className="mt-3 space-y-1.5 border-l border-border pl-3">
+                        {kids.map((kid) => {
+                          const kidVerdict = verdictOf(kid);
+                          return (
+                            <li key={kid.id} className="flex items-center gap-2.5 text-xs">
+                              <StatusDot status={kid.status} />
+                              <span
+                                title={jobLabel(kid)}
+                                className="min-w-0 flex-1 truncate text-muted-foreground"
+                              >
+                                {jobLabel(kid)}
+                              </span>
+                              <span
+                                title={kidVerdict.detail ?? undefined}
+                                className={`text-[10px] font-medium tracking-wider uppercase ${TIER_TEXT[kidVerdict.tier]}`}
+                              >
+                                {kidVerdict.lead}
+                              </span>
+                              {kid.result?.fileId ? (
+                                <Button
+                                  asChild
+                                  variant="secondary"
+                                  size="sm"
+                                  className="h-6 px-2 text-[11px]"
+                                >
+                                  <a
+                                    href={`/api/files/${kid.result.fileId}`}
+                                    aria-label={`Download ${jobLabel(kid)}`}
+                                  >
+                                    Download
+                                  </a>
+                                </Button>
+                              ) : null}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : null}
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {job.status === "queued" || job.status === "running" ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void cancelJob(job.id)}
+                        >
+                          Cancel
+                        </Button>
+                      ) : null}
+                      {retryTargets.length > 0 ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          disabled={retryingId !== null}
+                          onClick={() => void retryWithNewCookies(job.id)}
+                        >
+                          {retryingId === job.id
+                            ? "Retrying…"
+                            : retryButtonLabel(retryTargets.length)}
+                        </Button>
+                      ) : null}
+                      {job.result?.fileId ? (
+                        <Button asChild size="sm">
+                          <a href={`/api/files/${job.result.fileId}`}>Download</a>
+                        </Button>
+                      ) : null}
+                      {job.result?.driveUrl ? (
+                        <Button asChild variant="secondary" size="sm">
+                          <a href={job.result.driveUrl} target="_blank" rel="noreferrer">
+                            Open in Drive
+                          </a>
+                        </Button>
+                      ) : null}
+                      {job.result?.manualDownloadUrl ? (
+                        <Button asChild variant="secondary" size="sm">
+                          <a href={job.result.manualDownloadUrl} target="_blank" rel="noreferrer">
+                            Open link
+                          </a>
+                        </Button>
+                      ) : null}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );

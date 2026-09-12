@@ -2,7 +2,7 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { isRetagInput, RETAG_INPUT_LABEL, trackDisplayName } from "@thumper/shared";
-import { Loader2, RotateCcw, Upload } from "lucide-react";
+import { Loader2, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,10 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { StatusDot } from "../components/status-dot";
 import "../ui-theme.css";
+import "../downloader/downloader.css";
+import "../audio-tools.css";
 import { readJson, uploadAudio } from "@/lib/upload-audio";
+import { AudioUpload } from "../components/audio-upload";
 
 type Candidate = {
   url: string;
@@ -281,24 +284,32 @@ export default function RetagPage() {
   const stepIndex = STEPS.findIndex(([key]) => key === step);
 
   return (
-    <div className="ui-scope min-h-screen">
-      <div className="mx-auto max-w-2xl px-5 pt-10 pb-28">
-        <h1 className="text-lg font-semibold tracking-tight">Audio → FLAC</h1>
-        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-          Upload one or many SoundCloud free-download files, confirm matches, convert losslessly
-          with artwork — download or send to Drive.
-        </p>
+    <div className="ui-scope downloader min-h-screen">
+      <div className="downloader-shell">
+        <header className="downloader-heading">
+          <div>
+            <h1>Update track details</h1>
+            <p>
+              Add track titles, artists and artwork to your audio files, then save them as FLAC.
+            </p>
+          </div>
+          <span className="downloader-format">Audio format: FLAC</span>
+        </header>
 
-        <div className="mt-5 flex items-center gap-2">
+        <div className="audio-steps">
           {STEPS.map(([key, label], i) => (
-            <span key={key} className="flex items-center gap-2">
+            <span
+              key={key}
+              aria-current={i === stepIndex ? "step" : undefined}
+              className="flex items-center gap-2"
+            >
               <span
                 className={`text-[11px] tracking-wide uppercase ${
                   i === stepIndex
                     ? "font-semibold text-primary"
                     : i < stepIndex
                       ? "text-muted-foreground"
-                      : "text-muted-foreground/40"
+                      : "text-muted-foreground"
                 }`}
               >
                 {label}
@@ -313,6 +324,7 @@ export default function RetagPage() {
               size="sm"
               className="ml-auto h-7 text-xs"
               onClick={reset}
+              disabled={busy || step === "converting"}
             >
               <RotateCcw /> Start over
             </Button>
@@ -320,44 +332,61 @@ export default function RetagPage() {
         </div>
 
         {error ? (
-          <p className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <p
+            role="alert"
+            className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+          >
             {error}
           </p>
         ) : null}
         {progressNote ? (
-          <p className="mt-4 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
+          <p
+            role="status"
+            className="mt-4 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground"
+          >
             {progressNote}
           </p>
         ) : null}
 
         {step === "upload" ? (
-          <div className="mt-4 rounded-xl border border-border bg-card p-5 shadow-lg shadow-black/30">
-            <label
-              className={`flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed border-input px-6 py-10 text-center transition-colors hover:border-primary/60 hover:bg-muted/50 ${
-                busy ? "pointer-events-none opacity-60" : ""
-              }`}
-            >
-              {busy ? (
-                <Loader2 className="size-5 animate-spin text-muted-foreground" />
-              ) : (
-                <Upload className="size-5 text-muted-foreground" />
-              )}
-              <span className="text-sm font-medium">
-                {busy ? "Working…" : "Choose audio files"}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                {RETAG_INPUT_LABEL} — up to 500 MB each, uploaded straight to storage
-              </span>
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="sr-only"
-                accept=".wav,.mp3,.m4a,.flac,audio/wav,audio/x-wav,audio/mpeg,audio/mp4,audio/x-m4a,audio/flac"
-                multiple
-                disabled={busy}
-                onChange={(e) => void onFiles(e.target.files)}
+          <div className="downloader-workspace mt-6">
+            <section className="downloader-composer">
+              <div className="downloader-section-title">
+                <h2>Upload audio</h2>
+              </div>
+              <p className="downloader-description">Select the files you want to update.</p>
+              <AudioUpload
+                busy={busy}
+                inputRef={fileInputRef}
+                onFiles={(files) => void onFiles(files)}
               />
-            </label>
+            </section>
+            <aside className="downloader-connections">
+              <div className="downloader-section-title">
+                <h2>How it works</h2>
+              </div>
+              <ol className="audio-guide">
+                <li>
+                  <strong>Upload your files</strong>
+                  <p>Add one track or several at once.</p>
+                </li>
+                <li>
+                  <strong>Review the matches</strong>
+                  <p>
+                    Check the suggested SoundCloud title, artist and artwork. Choose another match
+                    or paste a link if needed.
+                  </p>
+                </li>
+                <li>
+                  <strong>Save your updated tracks</strong>
+                  <p>Convert to FLAC and download to your device or Google Drive.</p>
+                </li>
+              </ol>
+              <p className="audio-note">
+                Converting to FLAC preserves the source quality; it won’t restore detail lost in a
+                compressed file.
+              </p>
+            </aside>
           </div>
         ) : null}
 
@@ -368,13 +397,13 @@ export default function RetagPage() {
                 Approve all with matches
               </Button>
               <Select value={destination} onValueChange={setDestination}>
-                <SelectTrigger className="h-8 w-44 bg-background text-xs">
+                <SelectTrigger aria-label="Save to" className="h-8 w-44 bg-background text-xs">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="browser">Browser download</SelectItem>
+                <SelectContent position="popper" align="start" sideOffset={6}>
+                  <SelectItem value="browser">This device</SelectItem>
                   <SelectItem value="drive">Google Drive</SelectItem>
-                  <SelectItem value="both">Both</SelectItem>
+                  <SelectItem value="both">Device + Google Drive</SelectItem>
                 </SelectContent>
               </Select>
               <Button
@@ -401,7 +430,7 @@ export default function RetagPage() {
                 const matchable =
                   t.status === "ready" && Boolean(t.selected || t.overrideUrl.trim());
                 return (
-                  <article key={t.id} className="relative pl-5">
+                  <article key={t.id} className="downloader-job relative pl-5">
                     <span className="absolute top-1.5 left-0">
                       <StatusDot
                         status={
@@ -425,7 +454,7 @@ export default function RetagPage() {
                       />
                       <label
                         htmlFor={`approve-${t.id}`}
-                        className="flex-1 cursor-pointer truncate font-mono text-xs text-muted-foreground"
+                        className="min-w-0 flex-1 cursor-pointer truncate font-mono text-xs text-muted-foreground"
                       >
                         {t.filename}
                       </label>
@@ -473,11 +502,13 @@ export default function RetagPage() {
                     ) : null}
 
                     {t.candidates.length > 1 ? (
-                      <div className="mt-3 grid grid-cols-2 gap-2">
+                      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {t.candidates.map((c) => {
                           const active = !t.showOverride && t.selected?.url === c.url;
                           return (
-                            <button
+                            <Button
+                              variant="outline"
+                              aria-pressed={active}
                               key={c.url}
                               type="button"
                               onClick={() =>
@@ -487,7 +518,7 @@ export default function RetagPage() {
                                   approved: true,
                                 })
                               }
-                              className={`flex items-center gap-2 rounded-md border p-2 text-left transition-colors ${
+                              className={`h-auto min-w-0 justify-start whitespace-normal flex items-center gap-2 rounded-md border p-2 text-left transition-colors ${
                                 active ? "border-primary bg-accent" : "border-border hover:bg-muted"
                               }`}
                             >
@@ -510,7 +541,7 @@ export default function RetagPage() {
                                   {c.artist || "Unknown artist"}
                                 </span>
                               </span>
-                            </button>
+                            </Button>
                           );
                         })}
                       </div>
@@ -523,6 +554,7 @@ export default function RetagPage() {
                         </p>
                         <Input
                           type="url"
+                          aria-label={`Metadata link for ${t.filename}`}
                           value={t.overrideUrl}
                           onChange={(e) =>
                             updateTrack(t.id, {
@@ -559,7 +591,7 @@ export default function RetagPage() {
               const fileId = job?.result?.fileId;
               const driveUrl = job?.result?.driveUrl;
               return (
-                <article key={t.id} className="relative pl-5">
+                <article key={t.id} className="downloader-job relative pl-5">
                   <span className="absolute top-1.5 left-0">
                     <StatusDot status={job?.status ?? "queued"} />
                   </span>
