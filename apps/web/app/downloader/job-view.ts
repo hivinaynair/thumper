@@ -52,7 +52,6 @@ export type CookieProviderStatus = {
 export type CookieStatus = {
   youtube: CookieProviderStatus;
   soundcloud: CookieProviderStatus;
-  spotify: CookieProviderStatus;
 };
 
 export type PlaylistRollup = {

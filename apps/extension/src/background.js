@@ -1,14 +1,11 @@
 const PROVIDERS = {
   youtube: [".youtube.com", ".google.com"],
   soundcloud: [".soundcloud.com"],
-  // sp_dc lives on .spotify.com.
-  spotify: [".spotify.com"],
 };
 
 const WARM_URLS = {
   youtube: "https://www.youtube.com/",
   soundcloud: "https://soundcloud.com/",
-  spotify: "https://open.spotify.com/",
 };
 
 const AUTH_COOKIE_NAMES = {
@@ -20,10 +17,9 @@ const AUTH_COOKIE_NAMES = {
     "__Secure-3PSID",
   ]),
   soundcloud: new Set(["oauth_token", "oauth_token_refresh"]),
-  spotify: new Set(["sp_dc", "sp_key"]),
 };
 
-const SYNC_PROVIDERS = ["youtube", "soundcloud", "spotify"];
+const SYNC_PROVIDERS = ["youtube", "soundcloud"];
 
 function getCookiesForDomains(domains) {
   return Promise.all(
@@ -156,14 +152,12 @@ async function uploadCookies(origin, provider, netscapeText) {
 const SKIP_REASONS = {
   youtube: "Not signed in to YouTube in this browser",
   soundcloud: "Not signed in to SoundCloud — skipped",
-  spotify: "Not signed in to Spotify — skipped",
 };
 
 async function syncAll(origin) {
   const results = {
     youtube: { status: "pending" },
     soundcloud: { status: "pending" },
-    spotify: { status: "pending" },
   };
 
   for (const provider of SYNC_PROVIDERS) {
@@ -186,7 +180,7 @@ async function syncAll(origin) {
     return {
       ok: false,
       error:
-        "No signed-in sessions found for YouTube, SoundCloud, or Spotify",
+        "No signed-in sessions found for YouTube or SoundCloud",
       results,
     };
   }
@@ -200,8 +194,6 @@ function summarize(results) {
   if (results.youtube.status === "skipped") parts.push("YouTube skipped");
   if (results.soundcloud.status === "synced") parts.push("SoundCloud refreshed");
   if (results.soundcloud.status === "skipped") parts.push("SoundCloud skipped");
-  if (results.spotify.status === "synced") parts.push("Spotify refreshed");
-  if (results.spotify.status === "skipped") parts.push("Spotify skipped");
   return parts.join(" · ");
 }
 

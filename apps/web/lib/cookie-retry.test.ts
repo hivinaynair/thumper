@@ -109,7 +109,6 @@ describe("missingCookiesForRetry", () => {
       missingCookiesForRetry([failed], {
         youtube: { present: false, updatedAt: null },
         soundcloud: { present: true, updatedAt: null },
-        spotify: { present: false, updatedAt: null },
       }),
     ).toBe("Sync YouTube cookies before retrying");
   });
@@ -120,21 +119,12 @@ describe("missingCookiesForRetry", () => {
       missingCookiesForRetry([failed], {
         youtube: { present: true, updatedAt: "2026-08-28T10:00:00.000Z" },
         soundcloud: { present: true, updatedAt: null },
-        spotify: { present: false, updatedAt: null },
       }),
     ).toBeNull();
   });
 });
 
 describe("cookieProvidersNeeded", () => {
-  it("asks for Spotify cookies on a Spotify session failure", () => {
-    expect(
-      cookieProvidersNeeded(
-        "Spotify session is no longer usable — refresh Spotify cookies and retry.",
-      ),
-    ).toEqual(["spotify"]);
-  });
-
   it("asks for SoundCloud cookies on a SoundCloud session failure", () => {
     const error =
       "SoundCloud session is no longer usable — refresh SoundCloud cookies and retry.";

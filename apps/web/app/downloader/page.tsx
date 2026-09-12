@@ -49,7 +49,6 @@ type SyncResult = {
   results?: {
     youtube?: { status: string; reason?: string };
     soundcloud?: { status: string; reason?: string };
-    spotify?: { status: string; reason?: string };
   };
 };
 
@@ -210,7 +209,6 @@ const TIER_RULE: Record<VerdictTier, string> = {
 const COOKIE_PROVIDERS = [
   ["youtube", "YouTube"],
   ["soundcloud", "SoundCloud"],
-  ["spotify", "Spotify"],
 ] as const;
 
 export default function DownloaderPage() {
@@ -411,9 +409,7 @@ export default function DownloaderPage() {
   }
 
   const anyCookiesPresent = Boolean(
-    cookies?.youtube.present ||
-    cookies?.soundcloud.present ||
-    cookies?.spotify.present,
+    cookies?.youtube.present || cookies?.soundcloud.present,
   );
   const youtubeStale =
     Boolean(cookies?.youtube.present) &&

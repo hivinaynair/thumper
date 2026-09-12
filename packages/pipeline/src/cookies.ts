@@ -44,11 +44,7 @@ export function decryptBytes(payload: Buffer): Buffer {
   return Buffer.concat([decipher.update(data), decipher.final()]);
 }
 
-export type CookieProvider =
-  | "youtube"
-  | "soundcloud"
-  | "spotify"
-  | "patreon";
+export type CookieProvider = "youtube" | "soundcloud" | "patreon";
 
 function cookieKey(userId: string, provider: CookieProvider): string {
   return userStorageKey(userId, "cookies", `${provider}.cookies.enc`);
@@ -78,14 +74,14 @@ export type CookieProviderStatus = {
 };
 
 export type CookieStatusMap = Record<
-  "youtube" | "soundcloud" | "spotify",
+  "youtube" | "soundcloud",
   CookieProviderStatus
 >;
 
 export async function getCookieStatus(
   userId: string,
 ): Promise<CookieStatusMap> {
-  const providers = ["youtube", "soundcloud", "spotify"] as const;
+  const providers = ["youtube", "soundcloud"] as const;
   const out = {} as CookieStatusMap;
   for (const provider of providers) {
     const meta = await headObject(cookieKey(userId, provider));
