@@ -1,7 +1,16 @@
 "use client";
 
 import { detectSourceKind } from "@thumper/shared";
-import { ArrowDownToLine, AudioLines, Link2, Loader2, RefreshCw } from "lucide-react";
+import {
+  ArrowDownToLine,
+  AudioLines,
+  Check,
+  Link2,
+  ListMusic,
+  Loader2,
+  Music2,
+  RefreshCw,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -816,113 +825,157 @@ export default function DownloaderPage() {
               </p>
             </div>
           ) : (
-            <div className="space-y-7">
+            <div className="download-list">
               {topLevel.map((job) => {
                 const verdict = verdictOf(job);
                 const kids = childrenOf(job.id);
                 const rollup = rollups.get(job.id);
                 const retryTargets = jobsToRetry(job, jobs);
+                const active =
+                  job.status === "running" || job.status === "queued" || Boolean(rollup?.pending);
+                const statusLabel = rollup?.pending
+                  ? "Downloading playlist"
+                  : job.status === "completed"
+                    ? "Complete"
+                    : job.status === "failed"
+                      ? "Failed"
+                      : job.status === "cancelled"
+                        ? "Cancelled"
+                        : job.status === "cancelling"
+                          ? "Cancelling…"
+                          : job.status === "queued"
+                            ? "Waiting to start"
+                            : ({
+                                resolving: "Finding your track",
+                                downloading: "Downloading audio",
+                                converting: "Converting audio",
+                                delivering: "Saving your files",
+                                cleanup: "Finishing up",
+                              }[job.stage] ?? "Processing audio");
+                const progress = rollup
+                  ? Math.round(((rollup.total - rollup.pending) / rollup.total) * 100)
+                  : Math.min(100, Math.max(0, job.progress));
                 return (
-                  <article key={job.id} className="downloader-job relative pl-5">
-                    <span className="absolute top-1.5 left-0">
-                      <StatusDot status={job.status} />
-                    </span>
-
-                    <h3 className="break-words text-[15px] leading-tight font-semibold">
-                      {jobLabel(job)}
-                    </h3>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {job.stage} · {job.audioFormat} · {job.destination}
-                      {job.result?.clubReadyOnly ? " · club-ready only" : ""}
-                      {rollup ? ` · ${rollupSummary(rollup)}` : ""}
-                      {job.result?.unmatchedCount
-                        ? ` · ${job.result.unmatchedCount} unmatched`
-                        : ""}
-                      {job.result?.matchScore ? ` · match ${job.result.matchScore}` : ""}
-                    </p>
-
-                    {job.status === "running" || job.status === "queued" ? (
-                      <div
-                        role="progressbar"
-                        aria-label={`${jobLabel(job)} progress`}
-                        aria-valuenow={Math.min(100, Math.max(0, job.progress))}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        className="mt-2.5 h-1 w-full overflow-hidden rounded bg-muted"
-                      >
-                        <span
-                          className="block h-full bg-primary transition-[width]"
-                          style={{ width: `${Math.min(100, Math.max(0, job.progress))}%` }}
-                        />
+                  <article
+                    key={job.id}
+                    className="download-row"
+                    data-status={active ? "running" : job.status}
+                  >
+                    <div className="download-row-icon" aria-hidden="true">
+                      {job.result?.playlist ? <ListMusic size={20} /> : <Music2 size={20} />}
+                    </div>
+                    <div className="download-row-info">
+                      <h3>{jobLabel(job)}</h3>
+                      <p className="download-row-meta">
+                        <span>{job.audioFormat.toUpperCase()}</span>
+                        <span>
+                          {job.destination === "browser"
+                            ? "This device"
+                            : job.destination === "both"
+                              ? "Device + Google Drive"
+                              : "Google Drive"}
+                        </span>
+                        {job.result?.clubReadyOnly ? <span>Quality filter on</span> : null}
+                      </p>
+                      {rollup ? (
+                        <p className="download-row-summary">{rollupSummary(rollup)}</p>
+                      ) : null}
+                      {job.result?.unmatchedCount ? (
+                        <p className="download-row-summary">
+                          {job.result.unmatchedCount} tracks couldn’t be matched
+                        </p>
+                      ) : null}
+                    </div>
+                    <Badge variant="outline" className="download-row-status">
+                      {active ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : job.status === "completed" ? (
+                        <Check size={12} />
+                      ) : null}
+                      {statusLabel}
+                    </Badge>
+                    {active ? (
+                      <div className="download-row-progress">
+                        <div
+                          role="progressbar"
+                          aria-label={`${jobLabel(job)} progress`}
+                          aria-valuenow={progress}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          className="download-row-progress-track"
+                        >
+                          <span style={{ width: `${progress}%` }} />
+                        </div>
+                        <span>{progress}%</span>
                       </div>
                     ) : null}
-
-                    {verdict.tier !== "pending" ? (
-                      <p
-                        className={`mt-3 border-l-2 bg-muted/50 py-2 pl-3 text-[13px] leading-relaxed ${TIER_RULE[verdict.tier]}`}
-                      >
-                        <span
-                          className={`font-semibold tracking-wide uppercase ${TIER_TEXT[verdict.tier]}`}
+                    <div className="download-row-details">
+                      {verdict.tier !== "pending" ? (
+                        <p
+                          className={`mt-3 border-l-2 bg-muted/50 py-2 pl-3 text-[13px] leading-relaxed ${TIER_RULE[verdict.tier]}`}
                         >
-                          {verdict.lead}
-                        </span>
-                        {verdict.detail ? (
-                          <span className="text-muted-foreground"> — {verdict.detail}</span>
-                        ) : null}
-                      </p>
-                    ) : null}
+                          <span
+                            className={`font-semibold tracking-wide uppercase ${TIER_TEXT[verdict.tier]}`}
+                          >
+                            {verdict.lead}
+                          </span>
+                          {verdict.detail ? (
+                            <span className="text-muted-foreground"> — {verdict.detail}</span>
+                          ) : null}
+                        </p>
+                      ) : null}
 
-                    {job.result?.warnings?.length ? (
-                      <ul className="mt-2 space-y-1 pl-4 text-xs text-muted-foreground">
-                        {job.result.warnings.map((warning) => (
-                          <li key={warning} className="list-disc">
-                            {warning}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-
-                    {kids.length > 0 ? (
-                      <ul className="mt-3 space-y-1.5 border-l border-border pl-3">
-                        {kids.map((kid) => {
-                          const kidVerdict = verdictOf(kid);
-                          return (
-                            <li key={kid.id} className="flex items-center gap-2.5 text-xs">
-                              <StatusDot status={kid.status} />
-                              <span
-                                title={jobLabel(kid)}
-                                className="min-w-0 flex-1 truncate text-muted-foreground"
-                              >
-                                {jobLabel(kid)}
-                              </span>
-                              <span
-                                title={kidVerdict.detail ?? undefined}
-                                className={`text-[10px] font-medium tracking-wider uppercase ${TIER_TEXT[kidVerdict.tier]}`}
-                              >
-                                {kidVerdict.lead}
-                              </span>
-                              {kid.result?.fileId ? (
-                                <Button
-                                  asChild
-                                  variant="secondary"
-                                  size="sm"
-                                  className="h-6 px-2 text-[11px]"
-                                >
-                                  <a
-                                    href={`/api/files/${kid.result.fileId}`}
-                                    aria-label={`Download ${jobLabel(kid)}`}
-                                  >
-                                    Download
-                                  </a>
-                                </Button>
-                              ) : null}
+                      {job.result?.warnings?.length ? (
+                        <ul className="mt-2 space-y-1 pl-4 text-xs text-muted-foreground">
+                          {job.result.warnings.map((warning) => (
+                            <li key={warning} className="list-disc">
+                              {warning}
                             </li>
-                          );
-                        })}
-                      </ul>
-                    ) : null}
+                          ))}
+                        </ul>
+                      ) : null}
 
-                    <div className="mt-3 flex flex-wrap gap-2">
+                      {kids.length > 0 ? (
+                        <ul className="mt-3 space-y-1.5 border-l border-border pl-3">
+                          {kids.map((kid) => {
+                            const kidVerdict = verdictOf(kid);
+                            return (
+                              <li key={kid.id} className="flex items-center gap-2.5 text-xs">
+                                <StatusDot status={kid.status} />
+                                <span
+                                  title={jobLabel(kid)}
+                                  className="min-w-0 flex-1 truncate text-muted-foreground"
+                                >
+                                  {jobLabel(kid)}
+                                </span>
+                                <span
+                                  title={kidVerdict.detail ?? undefined}
+                                  className={`text-[10px] font-medium tracking-wider uppercase ${TIER_TEXT[kidVerdict.tier]}`}
+                                >
+                                  {kidVerdict.lead}
+                                </span>
+                                {kid.result?.fileId ? (
+                                  <Button
+                                    asChild
+                                    variant="secondary"
+                                    size="sm"
+                                    className="h-6 px-2 text-[11px]"
+                                  >
+                                    <a
+                                      href={`/api/files/${kid.result.fileId}`}
+                                      aria-label={`Download ${jobLabel(kid)}`}
+                                    >
+                                      Download
+                                    </a>
+                                  </Button>
+                                ) : null}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : null}
+                    </div>
+                    <div className="download-row-actions">
                       {job.status === "queued" || job.status === "running" ? (
                         <Button
                           type="button"
@@ -947,8 +1000,10 @@ export default function DownloaderPage() {
                         </Button>
                       ) : null}
                       {job.result?.fileId ? (
-                        <Button asChild size="sm">
-                          <a href={`/api/files/${job.result.fileId}`}>Download</a>
+                        <Button asChild size="sm" variant="secondary">
+                          <a href={`/api/files/${job.result.fileId}`}>
+                            <ArrowDownToLine /> Download
+                          </a>
                         </Button>
                       ) : null}
                       {job.result?.driveUrl ? (

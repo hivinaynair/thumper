@@ -259,3 +259,158 @@
 .downloader-session-card[data-ready="true"] .downloader-sessions {
   margin-bottom: 0;
 }
+
+/* Queue rows: track identity, status and actions share one compact line. */
+.download-list {
+  border: 1px solid var(--ui-border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--ui-card);
+}
+.download-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto auto;
+  gap: 12px 16px;
+  padding: 22px;
+  align-items: center;
+}
+.download-row + .download-row {
+  border-top: 1px solid var(--ui-border);
+}
+.download-row-icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--ui-border);
+  border-radius: 9px;
+  color: var(--ui-muted-foreground);
+  background: #22221f;
+}
+.download-row[data-status="running"] .download-row-icon {
+  color: var(--ui-primary);
+  background: #2c2519;
+  border-color: #51412b;
+}
+.download-row-info {
+  min-width: 0;
+}
+.download-row-info h3 {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.download-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--ui-muted-foreground);
+}
+.download-row-meta span + span::before {
+  content: "·";
+  margin-right: 12px;
+  opacity: 0.5;
+}
+.download-row-summary {
+  font-size: 12px;
+  color: var(--ui-muted-foreground);
+  margin-top: 6px;
+}
+.download-row-status {
+  grid-column: 3;
+  grid-row: 1;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--ui-muted-foreground);
+  border-color: transparent;
+}
+.download-row[data-status="completed"] .download-row-status {
+  color: #9fc9ad;
+  background: #213027;
+}
+.download-row[data-status="failed"] .download-row-status {
+  color: var(--ui-destructive);
+  background: #342320;
+}
+.download-row-progress {
+  grid-column: 2 / -1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font:
+    10px var(--font-mono),
+    monospace;
+  color: var(--ui-muted-foreground);
+}
+.download-row-progress-track {
+  height: 3px;
+  flex: 1;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #302d27;
+}
+.download-row-progress-track > span {
+  display: block;
+  height: 100%;
+  background: var(--ui-primary);
+  transition: width 0.3s;
+}
+.download-row-details {
+  grid-column: 2 / -1;
+}
+.download-row-details:empty {
+  display: none;
+}
+.download-row-actions {
+  grid-column: 4;
+  grid-row: 1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.download-row-actions:empty {
+  display: none;
+}
+.download-row-details > :first-child {
+  margin-top: 0;
+}
+@media (max-width: 700px) {
+  .download-row {
+    grid-template-columns: 32px minmax(0, 1fr) auto;
+    padding: 16px;
+    gap: 12px;
+  }
+  .download-row-icon {
+    width: 32px;
+    height: 36px;
+  }
+  .download-row-info {
+    grid-column: 2 / -1;
+  }
+  .download-row-status {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+    white-space: normal;
+  }
+  .download-row-actions {
+    grid-column: 3;
+    grid-row: 2;
+  }
+  .download-row-details {
+    grid-column: 1 / -1;
+  }
+  .download-row-progress {
+    grid-column: 1 / -1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .download-row-progress-track > span {
+    transition: none;
+  }
+}

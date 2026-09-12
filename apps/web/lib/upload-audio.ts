@@ -40,6 +40,7 @@ export async function uploadAudio(
   file: File,
   endpoint: string,
   userId: string | null | undefined,
+  onProgress?: (percentage: number) => void,
 ): Promise<UploadedAudio> {
   const modeRes = await fetch(endpoint);
   const modeData = await readJson(modeRes);
@@ -52,6 +53,7 @@ export async function uploadAudio(
       access: "private",
       handleUploadUrl: endpoint,
       multipart: true,
+      onUploadProgress: onProgress ? (event) => onProgress(event.percentage) : undefined,
       contentType: file.type || "audio/wav",
     });
     return { key: blob.pathname, filename: file.name, searchQuery: file.name };
@@ -59,7 +61,21 @@ export async function uploadAudio(
 
   const form = new FormData();
   form.set("file", file);
-  const upRes = await fetch(endpoint, { method: "POST", body: form });
+  const upRes = onProgress
+    ? await new Promise<Response>((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        request.open("POST", endpoint);
+        request.upload.onprogress = (event) => {
+          if (event.lengthComputable) onProgress((event.loaded / event.total) * 100);
+        };
+        request.onload = () =>
+          resolve(new Response(request.responseText, { status: request.status }));
+        request.onerror = () =>
+          reject(new Error("Upload interrupted. Check your connection and try again."));
+        request.onabort = () => reject(new Error("Upload cancelled."));
+        request.send(form);
+      })
+    : await fetch(endpoint, { method: "POST", body: form });
   const up = await readJson(upRes);
   if (!upRes.ok) throw new Error(String(up.error || "Upload failed"));
   return {

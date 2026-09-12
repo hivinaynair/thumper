@@ -1,0 +1,276 @@
+.stem-track {
+  border: 1px solid var(--ui-border);
+  border-radius: 14px;
+  background: var(--ui-card);
+  padding: 24px;
+}
+.stem-track-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+.stem-track-heading > div {
+  min-width: 0;
+}
+.stem-track-heading h3 {
+  font-size: 16px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.stem-track-heading p {
+  font-size: 12px;
+  color: var(--ui-muted-foreground);
+  margin-top: 5px;
+}
+.stem-track-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border: 1px solid #544326;
+  background: #2c2519;
+  border-radius: 11px;
+  color: var(--ui-primary);
+}
+.stem-status {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--ui-muted-foreground);
+}
+.stem-status[data-complete="true"] {
+  color: #9ec8ad;
+}
+.stem-processing {
+  padding: 24px;
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  background: #191917;
+}
+.stem-stages {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 28px !important;
+}
+.stem-stages li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ui-muted-foreground);
+}
+.stem-stages li > span {
+  display: grid;
+  place-items: center;
+  width: 23px;
+  height: 23px;
+  border: 1px solid var(--ui-border);
+  border-radius: 50%;
+  font-size: 10px;
+}
+.stem-stages li[data-active="true"],
+.stem-stages li[data-done="true"] {
+  color: var(--ui-primary);
+}
+.stem-stages li[data-active="true"] > span {
+  background: #352c1c;
+  border-color: #78603b;
+}
+.stem-progress-copy {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 14px;
+}
+.stem-progress-copy > span {
+  font-size: 12px;
+  color: var(--ui-primary);
+}
+.stem-processing > p {
+  font-size: 13px;
+  color: var(--ui-muted-foreground);
+  line-height: 1.7;
+  margin-top: 8px;
+}
+.stem-progress {
+  height: 5px;
+  overflow: hidden;
+  background: #302c25;
+  border-radius: 10px;
+  margin-top: 24px;
+}
+.stem-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--ui-primary);
+  border-radius: inherit;
+  transition: width 0.4s;
+}
+.stem-indeterminate {
+  animation: stem-loading 2s ease-in-out infinite alternate;
+}
+.stem-timing {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--ui-muted-foreground);
+  margin-top: 12px;
+}
+.stem-player {
+  --stem-color: #cba15c;
+  padding: 16px 18px;
+  border: 1px solid #413726;
+  background: #211e18;
+  border-radius: 10px;
+}
+.stem-player[data-role="vocals"] {
+  --stem-color: #b1a0db;
+  background: #201d28;
+  border-color: #3b344b;
+}
+.stem-player-heading,
+.stem-player-label,
+.stem-player-body {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.stem-player-heading {
+  justify-content: space-between;
+  gap: 8px;
+}
+.stem-player-label {
+  color: var(--stem-color);
+  font-size: 13px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.stem-player-label span {
+  color: var(--ui-muted-foreground);
+  font-size: 11px;
+}
+.stem-player-body {
+  margin-top: 12px;
+}
+.stem-player-body > button {
+  border-color: var(--stem-color);
+  color: var(--stem-color);
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.stem-waveform {
+  position: relative;
+  height: 80px;
+  flex: 1;
+  min-width: 0;
+  color: var(--stem-color);
+}
+.stem-waveform svg {
+  width: 100%;
+  height: 100%;
+}
+.stem-waveform-seek {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  cursor: pointer;
+}
+.stem-waveform-seek [data-slot="slider-track"] {
+  opacity: 0;
+}
+.stem-waveform-seek [role="slider"] {
+  opacity: 0;
+}
+.stem-waveform-seek:focus-within {
+  outline: 2px solid var(--stem-color);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+.stem-waveform-message {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  font-size: 12px;
+  color: var(--ui-muted-foreground);
+}
+.stem-player-time {
+  font:
+    11px var(--font-mono),
+    monospace;
+  white-space: nowrap;
+}
+.stem-player-time > span {
+  color: var(--ui-muted-foreground);
+}
+.stem-player-error {
+  font-size: 12px;
+  color: var(--ui-muted-foreground);
+  margin-top: 10px;
+}
+@keyframes stem-loading {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(330%);
+  }
+}
+@media (max-width: 600px) {
+  .stem-track {
+    padding: 16px;
+  }
+  .stem-track-heading {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .stem-track-heading > div {
+    flex: 1;
+  }
+  .stem-status {
+    width: calc(100% - 54px);
+    margin-left: 54px;
+  }
+  .stem-processing {
+    padding: 16px;
+  }
+  .stem-stages {
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .stem-stages li {
+    gap: 5px;
+    font-size: 11px;
+  }
+  .stem-player {
+    padding: 12px;
+  }
+  .stem-player-heading {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .stem-player-body {
+    flex-wrap: wrap;
+  }
+  .stem-player-time {
+    width: 100%;
+    text-align: right;
+  }
+  .stem-waveform {
+    height: 64px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stem-indeterminate {
+    animation: none;
+  }
+  .stem-progress > span {
+    transition: none;
+  }
+}

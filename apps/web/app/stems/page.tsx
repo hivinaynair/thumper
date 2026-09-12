@@ -2,7 +2,7 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { isRetagInput, RETAG_INPUT_LABEL, type StemRole } from "@thumper/shared";
-import { Download, RotateCcw } from "lucide-react";
+import { Check, Download, LoaderCircle, Music2, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,7 +12,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { StatusDot } from "../components/status-dot";
+import { processingEstimate, stageInfo } from "./progress";
+import { StemPlayer } from "./stem-player";
+import "./stems.css";
 import "../ui-theme.css";
 import "../downloader/downloader.css";
 import "../audio-tools.css";
@@ -49,6 +51,10 @@ type TrackItem = {
   jobId?: string;
   job?: Job;
   error?: string;
+  uploadState?: "waiting" | "uploading" | "starting";
+  uploadProgress?: number;
+  startedAt: number;
+  sample?: { progress: number; at: number };
 };
 
 type Step = "upload" | "working" | "done";
@@ -66,7 +72,7 @@ export default function StemsPage() {
   const { userId } = useAuth();
   const [step, setStep] = useState<Step>("upload");
   const [busy, setBusy] = useState(false);
-  const [progressNote, setProgressNote] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
   const [error, setError] = useState<string | null>(null);
   const [tracks, setTracks] = useState<TrackItem[]>([]);
   const [destination, setDestination] = useState("browser");
@@ -74,15 +80,14 @@ export default function StemsPage() {
   const reset = useCallback(() => {
     setStep("upload");
     setBusy(false);
-    setProgressNote(null);
     setError(null);
     setTracks([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
 
   const uploadOne = useCallback(
-    async (file: File): Promise<string> =>
-      (await uploadAudio(file, "/api/stems/upload", userId)).key,
+    async (file: File, onProgress: (percentage: number) => void): Promise<string> =>
+      (await uploadAudio(file, "/api/stems/upload", userId, onProgress)).key,
     [userId],
   );
 
@@ -98,44 +103,43 @@ export default function StemsPage() {
       setError(null);
       setBusy(true);
       setStep("working");
-      const next: TrackItem[] = [];
-
+      const next: TrackItem[] = selected.map((file) => ({
+        id: crypto.randomUUID(),
+        filename: file.name,
+        startedAt: Date.now(),
+        uploadState: "waiting",
+      }));
+      setTracks(next);
+      const patch = (id: string, update: Partial<TrackItem>) =>
+        setTracks((prev) => prev.map((item) => (item.id === id ? { ...item, ...update } : item)));
       try {
         for (let i = 0; i < selected.length; i++) {
           const file = selected[i]!;
-          const item: TrackItem = {
-            id: crypto.randomUUID(),
-            filename: file.name,
-          };
-          next.push(item);
-          setTracks([...next]);
-
-          setProgressNote(`Uploading ${i + 1}/${selected.length}: ${file.name}`);
+          const item = next[i]!;
+          patch(item.id, { uploadState: "uploading", startedAt: Date.now() });
           try {
-            const key = await uploadOne(file);
+            const key = await uploadOne(file, (uploadProgress) =>
+              patch(item.id, { uploadProgress }),
+            );
+            patch(item.id, { uploadState: "starting" });
             const res = await fetch("/api/stems/start", {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({
-                inputStorageKey: key,
-                destination,
-              }),
+              body: JSON.stringify({ inputStorageKey: key, destination }),
             });
             const data = await readJson(res);
             if (!res.ok) throw new Error(String(data.error || "Could not start separation"));
             const job = data.job as Job;
-            item.jobId = job.id;
-            item.job = job;
+            patch(item.id, { jobId: job.id, job, uploadState: undefined });
           } catch (err) {
-            item.error = err instanceof Error ? err.message : String(err);
+            patch(item.id, {
+              error: err instanceof Error ? err.message : String(err),
+              uploadState: undefined,
+            });
           }
-          setTracks([...next]);
         }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
       } finally {
         setBusy(false);
-        setProgressNote(null);
       }
     },
     [uploadOne, destination],
@@ -144,35 +148,63 @@ export default function StemsPage() {
   // Poll while anything is still running.
   useEffect(() => {
     if (step !== "working") return;
-    const active = tracks.filter((t) => t.jobId);
-    if (active.length === 0) return;
-
-    if (active.every((t) => t.job && TERMINAL.includes(t.job.status))) {
+    if (
+      !busy &&
+      tracks.length > 0 &&
+      tracks.every((t) => t.error || (t.job && TERMINAL.includes(t.job.status)))
+    ) {
       setStep("done");
-      return;
     }
+  }, [step, tracks, busy]);
 
+  useEffect(() => {
+    if (step !== "working") return;
+    let polling = false;
+    const controller = new AbortController();
     const id = window.setInterval(async () => {
+      if (polling) return;
+      polling = true;
       try {
-        const res = await fetch("/api/jobs");
+        const res = await fetch("/api/jobs", { signal: controller.signal });
+        if (!res.ok) return;
         const data = await readJson(res);
         const rows = (data.jobs ?? []) as Job[];
         setTracks((prev) =>
           prev.map((t) => {
             if (!t.jobId) return t;
             const current = rows.find((row) => row.id === t.jobId);
-            return current ? { ...t, job: current } : t;
+            return current
+              ? {
+                  ...t,
+                  job: current,
+                  sample:
+                    current.stage === "separating" && !t.sample
+                      ? { progress: current.progress, at: Date.now() }
+                      : t.sample,
+                }
+              : t;
           }),
         );
       } catch {
         /* keep polling */
+      } finally {
+        polling = false;
       }
     }, 1500);
 
-    return () => window.clearInterval(id);
-  }, [step, tracks]);
+    return () => {
+      controller.abort();
+      window.clearInterval(id);
+    };
+  }, [step]);
 
-  const queued = tracks.filter((t) => t.jobId || t.error);
+  useEffect(() => {
+    if (step !== "working") return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [step]);
+
+  const queued = tracks;
 
   return (
     <div className="ui-scope downloader min-h-screen">
@@ -187,25 +219,6 @@ export default function StemsPage() {
           <span className="downloader-format">Audio format: FLAC</span>
         </header>
 
-        {step !== "upload" ? (
-          <div className="mt-5 flex items-center">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="ml-auto h-7 text-xs"
-              onClick={reset}
-              disabled={
-                busy ||
-                (step === "working" &&
-                  tracks.some((t) => t.jobId && !TERMINAL.includes(t.job?.status ?? "queued")))
-              }
-            >
-              <RotateCcw /> Start over
-            </Button>
-          </div>
-        ) : null}
-
         {error ? (
           <p
             role="alert"
@@ -214,15 +227,6 @@ export default function StemsPage() {
             {error}
           </p>
         ) : null}
-        {progressNote ? (
-          <p
-            role="status"
-            className="mt-4 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground"
-          >
-            {progressNote}
-          </p>
-        ) : null}
-
         {step === "upload" ? (
           <div>
             <section className="downloader-composer">
@@ -272,6 +276,24 @@ export default function StemsPage() {
                 Follow progress and listen to the separated audio here.
               </p>
             </div>
+            {step !== "upload" ? (
+              <div className="mt-5 flex items-center">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto h-7 text-xs"
+                  onClick={reset}
+                  disabled={
+                    busy ||
+                    (step === "working" &&
+                      tracks.some((t) => t.jobId && !TERMINAL.includes(t.job?.status ?? "queued")))
+                  }
+                >
+                  <RotateCcw /> Start over
+                </Button>
+              </div>
+            ) : null}
           </div>
           {queued.length === 0 ? (
             <div className="downloader-empty">
@@ -285,27 +307,88 @@ export default function StemsPage() {
                 const job = t.job;
                 const stems = job?.result?.stemFiles ?? [];
                 const failed = Boolean(t.error) || job?.status === "failed";
+                const info = stageInfo(t.uploadState, job?.stage, job?.status, failed);
+                const elapsed = Math.max(0, Math.floor((now - t.startedAt) / 1000));
+                const estimate = processingEstimate(t.sample, job?.progress ?? 0, now);
+                const finished = failed || (job && TERMINAL.includes(job.status));
+                const stagePercent =
+                  t.uploadState === "uploading"
+                    ? t.uploadProgress
+                    : job?.stage === "separating"
+                      ? Math.max(0, Math.min(100, Math.round(((job.progress - 10) / 60) * 100)))
+                      : undefined;
                 return (
-                  <article key={t.id} className="downloader-job relative pl-5">
-                    <span className="absolute top-1.5 left-0">
-                      <StatusDot status={failed ? "failed" : (job?.status ?? "queued")} />
-                    </span>
-                    <h2 className="truncate text-[15px] leading-tight font-semibold">
-                      {job?.title || t.filename}
-                    </h2>
-
-                    {job && job.status !== "completed" && !failed ? (
-                      <>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {job.stage} · {job.progress}%
-                        </p>
-                        <div className="mt-2.5 h-0.5 w-full overflow-hidden rounded bg-muted">
+                  <article key={t.id} className="stem-track">
+                    <header className="stem-track-heading">
+                      <span className="stem-track-icon">
+                        <Music2 size={21} />
+                      </span>
+                      <div>
+                        <h3>{job?.title || t.filename}</h3>
+                        <p>{"Vocals + instrumental · FLAC"}</p>
+                      </div>
+                      <span className="stem-status" data-complete={job?.status === "completed"}>
+                        {job?.status === "completed" ? (
+                          <Check size={14} />
+                        ) : !finished ? (
+                          <LoaderCircle size={14} className="animate-spin" />
+                        ) : null}
+                        {info.title}
+                      </span>
+                    </header>
+                    {!finished ? (
+                      <div className="stem-processing">
+                        <ol className="stem-stages" aria-label="Separation progress">
+                          {["Upload", "AI separation", "Save files"].map((label, index) => (
+                            <li
+                              key={label}
+                              data-active={index === info.step}
+                              data-done={index < info.step}
+                              aria-current={index === info.step ? "step" : undefined}
+                            >
+                              <span>{index < info.step ? <Check size={13} /> : index + 1}</span>
+                              {label}
+                            </li>
+                          ))}
+                        </ol>
+                        <div className="stem-progress-copy" role="status">
+                          <strong>{info.title}</strong>
+                          <span>
+                            {t.uploadState === "uploading" && t.uploadProgress !== undefined
+                              ? `${Math.round(t.uploadProgress)}% uploaded`
+                              : job?.stage === "separating"
+                                ? `${Math.max(0, Math.min(100, Math.round((((job.progress ?? 10) - 10) / 60) * 100)))}% separated`
+                                : null}
+                          </span>
+                        </div>
+                        <p>{info.description}</p>
+                        <div
+                          className="stem-progress"
+                          role="progressbar"
+                          aria-label={info.title}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={stagePercent}
+                        >
                           <span
-                            className="block h-full bg-primary transition-[width]"
-                            style={{ width: `${job.progress}%` }}
+                            className={stagePercent === undefined ? "stem-indeterminate" : ""}
+                            style={{ width: `${stagePercent ?? 30}%` }}
                           />
                         </div>
-                      </>
+                        <div className="stem-timing">
+                          <span>
+                            {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}{" "}
+                            elapsed
+                          </span>
+                          <span>
+                            {job?.stage === "separating"
+                              ? (estimate ?? "Estimating time as the AI makes progress…")
+                              : t.uploadState === "uploading"
+                                ? "Upload time depends on file size and your connection."
+                                : "We’ll update this automatically."}
+                          </span>
+                        </div>
+                      </div>
                     ) : null}
 
                     {t.error || job?.error ? (
@@ -317,41 +400,15 @@ export default function StemsPage() {
                     {stems.length > 0 ? (
                       <div className="mt-3 space-y-3">
                         {stems.map((s) => (
-                          <div
-                            key={s.fileId}
-                            className="rounded-lg border border-border bg-card p-3"
-                          >
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-semibold capitalize">{s.role}</span>
-                              <span className="text-[11px] text-muted-foreground">
-                                {formatSize(s.sizeBytes)}
-                              </span>
-                              <div className="ml-auto flex gap-2">
-                                <Button asChild size="sm" variant="secondary">
-                                  <a href={`/api/files/${s.fileId}`}>
-                                    <Download /> FLAC
-                                  </a>
-                                </Button>
-                                {s.driveUrl ? (
-                                  <Button asChild size="sm" variant="ghost">
-                                    <a href={s.driveUrl} target="_blank" rel="noreferrer">
-                                      Drive
-                                    </a>
-                                  </Button>
-                                ) : null}
-                              </div>
-                            </div>
-                            {/* biome-ignore lint/a11y/useMediaCaption: a separated
-                              stem has no caption track to provide. */}
-                            <audio
-                              controls
-                              preload="none"
-                              className="mt-2 h-9 w-full"
-                              src={`/api/files/${s.fileId}`}
-                            />
-                          </div>
+                          <StemPlayer
+                            key={s.fileId || s.role}
+                            fileId={s.fileId}
+                            role={s.role}
+                            size={formatSize(s.sizeBytes)}
+                            driveUrl={s.driveUrl}
+                          />
                         ))}
-                        {stems.length > 1 ? (
+                        {stems.length > 1 && stems.every((s) => s.fileId) ? (
                           <Button asChild size="sm" variant="outline">
                             <a href={`/api/files/zip?jobId=${job?.id}`}>
                               <Download /> Download both (zip)

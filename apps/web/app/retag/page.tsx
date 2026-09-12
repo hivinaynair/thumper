@@ -2,7 +2,7 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { isRetagInput, RETAG_INPUT_LABEL, trackDisplayName } from "@thumper/shared";
-import { Loader2, RotateCcw } from "lucide-react";
+import { Check, Download, ExternalLink, Link2, Loader2, Music2, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,8 +15,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
-import { StatusDot } from "../components/status-dot";
+import { retagStatus, validMetadataUrl } from "./view";
+import "./retag.css";
 import "../ui-theme.css";
 import "../downloader/downloader.css";
 import "../audio-tools.css";
@@ -56,9 +56,14 @@ type TrackItem = {
   candidates: Candidate[];
   selected: Candidate | null;
   overrideUrl: string;
+  draftUrl?: string;
+  urlError?: string;
+  uploadProgress?: number;
+  startedAt?: number;
+  conversionRequested?: boolean;
   showOverride: boolean;
   approved: boolean;
-  status: "ready" | "searching" | "error";
+  status: "waiting" | "uploading" | "ready" | "searching" | "error";
   error?: string;
   jobId?: string;
   job?: Job;
@@ -72,8 +77,8 @@ function newId(): string {
 
 const STEPS = [
   ["upload", "Upload"],
-  ["confirm", "Confirm"],
-  ["converting", "Convert"],
+  ["confirm", "Review matches"],
+  ["converting", "Update & save"],
   ["done", "Done"],
 ] as const;
 
@@ -82,7 +87,7 @@ export default function RetagPage() {
   const { userId } = useAuth();
   const [step, setStep] = useState<Step>("upload");
   const [busy, setBusy] = useState(false);
-  const [progressNote, setProgressNote] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
   const [error, setError] = useState<string | null>(null);
   const [tracks, setTracks] = useState<TrackItem[]>([]);
   const [destination, setDestination] = useState("browser");
@@ -90,7 +95,6 @@ export default function RetagPage() {
   const reset = useCallback(() => {
     setStep("upload");
     setBusy(false);
-    setProgressNote(null);
     setError(null);
     setTracks([]);
     setDestination("browser");
@@ -109,7 +113,8 @@ export default function RetagPage() {
   }, []);
 
   const uploadOne = useCallback(
-    (file: File) => uploadAudio(file, "/api/retag/upload", userId),
+    (file: File, onProgress: (percentage: number) => void) =>
+      uploadAudio(file, "/api/retag/upload", userId, onProgress),
     [userId],
   );
 
@@ -124,49 +129,54 @@ export default function RetagPage() {
 
       setError(null);
       setBusy(true);
-      const next: TrackItem[] = [];
-
+      setStep("confirm");
+      const next: TrackItem[] = files.map((file) => ({
+        id: newId(),
+        filename: file.name,
+        inputStorageKey: "",
+        searchQuery: "",
+        candidates: [],
+        selected: null,
+        overrideUrl: "",
+        showOverride: false,
+        approved: false,
+        status: "waiting",
+      }));
+      setTracks(next);
+      const patch = (id: string, values: Partial<TrackItem>) =>
+        setTracks((prev) => prev.map((t) => (t.id === id ? { ...t, ...values } : t)));
       try {
         for (let i = 0; i < files.length; i++) {
           const file = files[i]!;
-          setProgressNote(`Uploading ${i + 1}/${files.length}: ${file.name}`);
-          const up = await uploadOne(file);
-
-          const item: TrackItem = {
-            id: newId(),
-            filename: up.filename,
-            inputStorageKey: up.key,
-            searchQuery: up.searchQuery,
-            candidates: [],
-            selected: null,
-            overrideUrl: "",
-            showOverride: false,
-            approved: false,
-            status: "searching",
-          };
-          next.push(item);
-          setTracks([...next]);
-
-          setProgressNote(`Searching SoundCloud ${i + 1}/${files.length}: ${file.name}`);
+          const item = next[i]!;
+          patch(item.id, { status: "uploading", startedAt: Date.now() });
           try {
+            const up = await uploadOne(file, (uploadProgress) =>
+              patch(item.id, { uploadProgress }),
+            );
+            patch(item.id, {
+              inputStorageKey: up.key,
+              filename: up.filename,
+              status: "searching",
+              searchQuery: up.searchQuery,
+            });
             const found = await runSearch({ filename: up.filename });
-            item.searchQuery = found.query;
-            item.candidates = found.candidates;
-            item.selected = found.candidates[0] ?? null;
-            item.approved = Boolean(found.candidates[0]);
-            item.status = "ready";
+            patch(item.id, {
+              searchQuery: found.query,
+              candidates: found.candidates,
+              selected: found.candidates[0] ?? null,
+              approved: Boolean(found.candidates[0]),
+              status: "ready",
+            });
           } catch (err) {
-            item.status = "error";
-            item.error = err instanceof Error ? err.message : String(err);
+            patch(item.id, {
+              status: "error",
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
-          setTracks([...next]);
         }
-        setStep("confirm");
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
       } finally {
         setBusy(false);
-        setProgressNote(null);
       }
     },
     [uploadOne, runSearch],
@@ -186,12 +196,8 @@ export default function RetagPage() {
     );
   }, []);
 
-  const metadataUrlFor = (t: TrackItem): string | null => {
-    if (t.showOverride || (!t.selected && t.overrideUrl.trim())) {
-      return t.overrideUrl.trim() || null;
-    }
-    return t.selected?.url?.trim() || null;
-  };
+  const metadataUrlFor = (t: TrackItem): string | null =>
+    t.overrideUrl || t.selected?.url?.trim() || null;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: metadataUrlFor is pure over its argument, so omitting it cannot go stale; listing it would rebuild this callback every render.
   const convertApproved = useCallback(async () => {
@@ -208,50 +214,54 @@ export default function RetagPage() {
     setBusy(true);
     setStep("converting");
 
+    setTracks((prev) =>
+      prev.map((t) =>
+        approved.some((a) => a.id === t.id)
+          ? { ...t, conversionRequested: true, startedAt: Date.now(), error: undefined }
+          : t,
+      ),
+    );
     try {
-      const queued: TrackItem[] = [];
       for (const t of approved) {
-        const metadataUrl = metadataUrlFor(t)!;
-        const res = await fetch("/api/retag/convert", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            inputStorageKey: t.inputStorageKey,
-            metadataUrl,
-            titleHint: t.selected?.title,
-            artistHint: t.selected?.artist,
-            destination,
-          }),
-        });
-        const data = await readJson(res);
-        if (!res.ok) throw new Error(String(data.error || "Convert failed"));
-        const job = data.job as Job;
-        queued.push({ ...t, jobId: job.id, job });
+        try {
+          const res = await fetch("/api/retag/convert", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              inputStorageKey: t.inputStorageKey,
+              metadataUrl: metadataUrlFor(t),
+              titleHint: t.overrideUrl ? undefined : t.selected?.title,
+              artistHint: t.overrideUrl ? undefined : t.selected?.artist,
+              destination,
+            }),
+          });
+          const data = await readJson(res);
+          if (!res.ok) throw new Error(String(data.error || "Could not start updating this file"));
+          const job = data.job as Job;
+          updateTrack(t.id, { jobId: job.id, job });
+        } catch (err) {
+          updateTrack(t.id, { error: err instanceof Error ? err.message : String(err) });
+        }
       }
-      // Keep unapproved for context; replace approved with queued jobs
-      setTracks((prev) => {
-        const byId = new Map(queued.map((q) => [q.id, q]));
-        return prev.map((t) => byId.get(t.id) ?? t);
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setStep("confirm");
     } finally {
       setBusy(false);
     }
-  }, [tracks, destination]);
+  }, [tracks, destination, updateTrack]);
 
   useEffect(() => {
     if (step !== "converting") return;
-    const active = tracks.filter((t) => t.jobId);
+    const active = tracks.filter((t) => t.conversionRequested);
     if (active.length === 0) return;
 
     const allDone = active.every(
       (t) =>
-        t.job &&
-        (t.job.status === "completed" || t.job.status === "failed" || t.job.status === "cancelled"),
+        t.error ||
+        (t.job &&
+          (t.job.status === "completed" ||
+            t.job.status === "failed" ||
+            t.job.status === "cancelled")),
     );
-    if (allDone) {
+    if (allDone && !busy) {
       setStep("done");
       return;
     }
@@ -259,6 +269,7 @@ export default function RetagPage() {
     const id = window.setInterval(async () => {
       try {
         const res = await fetch("/api/jobs");
+        if (!res.ok) return;
         const data = await readJson(res);
         const rows = (data.jobs ?? []) as Job[];
         setTracks((prev) =>
@@ -274,9 +285,15 @@ export default function RetagPage() {
     }, 1500);
 
     return () => window.clearInterval(id);
-  }, [step, tracks]);
+  }, [step, tracks, busy]);
 
-  const convertingTracks = tracks.filter((t) => t.jobId);
+  useEffect(() => {
+    if (!busy && step !== "converting") return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [busy, step]);
+
+  const convertingTracks = tracks.filter((t) => t.conversionRequested);
   const approvedCount = tracks.filter(
     (t) => t.approved && t.status === "ready" && metadataUrlFor(t),
   ).length;
@@ -339,15 +356,6 @@ export default function RetagPage() {
             {error}
           </p>
         ) : null}
-        {progressNote ? (
-          <p
-            role="status"
-            className="mt-4 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground"
-          >
-            {progressNote}
-          </p>
-        ) : null}
-
         {step === "upload" ? (
           <div className="downloader-workspace mt-6">
             <section className="downloader-composer">
@@ -392,9 +400,23 @@ export default function RetagPage() {
 
         {step === "confirm" ? (
           <>
-            <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card p-4">
-              <Button type="button" variant="secondary" size="sm" onClick={approveAll}>
-                Approve all with matches
+            <div className="retag-review-heading">
+              <h2>{busy ? "Preparing your tracks" : "Review your matches"}</h2>
+              <p>
+                {busy
+                  ? "Each file is uploaded, then we search SoundCloud for its title, artist and artwork."
+                  : "Check the suggested details below. Only selected tracks will be updated; your audio comes from your uploaded file."}
+              </p>
+            </div>
+            <div className="retag-toolbar">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={busy}
+                onClick={approveAll}
+              >
+                Select all matches
               </Button>
               <Select value={destination} onValueChange={setDestination}>
                 <SelectTrigger aria-label="Save to" className="h-8 w-44 bg-background text-xs">
@@ -410,7 +432,7 @@ export default function RetagPage() {
                 type="button"
                 size="sm"
                 className="ml-auto"
-                disabled={busy || approvedCount === 0}
+                disabled={busy || approvedCount === 0 || tracks.some((t) => t.showOverride)}
                 onClick={() => void convertApproved()}
               >
                 {busy ? (
@@ -418,55 +440,70 @@ export default function RetagPage() {
                     <Loader2 className="animate-spin" /> Queuing
                   </>
                 ) : (
-                  `Convert ${approvedCount} to FLAC`
+                  `Update ${approvedCount} ${approvedCount === 1 ? "track" : "tracks"}`
                 )}
               </Button>
             </div>
 
-            <Separator className="my-6" />
-
             <div className="space-y-6">
               {tracks.map((t) => {
                 const matchable =
-                  t.status === "ready" && Boolean(t.selected || t.overrideUrl.trim());
+                  Boolean(t.inputStorageKey) &&
+                  (t.status === "ready" || t.status === "error") &&
+                  Boolean(t.selected || t.overrideUrl.trim());
                 return (
-                  <article key={t.id} className="downloader-job relative pl-5">
-                    <span className="absolute top-1.5 left-0">
-                      <StatusDot
-                        status={
-                          t.status === "error"
-                            ? "failed"
-                            : t.status === "searching"
-                              ? "running"
-                              : matchable
-                                ? "completed"
-                                : "queued"
-                        }
-                      />
-                    </span>
-
+                  <article key={t.id} className="retag-track">
                     <div className="flex items-center gap-2.5">
                       <Checkbox
                         checked={t.approved}
-                        disabled={!matchable}
+                        disabled={!matchable || busy}
                         onCheckedChange={(v) => updateTrack(t.id, { approved: v === true })}
                         id={`approve-${t.id}`}
                       />
-                      <label
-                        htmlFor={`approve-${t.id}`}
-                        className="min-w-0 flex-1 cursor-pointer truncate font-mono text-xs text-muted-foreground"
-                      >
+                      <label htmlFor={`approve-${t.id}`} className="retag-filename">
                         {t.filename}
                       </label>
-                      {t.status === "searching" ? (
-                        <Badge
-                          variant="outline"
-                          className="border-border font-normal text-muted-foreground"
-                        >
-                          searching
-                        </Badge>
-                      ) : null}
+                      <Badge variant="outline" className="retag-status">
+                        {t.status === "uploading" || t.status === "searching" ? (
+                          <Loader2 className="animate-spin" size={12} />
+                        ) : null}
+                        {retagStatus(t.status).title === "Review match"
+                          ? t.overrideUrl
+                            ? "Custom link"
+                            : t.selected
+                              ? "Match found"
+                              : "No match found"
+                          : retagStatus(t.status).title}
+                      </Badge>
                     </div>
+                    {t.status === "waiting" ||
+                    t.status === "uploading" ||
+                    t.status === "searching" ? (
+                      <div className="retag-progress-panel" role="status">
+                        <strong>{retagStatus(t.status).title}</strong>
+                        <p>{retagStatus(t.status).detail}</p>
+                        {t.status === "uploading" ? (
+                          <div
+                            className="retag-progress"
+                            role="progressbar"
+                            aria-label={`Uploading ${t.filename}`}
+                            aria-valuenow={t.uploadProgress}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                          >
+                            <span style={{ width: `${t.uploadProgress ?? 0}%` }} />
+                          </div>
+                        ) : null}
+                        <small>
+                          {t.uploadProgress !== undefined && t.status === "uploading"
+                            ? `${Math.round(t.uploadProgress)}% uploaded · `
+                            : ""}
+                          {t.startedAt
+                            ? `${Math.max(0, Math.floor((now - t.startedAt) / 1000))}s elapsed`
+                            : "Waiting for the previous file"}
+                        </small>
+                      </div>
+                    ) : null}
 
                     {t.status === "error" ? (
                       <p className="mt-2 border-l-2 border-[var(--ui-tier-unsuitable)] bg-muted/50 py-2 pl-3 text-[13px] text-[var(--ui-tier-unsuitable)]">
@@ -474,8 +511,8 @@ export default function RetagPage() {
                       </p>
                     ) : null}
 
-                    {t.selected || t.candidates.length > 0 ? (
-                      <div className="mt-3 flex items-center gap-3">
+                    {!t.overrideUrl && (t.selected || t.candidates.length > 0) ? (
+                      <div className="retag-match">
                         {t.selected?.artworkUrl ? (
                           <img
                             src={t.selected.artworkUrl}
@@ -485,7 +522,9 @@ export default function RetagPage() {
                             className="size-14 shrink-0 rounded-md object-cover"
                           />
                         ) : (
-                          <div className="size-14 shrink-0 rounded-md bg-muted" aria-hidden />
+                          <div className="retag-artwork" aria-hidden>
+                            <Music2 />
+                          </div>
                         )}
                         <div className="min-w-0">
                           <p className="truncate text-sm font-semibold">
@@ -495,25 +534,27 @@ export default function RetagPage() {
                             {t.selected?.artist || "—"}
                           </p>
                           <p className="mt-0.5 truncate text-[11px] text-muted-foreground/70">
-                            searched {t.searchQuery}
+                            Suggested metadata · review before updating
                           </p>
                         </div>
                       </div>
                     ) : null}
 
-                    {t.candidates.length > 1 ? (
+                    {!t.overrideUrl && t.candidates.length > 1 ? (
                       <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {t.candidates.map((c) => {
                           const active = !t.showOverride && t.selected?.url === c.url;
                           return (
                             <Button
                               variant="outline"
+                              disabled={busy}
                               aria-pressed={active}
                               key={c.url}
                               type="button"
                               onClick={() =>
                                 updateTrack(t.id, {
                                   selected: c,
+                                  overrideUrl: "",
                                   showOverride: false,
                                   approved: true,
                                 })
@@ -547,36 +588,144 @@ export default function RetagPage() {
                       </div>
                     ) : null}
 
-                    {t.showOverride ? (
-                      <div className="mt-3">
-                        <p className="mb-1.5 text-[11px] text-muted-foreground">
-                          SoundCloud or Spotify URL
-                        </p>
-                        <Input
-                          type="url"
-                          aria-label={`Metadata link for ${t.filename}`}
-                          value={t.overrideUrl}
-                          onChange={(e) =>
-                            updateTrack(t.id, {
-                              overrideUrl: e.target.value,
-                              approved: Boolean(e.target.value.trim()),
-                            })
-                          }
-                          placeholder="https://soundcloud.com/…"
-                          className="bg-background"
-                        />
+                    {t.status === "ready" || (t.status === "error" && t.inputStorageKey) ? (
+                      <div className="retag-source-editor">
+                        {t.overrideUrl ? (
+                          <div className="retag-custom-source">
+                            <Link2 size={16} />
+                            <div>
+                              <strong>Use details from this link</strong>
+                              <a href={t.overrideUrl} target="_blank" rel="noreferrer">
+                                {t.overrideUrl}
+                                <ExternalLink size={12} />
+                              </a>
+                              <p>
+                                The title, artist and artwork will be fetched when you update this
+                                track.
+                              </p>
+                            </div>
+                          </div>
+                        ) : !t.selected ? (
+                          <p>
+                            No match found. Add a track link to supply the title, artist and
+                            artwork.
+                          </p>
+                        ) : null}
+                        {t.showOverride ? (
+                          <form
+                            onSubmit={(event) => {
+                              event.preventDefault();
+                              const url = validMetadataUrl(t.draftUrl ?? "");
+                              if (!url) {
+                                updateTrack(t.id, {
+                                  urlError: "Enter a SoundCloud or Spotify track link.",
+                                });
+                                return;
+                              }
+                              updateTrack(t.id, {
+                                overrideUrl: url,
+                                showOverride: false,
+                                approved: true,
+                                status: "ready",
+                                error: undefined,
+                                urlError: undefined,
+                              });
+                            }}
+                          >
+                            <label htmlFor={`metadata-${t.id}`}>
+                              Use a different track’s details
+                            </label>
+                            <p>
+                              Paste a SoundCloud or Spotify track link. We’ll use its title, artist
+                              and artwork for your file.
+                            </p>
+                            <div className="retag-link-controls">
+                              <Input
+                                id={`metadata-${t.id}`}
+                                type="url"
+                                value={t.draftUrl ?? ""}
+                                aria-invalid={Boolean(t.urlError)}
+                                aria-describedby={t.urlError ? `metadata-error-${t.id}` : undefined}
+                                onChange={(e) =>
+                                  updateTrack(t.id, {
+                                    draftUrl: e.target.value,
+                                    urlError: undefined,
+                                  })
+                                }
+                                placeholder="Paste a SoundCloud or Spotify track link"
+                                disabled={busy}
+                                autoFocus
+                              />
+                              <Button
+                                type="submit"
+                                variant="secondary"
+                                disabled={busy || !t.draftUrl?.trim()}
+                              >
+                                Use this link
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                onClick={() =>
+                                  updateTrack(t.id, { showOverride: false, urlError: undefined })
+                                }
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                            {t.urlError ? (
+                              <p
+                                id={`metadata-error-${t.id}`}
+                                role="alert"
+                                className="text-destructive"
+                              >
+                                {t.urlError}
+                              </p>
+                            ) : null}
+                          </form>
+                        ) : (
+                          <div className="retag-change-actions">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={busy}
+                              onClick={() =>
+                                updateTrack(t.id, {
+                                  showOverride: true,
+                                  draftUrl: t.overrideUrl,
+                                  urlError: undefined,
+                                })
+                              }
+                            >
+                              <Link2 />
+                              {t.overrideUrl
+                                ? "Change link"
+                                : t.selected
+                                  ? "Change match"
+                                  : "Add track link"}
+                            </Button>
+                            {t.overrideUrl && t.selected ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  updateTrack(t.id, { overrideUrl: "", approved: true })
+                                }
+                              >
+                                Use suggested match
+                              </Button>
+                            ) : null}
+                            {t.selected && !t.overrideUrl ? (
+                              <a href={t.selected.url} target="_blank" rel="noreferrer">
+                                Check on SoundCloud <ExternalLink size={12} />
+                              </a>
+                            ) : null}
+                          </div>
+                        )}
                       </div>
-                    ) : (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="mt-2 h-7 px-2 text-xs"
-                        onClick={() => updateTrack(t.id, { showOverride: true })}
-                      >
-                        Wrong match — paste URL
-                      </Button>
-                    )}
+                    ) : null}
                   </article>
                 );
               })}
@@ -591,38 +740,77 @@ export default function RetagPage() {
               const fileId = job?.result?.fileId;
               const driveUrl = job?.result?.driveUrl;
               return (
-                <article key={t.id} className="downloader-job relative pl-5">
-                  <span className="absolute top-1.5 left-0">
-                    <StatusDot status={job?.status ?? "queued"} />
-                  </span>
-                  <h2 className="text-[15px] leading-tight font-semibold">
-                    {job?.artist || job?.title
-                      ? trackDisplayName(job.artist, job.title)
-                      : t.filename}
-                  </h2>
-                  {job ? (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {job.stage} · {job.progress}%
-                    </p>
-                  ) : null}
-                  {job && job.status !== "completed" ? (
-                    <div className="mt-2.5 h-0.5 w-full overflow-hidden rounded bg-muted">
-                      <span
-                        className="block h-full bg-primary transition-[width]"
-                        style={{ width: `${job.progress}%` }}
-                      />
+                <article key={t.id} className="retag-track">
+                  <div className="retag-result-heading">
+                    <span className="retag-artwork">
+                      <Music2 />
+                    </span>
+                    <div>
+                      <h3>
+                        {job?.artist || job?.title
+                          ? trackDisplayName(job.artist, job.title)
+                          : t.filename}
+                      </h3>
+                      <p>
+                        {retagStatus("converting", job?.stage, job?.status, Boolean(t.error)).title}
+                      </p>
                     </div>
+                    <Badge variant="outline">
+                      {job?.status === "completed" ? (
+                        <Check size={12} />
+                      ) : t.error ||
+                        job?.status === "failed" ||
+                        job?.status === "cancelled" ? null : (
+                        <Loader2 size={12} className="animate-spin" />
+                      )}
+                      {job?.status === "completed"
+                        ? "Complete"
+                        : t.error || job?.status === "failed"
+                          ? "Failed"
+                          : job?.status === "cancelled"
+                            ? "Cancelled"
+                            : "In progress"}
+                    </Badge>
+                  </div>
+                  {!t.error &&
+                  (!job || !["completed", "failed", "cancelled"].includes(job.status)) ? (
+                    <div className="retag-progress-panel" role="status">
+                      <p>{retagStatus("converting", job?.stage, job?.status).detail}</p>
+                      <div
+                        className="retag-progress"
+                        role="progressbar"
+                        aria-label={`Updating ${t.filename}`}
+                        aria-valuenow={job?.progress ?? 0}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                      >
+                        <span
+                          style={{ width: `${Math.min(100, Math.max(0, job?.progress ?? 0))}%` }}
+                        />
+                      </div>
+                      <small>
+                        {Math.max(0, Math.floor((now - (t.startedAt ?? now)) / 1000))}s elapsed ·{" "}
+                        {job?.progress ?? 0}% complete · We’ll update this automatically.
+                      </small>
+                    </div>
+                  ) : null}
+                  {t.error ? (
+                    <p role="alert" className="text-destructive mt-3 text-xs">
+                      {t.error}
+                    </p>
                   ) : null}
                   {job?.error ? (
                     <p className="mt-3 border-l-2 border-[var(--ui-tier-unsuitable)] bg-muted/50 py-2 pl-3 text-[13px] text-[var(--ui-tier-unsuitable)]">
                       {job.error}
                     </p>
                   ) : null}
-                  {step === "done" && job?.status === "completed" ? (
+                  {job?.status === "completed" ? (
                     <div className="mt-3 flex flex-wrap gap-2">
                       {fileId ? (
                         <Button asChild size="sm">
-                          <a href={`/api/files/${fileId}`}>Download FLAC</a>
+                          <a href={`/api/files/${fileId}`}>
+                            <Download /> Download FLAC
+                          </a>
                         </Button>
                       ) : null}
                       {driveUrl ? (
