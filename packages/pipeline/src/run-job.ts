@@ -39,7 +39,6 @@ import {
   dumpJson,
   isSoundCloudPreviewError,
   isSoundCloudUnavailableError,
-  probeSoundCloudFreeDownload,
   SoundCloudPreviewError,
 } from "./download";
 import { deleteDriveFile, ensurePlaylistFolder, uploadToDrive } from "./drive";
@@ -197,15 +196,26 @@ async function safeVerifyForDj(
 function qualityGateError(
   verdict: DjVerdict | null,
   source: string,
+  remedy?: string,
 ): QualityGateError {
   return verdict
     ? new QualityGateError({
         tier: verdict.tier,
         cutoffHz: verdict.analysis.cutoffHz,
         source,
+        ...(remedy ? { remedy } : {}),
       })
-    : new QualityGateError({ tier: null, source });
+    : new QualityGateError({ tier: null, source, ...(remedy ? { remedy } : {}) });
 }
+
+/**
+ * Advice for a SoundCloud track the club-ready gate refused after YouTube had
+ * already missed. Turning the switch off would only hand over the stream that
+ * just failed, so point at the artist's own download instead — and do not claim
+ * one exists, because nothing here has checked.
+ */
+const SOUNDCLOUD_NO_MIRROR_REMEDY =
+  "No YouTube mirror to fall back on. If the artist offers a Free Download on SoundCloud, grab it there and upload it on Retag.";
 
 async function deliverArtifact(params: {
   deps: RunJobDeps;
@@ -389,6 +399,8 @@ async function processTrack(params: {
   }
 
   let youtubeAlreadyTried = false;
+  /** Set once YouTube has been tried and missed, so the failure text can say so. */
+  let mirrorMissed = false;
 
   /** True when a SoundCloud failure still has an untried YouTube mirror left. */
   const canTryYoutubeMirror = () =>
@@ -423,17 +435,12 @@ async function processTrack(params: {
       outDir,
       catalogUrl: params.catalogUrl ?? params.trackUrl,
     });
-    const step = await soundCloudStepAfterMirror({
-      ytResult,
-      trackUrl: params.trackUrl,
-      cookiePath: cookieTmp,
-      signal,
-    });
-    if (step === "done") return;
-    // Falling through to the artist's own upload. The mirror has had its turn —
-    // without this the SoundCloud failure paths below would go back for a second
-    // attempt at the same dead end.
+    if (soundCloudStepAfterMirror(ytResult) === "done") return;
+    // Falling back to SoundCloud. The mirror has had its turn — without this the
+    // SoundCloud failure paths below would go back for a second attempt at the
+    // same dead end.
     youtubeAlreadyTried = true;
+    mirrorMissed = true;
   }
 
   await update({
@@ -513,7 +520,11 @@ async function processTrack(params: {
       await tryYoutubeMirror("low-quality");
       return;
     }
-    throw qualityGateError(verdict, sourceLabel);
+    throw qualityGateError(
+      verdict,
+      sourceLabel,
+      soundcloud && mirrorMissed ? SOUNDCLOUD_NO_MIRROR_REMEDY : undefined,
+    );
   }
 
   const warnings = [...(verdict?.warnings ?? [])];
@@ -838,45 +849,21 @@ export type YoutubePreferResult =
   "downloaded" | "no_mirror" | "no_cookies" | "youtube_failed";
 
 /** What is left for a SoundCloud track once the YouTube-first attempt is over. */
-export type SoundCloudStepAfterMirror = "done" | "soundcloud-original";
+export type SoundCloudStepAfterMirror = "done" | "soundcloud";
 
 /**
- * Decide what a SoundCloud track falls back to when its YouTube mirror did not
- * deliver — no match, no YouTube cookies, or a mirror that failed to download.
+ * Decide what a SoundCloud track does when its YouTube mirror did not deliver —
+ * no match, no YouTube cookies, or a mirror that failed to download.
  *
- * The artist's own upload (`format_id=download`) is the only thing worth taking
- * at that point: it is the file they published and it beats any mirror. A
- * stream is not, because it tops out below the mirror that just missed, so
- * taking one would quietly downgrade the track. With no original, nothing
- * usable is left and the job fails.
- *
- * `probeFreeDownload` is a test seam; production passes nothing.
+ * It always falls back to SoundCloud. Whether the result is shippable is not
+ * decided here: the club-ready gate measures the file afterwards and refuses a
+ * lossy stream on its own, which is a real measurement rather than a guess from
+ * a format listing.
  */
-export async function soundCloudStepAfterMirror(params: {
-  ytResult: YoutubePreferResult;
-  trackUrl: string;
-  cookiePath: string | null;
-  signal?: AbortSignal;
-  probeFreeDownload?: (
-    url: string,
-    cookiePath?: string | null,
-    signal?: AbortSignal,
-  ) => Promise<boolean>;
-}): Promise<SoundCloudStepAfterMirror> {
-  if (params.ytResult === "downloaded") return "done";
-
-  const probe = params.probeFreeDownload ?? probeSoundCloudFreeDownload;
-  const hasFreeDownload = await probe(
-    params.trackUrl,
-    params.cookiePath,
-    params.signal,
-  );
-  if (!hasFreeDownload) {
-    throw new Error(
-      "No confident YouTube mirror for this SoundCloud track, and the artist has not enabled its SoundCloud download — the stream left is lower quality than a mirror.",
-    );
-  }
-  return "soundcloud-original";
+export function soundCloudStepAfterMirror(
+  ytResult: YoutubePreferResult,
+): SoundCloudStepAfterMirror {
+  return ytResult === "downloaded" ? "done" : "soundcloud";
 }
 
 /**

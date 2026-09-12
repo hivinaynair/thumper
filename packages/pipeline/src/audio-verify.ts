@@ -497,16 +497,25 @@ export class QualityGateError extends Error {
    */
   constructor(
     params:
-      /** `source` is the human name of the attempt, e.g. "SoundCloud stream". */
-      | { tier: DjTier; cutoffHz: number; source: string }
-      | { tier: null; source: string },
+      /**
+       * `source` is the human name of the attempt, e.g. "SoundCloud stream".
+       *
+       * `remedy` replaces the default advice for cases where turning the switch
+       * off is not the useful next step — a remix with no YouTube mirror is
+       * better fetched from the artist's own SoundCloud download than shipped
+       * as the lossy stream the switch just refused.
+       */
+      | { tier: DjTier; cutoffHz: number; source: string; remedy?: string }
+      | { tier: null; source: string; remedy?: string },
   ) {
+    const remedy =
+      params.remedy ?? "Turn off Club-ready only to download it anyway.";
     super(
       params.tier === null
-        ? `${params.source} could not be verified, and club-ready-only mode does not ship unverified audio. Turn off Club-ready only to download it anyway.`
+        ? `${params.source} could not be verified, and club-ready-only mode does not ship unverified audio. ${remedy}`
         : `${params.source} is not club-ready — audio stops at ${kHz(
             params.cutoffHz,
-          )}. Turn off Club-ready only to download it anyway.`,
+          )}. ${remedy}`,
     );
     this.name = "QualityGateError";
     this.tier = params.tier;

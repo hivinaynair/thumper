@@ -303,6 +303,46 @@ describe("QualityGateError", () => {
     expect(isQualityGateError(err)).toBe(true);
   });
 
+  it("defaults to advising the switch be turned off", () => {
+    const measured = new QualityGateError({
+      tier: "marginal",
+      cutoffHz: 16200,
+      source: "SoundCloud stream",
+    });
+    const unmeasured = new QualityGateError({
+      tier: null,
+      source: "SoundCloud stream",
+    });
+    expect(measured.message).toContain("Turn off Club-ready only");
+    expect(unmeasured.message).toContain("Turn off Club-ready only");
+  });
+
+  it("takes the caller's remedy instead, keeping the measurement", () => {
+    const remedy = "Grab the Free Download on SoundCloud.";
+    const err = new QualityGateError({
+      tier: "marginal",
+      cutoffHz: 16200,
+      source: "SoundCloud stream",
+      remedy,
+    });
+    expect(err.message).toContain("16.2 kHz");
+    expect(err.message).toContain(remedy);
+    // Advising both at once is contradictory — the switch is not the fix here.
+    expect(err.message).not.toContain("Turn off Club-ready only");
+  });
+
+  it("takes the caller's remedy when nothing could be measured", () => {
+    const remedy = "Grab the Free Download on SoundCloud.";
+    const err = new QualityGateError({
+      tier: null,
+      source: "SoundCloud stream",
+      remedy,
+    });
+    expect(err.message).toContain("could not be verified");
+    expect(err.message).toContain(remedy);
+    expect(err.message).not.toContain("Turn off Club-ready only");
+  });
+
   it("does not match unrelated errors", () => {
     expect(isQualityGateError(new Error("nope"))).toBe(false);
   });
