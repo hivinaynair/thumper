@@ -163,9 +163,6 @@ async function main() {
       parentJobId: parent.jobId,
       spotifyUrl: track.spotifyUrl,
       driveFolderId: context?.driveFolderId,
-      gateEmail: parent.gateEmail,
-      gateName: parent.gateName,
-      freeDownloadsOnly: parent.freeDownloadsOnly,
       clubReadyOnly: parent.clubReadyOnly,
     } satisfies DownloadJobPayload);
 

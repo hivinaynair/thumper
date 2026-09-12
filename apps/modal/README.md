@@ -16,8 +16,6 @@
 #
 # Manual test:
 #   modal run apps/modal/thumper_worker.py --job-id <uuid>
-# Chromium isolation on the live worker image (no Docker):
-#   modal run apps/modal/thumper_worker.py --chromium-smoke
 #
 # Fallback later: Fly Machines start/stop can replace this worker without
 # changing Vercel Blob / Neon — swap PROCESS_BACKEND and the wake URL.

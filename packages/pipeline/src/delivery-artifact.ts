@@ -3,8 +3,7 @@ import path from "node:path";
 import { artistOriginalAction } from "./artist-original";
 import type { AudioTargetFormat } from "./audio-quality";
 
-export type ArtifactProvenance =
-  "soundcloud-original" | "hypeddit-original" | "stream";
+export type ArtifactProvenance = "soundcloud-original" | "stream";
 
 type DeliveryArtifactCommon = {
   sourcePath: string;
@@ -138,33 +137,17 @@ export async function preserveArtifactForLocalDelivery(params: {
 }
 
 export async function executeOriginalArtifact<T>(params: {
-  provenance: Exclude<ArtifactProvenance, "stream">;
   action: Extract<
     DeliveryArtifactPlan["action"],
     "preserve-original" | "convert-wav" | "tag-mp3"
   >;
   preserve: () => Promise<T>;
   convertWav: () => Promise<T>;
-  retagWav: () => Promise<T>;
   tagMp3: () => Promise<T>;
 }): Promise<T> {
   if (params.action === "preserve-original") return params.preserve();
   if (params.action === "tag-mp3") return params.tagMp3();
-  return params.provenance === "hypeddit-original"
-    ? params.retagWav()
-    : params.convertWav();
-}
-
-export async function withTemporaryInputCleanup<T>(params: {
-  temporary: boolean;
-  inputStorageKey: string;
-  run: () => Promise<T>;
-  deleteObject: (key: string) => Promise<void>;
-}): Promise<T> {
-  if (!params.temporary) return params.run();
-  return runWithCleanup(params.run, () =>
-    params.deleteObject(params.inputStorageKey),
-  );
+  return params.convertWav();
 }
 
 function attachCleanupError(primary: unknown, cleanupError: unknown): void {

@@ -117,15 +117,12 @@ describe("verdictOf", () => {
 
   it("treats a store page as needing manual work", () => {
     const v = verdictOf(
-      job({ id: "a", result: { manualDownloadUrl: "https://gate.test" } }),
+      job({ id: "a", result: { manualDownloadUrl: "https://store.test" } }),
     );
     expect(v).toMatchObject({ tier: "unsuitable", lead: "manual" });
   });
 
   it("marks artist originals as provenance wins", () => {
-    expect(verdictOf(job({ id: "a", result: { hypedditOriginal: true } })).tier).toBe(
-      "original",
-    );
     expect(verdictOf(job({ id: "b", result: { soundcloudOriginal: true } })).tier).toBe(
       "original",
     );

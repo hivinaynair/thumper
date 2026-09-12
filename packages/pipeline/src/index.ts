@@ -12,15 +12,10 @@ export {
   isSoundCloudPreviewError,
   isSoundCloudUnavailableError,
   isYoutubeBotError,
-  probeSoundCloudFreeDownload,
-  soundcloudHasFreeDownload,
   SoundCloudPreviewError,
   type DownloadMediaResult,
 } from "./download";
-export * from "./download-direct";
-export * from "./download-browser-gate";
 export * from "./drive";
-export * from "./hypeddit";
 export * from "./match";
 export * from "./metadata";
 export * from "./paths";

@@ -1,7 +1,7 @@
 const PROVIDERS = {
   youtube: [".youtube.com", ".google.com"],
   soundcloud: [".soundcloud.com"],
-  // sp_dc lives on .spotify.com; accounts.* is needed for Hypeddit OAuth.
+  // sp_dc lives on .spotify.com.
   spotify: [".spotify.com"],
 };
 

@@ -7,7 +7,7 @@ ARG DENO_VERSION=2.6.10
 ENV DENO_INSTALL=/usr/local
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip python3-venv ffmpeg ca-certificates chromium curl unzip \
+    python3 python3-pip python3-venv ffmpeg ca-certificates curl unzip \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL https://deno.land/install.sh | sh -s "v${DENO_VERSION}" \
     && deno --version \
@@ -15,18 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && /opt/venv/bin/pip install --no-cache-dir -U \
         pip "yt-dlp[default]" mutagen
 
-COPY scripts/chromium-worker /usr/local/bin/chromium-worker
-RUN groupadd --system --gid 922 chromium-worker \
-    && useradd --system --uid 922 --gid chromium-worker \
-        --home-dir /var/lib/chromium --create-home \
-        --shell /usr/sbin/nologin chromium-worker \
-    && chmod 0755 /usr/local/bin/chromium-worker \
-    && install -d -o 922 -g 922 -m 0700 /var/lib/chromium/xdg /var/lib/chromium/tmp
-
 ENV PATH="/opt/venv/bin:/usr/local/bin:$PATH"
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/local/bin/chromium-worker
-ENV PUPPETEER_RUN_UID=922
-ENV PUPPETEER_RUN_GID=922
 WORKDIR /app
 
 FROM base AS deps

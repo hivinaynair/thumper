@@ -25,8 +25,6 @@ import {
 import { FILE_TTL_MS } from "./cleanup";
 import { convertAudio, hasAttachedArtwork, tagMp3Copy } from "./convert";
 import { materializeCookieFile } from "./cookies";
-import { downloadBrowserGate, fetchLayloDrop } from "./download-browser-gate";
-import { downloadDirectFile } from "./download-direct";
 import {
   audioMimeForExtension,
   executeOriginalArtifact,
@@ -41,18 +39,9 @@ import {
   dumpJson,
   isSoundCloudPreviewError,
   isSoundCloudUnavailableError,
-  probeSoundCloudFreeDownload,
   SoundCloudPreviewError,
 } from "./download";
 import { deleteDriveFile, ensurePlaylistFolder, uploadToDrive } from "./drive";
-import {
-  downloadHypedditWithSpotifyFallback,
-  parseSoundCloudNetscapeCookies,
-  parseSpotifyNetscapeCookies,
-  type BrowserCookie,
-  type HypedditDownloadResult,
-  type SpotifyFallbackDependencies,
-} from "./hypeddit";
 import {
   matchSpotifyTrackToMirror,
   matchTrackToYoutube,
@@ -135,12 +124,8 @@ export type ProgressUpdater = (patch: {
     /** True when this job retagged an uploaded audio file → FLAC. */
     retag?: boolean;
     inputStorageKey?: string;
-    hypedditOriginal?: boolean;
     manualDownloadUrl?: string;
     manualDownloadTitle?: string | null;
-    gateEmail?: string;
-    gateName?: string;
-    freeDownloadsOnly?: boolean;
     clubReadyOnly?: boolean;
     qualityRejected?: boolean;
   };
@@ -349,404 +334,6 @@ async function deliverArtifact(params: {
   });
 }
 
-export async function processHypedditOriginalDownload(params: {
-  gateUrl: string;
-  email: string;
-  name: string;
-  userId: string;
-  workDir: string;
-  signal?: AbortSignal;
-  requestedFormat: AudioFormat;
-  outputDirectory: string;
-  displayName?: string;
-  artistHint?: string;
-  titleHint?: string;
-  fallbackDependencies?: Partial<SpotifyFallbackDependencies>;
-  planArtifact?: typeof planDeliveryArtifact;
-}): Promise<{
-  downloaded: HypedditDownloadResult;
-  artifact: DeliveryArtifactPlan;
-}> {
-  const downloaded = await downloadHypedditWithSpotifyFallback({
-    gateUrl: params.gateUrl,
-    email: params.email,
-    name: params.name,
-    userId: params.userId,
-    workDir: params.workDir,
-    signal: params.signal,
-    ...params.fallbackDependencies,
-  });
-  const hasArtwork =
-    params.planArtifact || extensionFromPath(downloaded.filePath) !== "mp3"
-      ? undefined
-      : await hasAttachedArtwork(downloaded.filePath, {
-          signal: params.signal,
-        });
-  const artifact = (params.planArtifact ?? planDeliveryArtifact)({
-    provenance: "hypeddit-original",
-    downloadedPath: downloaded.filePath,
-    originalFilename: downloaded.filename,
-    requestedFormat: params.requestedFormat,
-    outputDirectory: params.outputDirectory,
-    displayName:
-      params.displayName ??
-      sanitizeFilename(
-        trackDisplayName(
-          params.artistHint,
-          params.titleHint ?? downloaded.title ?? "track",
-        ),
-      ),
-    hasAttachedArtwork: hasArtwork,
-  });
-  return { downloaded, artifact };
-}
-
-export async function processGenericGateDownload(params: {
-  kind: "direct" | "browser-gate";
-  gateUrl: string;
-  email: string;
-  name: string;
-  userId: string;
-  workDir: string;
-  signal?: AbortSignal;
-  requestedFormat: AudioFormat;
-  outputDirectory: string;
-  displayName?: string;
-  artistHint?: string;
-  titleHint?: string;
-  materializeSpotifyCookies?: (userId: string) => Promise<string | null>;
-  materializeSoundCloudCookies?: (userId: string) => Promise<string | null>;
-  readCookieFile?: (filePath: string) => Promise<string>;
-  unlinkCookieFile?: (filePath: string) => Promise<void>;
-  directDownload?: typeof downloadDirectFile;
-  browserDownload?: typeof downloadBrowserGate;
-  fetchLaylo?: typeof fetchLayloDrop;
-  planArtifact?: typeof planDeliveryArtifact;
-}): Promise<{
-  downloaded: HypedditDownloadResult;
-  artifact: DeliveryArtifactPlan;
-}> {
-  let downloaded: HypedditDownloadResult;
-  if (params.kind === "direct") {
-    downloaded = await (params.directDownload ?? downloadDirectFile)({
-      url: params.gateUrl,
-      workDir: params.workDir,
-      signal: params.signal,
-    });
-  } else {
-    const laylo = params.gateUrl.toLowerCase().includes("laylo.com")
-      ? await (params.fetchLaylo ?? fetchLayloDrop)(params.gateUrl)
-      : null;
-    if (laylo && !laylo.link) {
-      throw new ManualDownloadRequiredError(
-        params.gateUrl,
-        "Laylo RSVP drop (no hosted file)",
-      );
-    }
-    if (laylo?.link) {
-      downloaded = await (params.directDownload ?? downloadDirectFile)({
-        url: laylo.link,
-        workDir: params.workDir,
-        signal: params.signal,
-      });
-    } else {
-    let cookies: BrowserCookie[] = [];
-    const loadProviderCookies = async (
-      materialize: (userId: string) => Promise<string | null>,
-      parse: (text: string) => BrowserCookie[],
-    ) => {
-      const cookiePath = await materialize(params.userId);
-      if (!cookiePath) return;
-      try {
-        const text = await (
-          params.readCookieFile ?? ((p) => fs.readFile(p, "utf8"))
-        )(cookiePath);
-        cookies.push(...parse(text));
-      } finally {
-        await (params.unlinkCookieFile ?? fs.unlink)(cookiePath).catch(
-          () => undefined,
-        );
-      }
-    };
-    await loadProviderCookies(
-      params.materializeSpotifyCookies ??
-        ((userId: string) => materializeCookieFile(userId, "spotify")),
-      parseSpotifyNetscapeCookies,
-    );
-    await loadProviderCookies(
-      params.materializeSoundCloudCookies ??
-        ((userId: string) => materializeCookieFile(userId, "soundcloud")),
-      parseSoundCloudNetscapeCookies,
-    );
-    downloaded = await (params.browserDownload ?? downloadBrowserGate)({
-      gateUrl: params.gateUrl,
-      email: params.email,
-      name: params.name,
-      workDir: params.workDir,
-      cookies,
-      signal: params.signal,
-    });
-    }
-  }
-  const artifact = (params.planArtifact ?? planDeliveryArtifact)({
-    provenance: "hypeddit-original",
-    downloadedPath: downloaded.filePath,
-    originalFilename: downloaded.filename,
-    requestedFormat: params.requestedFormat,
-    outputDirectory: params.outputDirectory,
-    displayName:
-      params.displayName ??
-      sanitizeFilename(
-        trackDisplayName(
-          params.artistHint,
-          params.titleHint ?? downloaded.title ?? "track",
-        ),
-      ),
-  });
-  return { downloaded, artifact };
-}
-
-/**
- * Unlock and deliver a Hypeddit artist original. WAV uses the existing tagged
- * FLAC retag path; MP3 without embedded artwork is copy-tagged; every other
- * format is delivered as downloaded.
- */
-async function processHypedditOriginal(params: {
-  deps: RunJobDeps;
-  hypedditUrl: string;
-  metadataUrl: string;
-  titleHint?: string;
-  artistHint?: string;
-  workDir: string;
-  outDir: string;
-  downloadedOverride?: {
-    downloaded: HypedditDownloadResult;
-    artifact: DeliveryArtifactPlan;
-  };
-}): Promise<void> {
-  const { deps, hypedditUrl, metadataUrl, workDir, outDir } = params;
-  const { payload, signal, update } = deps;
-  const email = payload.gateEmail?.trim();
-  if (!params.downloadedOverride && !email) {
-    throw new Error(
-      "Hypeddit Free Download needs your account email — sign in with Google and retry",
-    );
-  }
-
-  await update({
-    stage: "downloading",
-    progress: 25,
-    matchedUrl: hypedditUrl,
-  });
-  await ensureNotCancelled(signal, deps.db, payload.jobId, payload.parentJobId);
-
-  const { downloaded, artifact } = params.downloadedOverride
-    ? params.downloadedOverride
-    : await processHypedditOriginalDownload({
-        gateUrl: hypedditUrl,
-        email: email!,
-        name: payload.gateName?.trim() || email!.split("@")[0] || "DJ",
-        workDir,
-        signal,
-        userId: payload.userId,
-        requestedFormat: payload.audioFormat,
-        outputDirectory: outDir,
-        artistHint: params.artistHint,
-        titleHint: params.titleHint,
-      });
-
-  // This path returns before processTrack's gate ever runs, so club-ready-only
-  // has to be enforced here or Hypeddit tracks ship unchecked. Verify the
-  // downloaded original read-only before either preserving it or converting WAV.
-  // Unlike the main path there is no YouTube mirror, so a rejection fails outright.
-  // A Hypeddit gate is the artist handing over their own file, so it is
-  // eligible for "master" — but only eligible: the spectral checks still have
-  // to agree, which is what catches a 320 kbps MP3 dressed up as WAV.
-  const verdict = payload.clubReadyOnly
-    ? await safeVerifyForDj(downloaded.filePath, signal, true)
-    : null;
-  if (payload.clubReadyOnly) {
-    if (!verdict || !isClubReady(verdict.tier)) {
-      await fs.unlink(downloaded.filePath).catch(() => undefined);
-      throw qualityGateError(verdict, "The Hypeddit Free Download");
-    }
-  }
-
-  if (artifact.action === "normal-conversion") {
-    throw new Error("Hypeddit original produced a stream conversion plan");
-  }
-
-  await executeOriginalArtifact({
-    provenance: "hypeddit-original",
-    action: artifact.action,
-    preserve: async () => {
-      await update({
-        title: params.titleHint ?? downloaded.title ?? artifact.filename,
-        artist: params.artistHint,
-        stage: "delivering",
-        progress: 80,
-      });
-      await ensureNotCancelled(
-        signal,
-        deps.db,
-        payload.jobId,
-        payload.parentJobId,
-      );
-      await deliverArtifact({
-        deps,
-        artifact,
-        outDir,
-        complete: async (delivered) => {
-          await update({ stage: "cleanup", progress: 95 });
-          await update({
-            status: "completed",
-            stage: "done",
-            progress: 100,
-            result: {
-              ...delivered,
-              qualityLabel: artifact.qualityLabel,
-              hypedditOriginal: true,
-              sourceCodec: verdict?.analysis.codec,
-              sourceBitrateKbps: verdict?.analysis.bitrateKbps ?? null,
-              cutoffHz: verdict?.analysis.cutoffHz,
-              djTier: verdict?.tier,
-              djHeadline: verdict?.headline,
-              warnings: verdict?.warnings.length ? verdict.warnings : undefined,
-              ...(payload.clubReadyOnly ? { clubReadyOnly: true } : {}),
-            },
-          });
-        },
-      });
-    },
-    convertWav: async () => {
-      throw new Error("Hypeddit WAV must use the retag path");
-    },
-    tagMp3: async () => {
-      if (artifact.action !== "tag-mp3") {
-        throw new Error("Hypeddit MP3 tagging received a non-tag artifact");
-      }
-      const tags = await resolveTrackTags({
-        catalogUrl: metadataUrl,
-        titleHint: params.titleHint ?? downloaded.title ?? undefined,
-        artistHint: params.artistHint,
-        signal,
-      });
-      const title =
-        tags.title ?? params.titleHint ?? downloaded.title ?? "track";
-      const artist = tags.artist ?? params.artistHint;
-      await update({ title, artist, stage: "converting", progress: 55 });
-      await ensureNotCancelled(
-        signal,
-        deps.db,
-        payload.jobId,
-        payload.parentJobId,
-      );
-
-      let artworkPath: string | null = null;
-      if (tags.artworkUrl) {
-        artworkPath = await downloadArtworkFile({
-          artworkUrl: tags.artworkUrl,
-          workDir,
-          squareCrop: tags.artworkNeedsSquareCrop,
-          signal,
-        });
-      }
-      if (!artworkPath && title) {
-        const fallbackUrl = await findFallbackArtworkUrl({
-          title,
-          ...(artist ? { artist } : {}),
-          signal,
-        });
-        if (fallbackUrl) {
-          artworkPath = await downloadArtworkFile({
-            artworkUrl: fallbackUrl,
-            workDir,
-            signal,
-          });
-        }
-      }
-
-      const outPath = assertPathInside(outDir, artifact.path);
-      await tagMp3Copy({
-        inputPath: downloaded.filePath,
-        outputPath: outPath,
-        title,
-        artist,
-        album: tags.album,
-        genre: tags.genre,
-        date: tags.date,
-        artworkPath,
-        signal,
-      });
-
-      await update({ stage: "delivering", progress: 80 });
-      await ensureNotCancelled(
-        signal,
-        deps.db,
-        payload.jobId,
-        payload.parentJobId,
-      );
-      await deliverArtifact({
-        deps,
-        artifact,
-        outDir,
-        complete: async (delivered) => {
-          await update({ stage: "cleanup", progress: 95 });
-          await update({
-            status: "completed",
-            stage: "done",
-            progress: 100,
-            result: {
-              ...delivered,
-              qualityLabel: artifact.qualityLabel,
-              hypedditOriginal: true,
-              sourceCodec: verdict?.analysis.codec,
-              sourceBitrateKbps: verdict?.analysis.bitrateKbps ?? null,
-              cutoffHz: verdict?.analysis.cutoffHz,
-              djTier: verdict?.tier,
-              djHeadline: verdict?.headline,
-              warnings: verdict?.warnings.length ? verdict.warnings : undefined,
-              ...(payload.clubReadyOnly ? { clubReadyOnly: true } : {}),
-            },
-          });
-        },
-      });
-    },
-    retagWav: async () => {
-      const sourceExtension = extensionFromPath(downloaded.filePath);
-      const inputStorageKey = userStorageKey(
-        payload.userId,
-        "uploads",
-        `${randomUUID()}.${sourceExtension}`,
-      );
-      await putLocalFile(inputStorageKey, downloaded.filePath, {
-        contentType: audioMimeForExtension(sourceExtension),
-      });
-
-      // Dynamic import avoids a circular module graph with retag-job → run-job types.
-      const { runRetagJob } = await import("./retag-job");
-      await runRetagJob({
-        db: deps.db,
-        payload: {
-          jobId: payload.jobId,
-          userId: payload.userId,
-          inputStorageKey,
-          metadataUrl,
-          titleHint: params.titleHint,
-          artistHint: params.artistHint,
-          destination: payload.destination,
-          driveFolderId: payload.driveFolderId,
-          hypedditOriginal: true,
-          clubReadyOnly: payload.clubReadyOnly,
-        },
-        signal,
-        update,
-        getGoogleAccessToken: deps.getGoogleAccessToken,
-      });
-    },
-  });
-}
-
 async function processTrack(params: {
   deps: RunJobDeps;
   trackUrl: string;
@@ -778,8 +365,6 @@ async function processTrack(params: {
   const cookieTmp = params.cookieTmp;
 
   // SoundCloud playlist/track priority:
-  // 0) Free Download purchase_url → Hypeddit / file-gate unlock → preserve
-  //    the original (stream/store links → fail flagged for manual download)
   // 1) artist free-download / original upload (best possible)
   // 2) confident YouTube mirror (Premium Opus beats SC AAC stream)
   // 3) SoundCloud stream (remixes/bootlegs with no YT upload)
@@ -789,110 +374,24 @@ async function processTrack(params: {
   // CDJ-compatible lossless output, rather than lowering the whole track.
   if (soundcloud) {
     await update({ stage: "resolving", progress: 12 });
+    // `purchase_url` on a SoundCloud track is a Buy/stream link — a store page
+    // or smart link, never a file we can fetch. Surface it so the user can go
+    // get it by hand.
     const purchase = await resolveSoundCloudPurchase({
       trackUrl: params.trackUrl,
       cookiePath: cookieTmp,
       signal,
     });
-    if (purchase.kind === "other" && purchase.url) {
-      if (payload.freeDownloadsOnly) {
-        throw new Error(
-          "No free download on this track — no artist download gate and no native SoundCloud original. Turn Free downloads only off to mirror it from YouTube.",
-        );
-      }
+    if (purchase.url && purchase.kind !== "none") {
       throw new ManualDownloadRequiredError(purchase.url, purchase.title);
-    }
-    if (purchase.kind === "stream" && purchase.url) {
-      const titledFree = /\bfree\b/i.test(purchase.title ?? "");
-      if (!titledFree) {
-        if (payload.freeDownloadsOnly) {
-          throw new Error(
-            "No free download on this track — no artist download gate and no native SoundCloud original. Turn Free downloads only off to mirror it from YouTube.",
-          );
-        }
-        throw new ManualDownloadRequiredError(purchase.url, purchase.title);
-      }
-    }
-    const gateKind =
-      purchase.kind === "direct" || purchase.kind === "browser-gate"
-        ? purchase.kind
-        : purchase.kind === "stream" && /\bfree\b/i.test(purchase.title ?? "")
-          ? ("browser-gate" as const)
-          : null;
-    if (gateKind && purchase.url) {
-      const email = payload.gateEmail?.trim() || "listener@thumper.app";
-      await update({
-        stage: "downloading",
-        progress: 25,
-        matchedUrl: purchase.url,
-      });
-      const downloadedOverride = await processGenericGateDownload({
-        kind: gateKind,
-        gateUrl: purchase.url,
-        email,
-        name: payload.gateName?.trim() || email.split("@")[0] || "DJ",
-        userId: payload.userId,
-        workDir,
-        signal,
-        requestedFormat: payload.audioFormat,
-        outputDirectory: outDir,
-        artistHint: params.artistHint,
-        titleHint: params.titleHint,
-      });
-      await processHypedditOriginal({
-        deps,
-        hypedditUrl: purchase.url,
-        metadataUrl: params.catalogUrl ?? params.trackUrl,
-        titleHint: params.titleHint,
-        artistHint: params.artistHint,
-        workDir,
-        outDir,
-        downloadedOverride,
-      });
-      return;
-    }
-    if (purchase.kind === "hypeddit" && purchase.url) {
-      await processHypedditOriginal({
-        deps,
-        hypedditUrl: purchase.url,
-        metadataUrl: params.catalogUrl ?? params.trackUrl,
-        titleHint: params.titleHint,
-        artistHint: params.artistHint,
-        workDir,
-        outDir,
-      });
-      return;
-    }
-    if (payload.freeDownloadsOnly) {
-      // No Hypeddit gate, but the artist may still expose the original upload
-      // directly (`format_id=download`) — that is a free download too, and the
-      // format selector takes it ahead of any stream.
-      const hasFreeDownload = await probeSoundCloudFreeDownload(
-        params.trackUrl,
-        cookieTmp,
-        signal,
-      );
-      if (!hasFreeDownload) {
-        throw new Error(
-          "No free download on this track — no artist download gate and no native SoundCloud original. Turn Free downloads only off to mirror it from YouTube.",
-        );
-      }
     }
   }
 
   let youtubeAlreadyTried = false;
 
-  /**
-   * True when a SoundCloud failure still has an untried YouTube mirror left.
-   * Free-downloads-only excludes itself: a mirror is by definition not the
-   * artist's free download, so falling back to one would quietly deliver the
-   * thing the switch exists to refuse.
-   */
+  /** True when a SoundCloud failure still has an untried YouTube mirror left. */
   const canTryYoutubeMirror = () =>
-    soundcloud &&
-    !payload.freeDownloadsOnly &&
-    !youtubeAlreadyTried &&
-    params.allowYoutubeFallback !== false;
+    soundcloud && !youtubeAlreadyTried && params.allowYoutubeFallback !== false;
 
   const tryYoutubeMirror = (reason: FallbackReason) =>
     fallbackSoundCloudToYoutube({
@@ -908,15 +407,10 @@ async function processTrack(params: {
       reason,
     });
 
-  // SoundCloud is worth using only when it hands over a free download — the
-  // artist's original upload or a Hypeddit gate, which is what the switch
-  // declares. Its streams top out at 128 kbps MP3 / 160 kbps AAC, strictly
-  // worse than YouTube Premium's ~280 kbps Opus, so everything else mirrors.
-  if (
-    soundcloud &&
-    !payload.freeDownloadsOnly &&
-    params.preferYoutube !== false
-  ) {
+  // SoundCloud is worth using only when it hands over the artist's original
+  // upload. Its streams top out at 128 kbps MP3 / 160 kbps AAC, strictly worse
+  // than YouTube Premium's ~280 kbps Opus, so everything else mirrors.
+  if (soundcloud && params.preferYoutube !== false) {
     await update({ stage: "resolving", progress: 18 });
     const ytResult = await trySoundCloudViaYoutubeFirst({
       deps,
@@ -933,7 +427,7 @@ async function processTrack(params: {
     // what we just failed to get, so the job fails instead of quietly
     // delivering the lower-quality copy.
     throw new Error(
-      "No confident YouTube mirror for this SoundCloud track, and its stream is lower quality than a mirror. Tick “Free downloads only” if the artist offers a free download.",
+      "No confident YouTube mirror for this SoundCloud track, and its stream is lower quality than a mirror.",
     );
   }
 
@@ -1037,7 +531,6 @@ async function processTrack(params: {
 
   if (initialArtifact.action === "preserve-original") {
     await executeOriginalArtifact({
-      provenance: "soundcloud-original",
       action: initialArtifact.action,
       preserve: async () => {
         await update({ title, artist, stage: "delivering", progress: 80 });
@@ -1078,9 +571,6 @@ async function processTrack(params: {
       },
       convertWav: async () => {
         throw new Error("A preserved original must not be converted");
-      },
-      retagWav: async () => {
-        throw new Error("A direct SoundCloud original must not be retagged");
       },
       tagMp3: async () => {
         throw new Error("A preserved original must not be copy-tagged");
@@ -1144,16 +634,12 @@ async function processTrack(params: {
   }
   if (artifact.action === "tag-mp3") {
     await executeOriginalArtifact({
-      provenance: "soundcloud-original",
       action: "tag-mp3",
       preserve: async () => {
         throw new Error("An untagged MP3 original must not use preservation");
       },
       convertWav: async () => {
         throw new Error("An MP3 original must not be converted to FLAC");
-      },
-      retagWav: async () => {
-        throw new Error("A direct SoundCloud MP3 must not be retagged as WAV");
       },
       tagMp3: async () => {
         const outPath = assertPathInside(outDir, artifact.path);
@@ -1226,15 +712,11 @@ async function processTrack(params: {
     });
   const converted = isArtistOriginal
     ? await executeOriginalArtifact({
-        provenance: "soundcloud-original",
         action: "convert-wav",
         preserve: async () => {
           throw new Error("A WAV original must not use preservation delivery");
         },
         convertWav: convert,
-        retagWav: async () => {
-          throw new Error("A direct SoundCloud WAV must not be retagged");
-        },
         tagMp3: async () => {
           throw new Error("A WAV original must not use MP3 tagging");
         },
@@ -1649,8 +1131,8 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
     let titleHint = payload.titleHint;
     let artistHint = payload.artistHint;
 
-    // Single tracks skip yt-dlp expand so Hypeddit / purchase_url resolution
-    // is not blocked by SoundCloud client_id scrape failures in the worker.
+    // Single tracks skip yt-dlp expand so purchase_url resolution is not
+    // blocked by SoundCloud client_id scrape failures in the worker.
     if (
       !payload.parentJobId &&
       deps.enqueueChildTracks &&
@@ -1701,10 +1183,6 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
             playlist: true,
             trackCount: childJobIds.length,
             childJobIds,
-            ...(payload.gateEmail
-              ? { gateEmail: payload.gateEmail, gateName: payload.gateName }
-              : {}),
-            ...(payload.freeDownloadsOnly ? { freeDownloadsOnly: true } : {}),
           },
         });
         return;

@@ -5,7 +5,6 @@
  * Kept out of page.tsx so it can be tested without a browser.
  */
 import { trackDisplayName } from "@thumper/shared";
-import { HYPEDDIT_ORIGINAL_COPY } from "./result-copy";
 
 export type DjTier = "master" | "club" | "marginal" | "unsuitable";
 
@@ -37,12 +36,9 @@ export type Job = {
     sourceFormatId?: string;
     /** SoundCloud free-download / original upload (`format_id=download`). */
     soundcloudOriginal?: boolean;
-    /** Hypeddit artist original; WAV is tagged FLAC, other formats unchanged. */
-    hypedditOriginal?: boolean;
-    /** Non-Hypeddit purchase link — open and download manually. */
+    /** Buy/stream purchase link — open and download manually. */
     manualDownloadUrl?: string;
     manualDownloadTitle?: string | null;
-    freeDownloadsOnly?: boolean;
     clubReadyOnly?: boolean;
     qualityRejected?: boolean;
   } | null;
@@ -169,14 +165,7 @@ export function verdictOf(job: Job): Verdict {
       tier: "unsuitable",
       lead: "manual",
       detail:
-        "A stream or store page, not a file gate. Open it, download by hand, then use Retag to tag it.",
-    };
-  }
-  if (result?.hypedditOriginal) {
-    return {
-      tier: "original",
-      lead: "original",
-      detail: HYPEDDIT_ORIGINAL_COPY,
+        "A stream or store page, not a file. Open it, download by hand, then use Retag to tag it.",
     };
   }
   if (result?.soundcloudOriginal) {

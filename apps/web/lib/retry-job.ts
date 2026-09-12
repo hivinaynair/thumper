@@ -5,9 +5,6 @@ export type JobResultMeta = {
   childJobIds?: string[];
   driveFolderId?: string;
   parentJobId?: string;
-  gateEmail?: string;
-  gateName?: string;
-  freeDownloadsOnly?: boolean;
   clubReadyOnly?: boolean;
 };
 
@@ -53,10 +50,7 @@ export function downloadPayloadFromJob(
     destination: row.destination,
     titleHint: row.title ?? undefined,
     artistHint: row.artist ?? undefined,
-    gateEmail: result.gateEmail,
-    gateName: result.gateName,
     clubReadyOnly: Boolean(result.clubReadyOnly),
-    freeDownloadsOnly: Boolean(result.freeDownloadsOnly),
     ...(result.driveFolderId ? { driveFolderId: result.driveFolderId } : {}),
     ...(result.parentJobId ? { parentJobId: result.parentJobId } : {}),
   };

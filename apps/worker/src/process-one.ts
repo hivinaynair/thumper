@@ -182,12 +182,9 @@ export async function processJobById(jobId: string): Promise<void> {
     return;
   }
 
-  const gateMeta = row.result as
+  const jobMeta = row.result as
     | {
         parentJobId?: string;
-        gateEmail?: string;
-        gateName?: string;
-        freeDownloadsOnly?: boolean;
         clubReadyOnly?: boolean;
         driveFolderId?: string;
       }
@@ -195,7 +192,7 @@ export async function processJobById(jobId: string): Promise<void> {
     | undefined;
 
   const playlistCtx = await playlistContextForJob(row.id, row.userId);
-  let driveFolderId = gateMeta?.driveFolderId ?? playlistCtx.driveFolderId;
+  let driveFolderId = jobMeta?.driveFolderId ?? playlistCtx.driveFolderId;
   if (
     !driveFolderId &&
     playlistCtx.playlistTitle &&
@@ -221,12 +218,9 @@ export async function processJobById(jobId: string): Promise<void> {
     destination: row.destination,
     titleHint: row.title ?? undefined,
     artistHint: row.artist ?? undefined,
-    gateEmail: gateMeta?.gateEmail,
-    gateName: gateMeta?.gateName,
-    freeDownloadsOnly: Boolean(gateMeta?.freeDownloadsOnly),
-    clubReadyOnly: Boolean(gateMeta?.clubReadyOnly),
-    ...(gateMeta?.parentJobId || playlistCtx.parentJobId
-      ? { parentJobId: gateMeta?.parentJobId ?? playlistCtx.parentJobId }
+    clubReadyOnly: Boolean(jobMeta?.clubReadyOnly),
+    ...(jobMeta?.parentJobId || playlistCtx.parentJobId
+      ? { parentJobId: jobMeta?.parentJobId ?? playlistCtx.parentJobId }
       : {}),
     ...(driveFolderId ? { driveFolderId } : {}),
     ...(detectSourceKind(row.sourceUrl) === "spotify"
@@ -278,10 +272,6 @@ export async function processJobById(jobId: string): Promise<void> {
                   ...(context?.driveFolderId
                     ? { driveFolderId: context.driveFolderId }
                     : {}),
-                  ...(p.gateEmail
-                    ? { gateEmail: p.gateEmail, gateName: p.gateName }
-                    : {}),
-                  ...(p.freeDownloadsOnly ? { freeDownloadsOnly: true } : {}),
                   ...(p.clubReadyOnly ? { clubReadyOnly: true } : {}),
                 },
               });

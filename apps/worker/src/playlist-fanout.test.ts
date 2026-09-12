@@ -36,19 +36,9 @@ describe("childJobResult", () => {
     });
   });
 
-  it("copies gate flags from the parent", () => {
-    expect(
-      childJobResult(
-        parent({
-          gateEmail: "hi@vinaynair.dev",
-          gateName: "Vinay",
-          clubReadyOnly: true,
-        }),
-      ),
-    ).toEqual({
+  it("copies the club-ready flag from the parent", () => {
+    expect(childJobResult(parent({ clubReadyOnly: true }))).toEqual({
       parentJobId: PARENT_ID,
-      gateEmail: "hi@vinaynair.dev",
-      gateName: "Vinay",
       clubReadyOnly: true,
     });
   });

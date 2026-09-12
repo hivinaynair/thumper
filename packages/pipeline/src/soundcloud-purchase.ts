@@ -3,13 +3,7 @@ import { resolveSoundCloudClientId } from "./soundcloud-client";
 
 export { resolveSoundCloudClientId } from "./soundcloud-client";
 
-export type SoundCloudPurchaseKind =
-  | "hypeddit"
-  | "direct"
-  | "browser-gate"
-  | "stream"
-  | "other"
-  | "none";
+export type SoundCloudPurchaseKind = "stream" | "other" | "none";
 
 export type SoundCloudPurchase = {
   kind: SoundCloudPurchaseKind;
@@ -40,100 +34,21 @@ function hostMatches(host: string, names: readonly string[]): boolean {
   return names.some((name) => host === name || host.endsWith(`.${name}`));
 }
 
-const DIRECT_HOSTS = ["dropbox.com"] as const;
-const BROWSER_GATE_HOSTS = [
-  "toneden.io",
-  "droploud.com",
-  "laylo.com",
-  "gaterush.me",
-  "pl8list.com",
-  "hive.co",
-  "vault.fm",
-  "cobrand.com",
-  "pumpyoursound.com",
-  "ipln.io",
-  "influenceplanner.com",
-] as const;
-
-const GATE_KIND_RANK: Record<Exclude<SoundCloudPurchaseKind, "none">, number> = {
-  hypeddit: 0,
-  direct: 1,
-  "browser-gate": 2,
-  stream: 3,
-  other: 4,
-};
-
-const URL_IN_TEXT =
-  /(?:https?:\/\/|www\.)[^\s<>"'()]+|(?:hypeddit\.com|toneden\.io|gaterush\.me|laylo\.com|droploud\.com|dropbox\.com|ipln\.io)\/[^\s<>"'()]+/gi;
-
-function normalizeExtractedUrl(raw: string): string | null {
-  const trimmed = raw.replace(/[),.;:]+$/g, "").trim();
-  if (!trimmed) return null;
-  const withScheme = /^https?:\/\//i.test(trimmed)
-    ? trimmed
-    : `https://${trimmed.replace(/^www\./i, "")}`;
-  try {
-    const parsed = new URL(withScheme);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-    return parsed.toString();
-  } catch {
-    return null;
-  }
-}
-
-/** Pull Free Download / gate URLs out of a SoundCloud description. */
-export function extractSoundCloudGateUrls(text: string | null | undefined): string[] {
-  if (!text) return [];
-  const found: string[] = [];
-  const seen = new Set<string>();
-  for (const match of text.matchAll(URL_IN_TEXT)) {
-    const url = normalizeExtractedUrl(match[0] ?? "");
-    if (!url) continue;
-    const key = url.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    found.push(url);
-  }
-  return found;
-}
-
+/**
+ * Only `purchase_url` counts. Description links are ordinary artist links —
+ * socials, merch, other releases — and treating one as this track's download
+ * source would fail the job over something unrelated to it.
+ */
 export function pickPreferredSoundCloudPurchase(params: {
   purchaseUrl?: string | null;
   purchaseTitle?: string | null;
-  description?: string | null;
 }): SoundCloudPurchase {
-  const candidates: Array<{ url: string; title: string | null; fromPurchase: boolean }> =
-    [];
   const purchaseUrl = params.purchaseUrl?.trim();
-  if (purchaseUrl) {
-    candidates.push({
-      url: purchaseUrl,
-      title: params.purchaseTitle ?? null,
-      fromPurchase: true,
-    });
-  }
-  for (const url of extractSoundCloudGateUrls(params.description)) {
-    if (purchaseUrl && url.toLowerCase() === purchaseUrl.toLowerCase()) continue;
-    candidates.push({ url, title: params.purchaseTitle ?? null, fromPurchase: false });
-  }
-  if (candidates.length === 0) return { kind: "none" };
-
-  let best = candidates[0]!;
-  let bestRank = GATE_KIND_RANK[classifySoundCloudPurchaseUrl(best.url)];
-  for (const candidate of candidates.slice(1)) {
-    const rank = GATE_KIND_RANK[classifySoundCloudPurchaseUrl(candidate.url)];
-    if (
-      rank < bestRank ||
-      (rank === bestRank && candidate.fromPurchase && !best.fromPurchase)
-    ) {
-      best = candidate;
-      bestRank = rank;
-    }
-  }
+  if (!purchaseUrl) return { kind: "none" };
   return {
-    kind: classifySoundCloudPurchaseUrl(best.url),
-    url: best.url,
-    title: best.title,
+    kind: classifySoundCloudPurchaseUrl(purchaseUrl),
+    url: purchaseUrl,
+    title: params.purchaseTitle ?? null,
   };
 }
 
@@ -156,9 +71,6 @@ export function classifySoundCloudPurchaseUrl(
 ): Exclude<SoundCloudPurchaseKind, "none"> {
   const host = hostOf(url);
   if (!host) return "other";
-  if (hostMatches(host, ["hypeddit.com"])) return "hypeddit";
-  if (hostMatches(host, DIRECT_HOSTS)) return "direct";
-  if (hostMatches(host, BROWSER_GATE_HOSTS)) return "browser-gate";
   if (hostMatches(host, STREAM_HOSTS)) return "stream";
   return "other";
 }
@@ -182,7 +94,7 @@ export function soundCloudPurchaseApiUrl(
 }
 
 /**
- * Resolve a SoundCloud track's Free Download / Buy link (`purchase_url`).
+ * Resolve a SoundCloud track's Buy link (`purchase_url`).
  * Requires a Netscape cookie jar that includes `oauth_token` for reliable API access.
  */
 export async function resolveSoundCloudPurchase(params: {
@@ -217,12 +129,10 @@ export async function resolveSoundCloudPurchase(params: {
   const data = (await res.json()) as {
     purchase_url?: string | null;
     purchase_title?: string | null;
-    description?: string | null;
   };
   return pickPreferredSoundCloudPurchase({
     purchaseUrl: data.purchase_url,
     purchaseTitle: data.purchase_title,
-    description: data.description,
   });
 }
 
@@ -234,7 +144,7 @@ export class ManualDownloadRequiredError extends Error {
     super(
       `Manual download required: ${url}${
         purchaseTitle ? ` (${purchaseTitle})` : ""
-      }. This link is a stream/store page, not a file gate. Download it yourself, then upload it on Retag.`,
+      }. This link is a stream or store page, not a file. Download it yourself, then upload it on Retag.`,
     );
     this.name = "ManualDownloadRequiredError";
     this.manualDownloadUrl = url;

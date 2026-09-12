@@ -127,7 +127,7 @@ describe("missingCookiesForRetry", () => {
 });
 
 describe("cookieProvidersNeeded", () => {
-  it("asks for Spotify cookies on a Hypeddit session failure", () => {
+  it("asks for Spotify cookies on a Spotify session failure", () => {
     expect(
       cookieProvidersNeeded(
         "Spotify session is no longer usable — refresh Spotify cookies and retry.",
@@ -135,7 +135,7 @@ describe("cookieProvidersNeeded", () => {
     ).toEqual(["spotify"]);
   });
 
-  it("asks for SoundCloud cookies on a ToneDen session failure", () => {
+  it("asks for SoundCloud cookies on a SoundCloud session failure", () => {
     const error =
       "SoundCloud session is no longer usable — refresh SoundCloud cookies and retry.";
     expect(cookieNeedsRefresh(error)).toBe(true);

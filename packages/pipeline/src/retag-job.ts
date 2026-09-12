@@ -17,7 +17,6 @@ import {
   cleanupRetagPaths,
   completeDeliveryTransaction,
   withRetagPathCleanup,
-  withTemporaryInputCleanup,
 } from "./delivery-artifact";
 import { findFallbackArtworkUrl } from "./artwork-fallback";
 import { downloadArtworkFile, resolveTrackTags } from "./metadata";
@@ -60,32 +59,12 @@ export async function uploadRetagToDrive(params: {
 export async function materializeRetagInput(params: {
   inputStorageKey: string;
   inputPath: string;
-  hypedditOriginal: boolean;
   materialize?: typeof materializeObject;
-  deleteObject?: typeof deleteObjectStrict;
 }): Promise<void> {
   await (params.materialize ?? materializeObject)(
     params.inputStorageKey,
     params.inputPath,
   );
-  if (params.hypedditOriginal) {
-    await (params.deleteObject ?? deleteObjectStrict)(params.inputStorageKey);
-  }
-}
-
-export function createRetagStagingOwner(params: {
-  temporary: boolean;
-  inputStorageKey: string;
-  deleteObject: (key: string) => Promise<void>;
-}): { delete: () => Promise<void> } {
-  let deleted = false;
-  return {
-    delete: async () => {
-      if (!params.temporary || deleted) return;
-      await params.deleteObject(params.inputStorageKey);
-      deleted = true;
-    },
-  };
 }
 
 async function ensureNotCancelled(signal: AbortSignal, db: Db, jobId: string) {
@@ -119,32 +98,13 @@ export async function runRetagJob(deps: RunRetagJobDeps): Promise<void> {
     retainOutput: false,
     cleaned: false,
   };
-  const stagingOwner = createRetagStagingOwner({
-    temporary: payload.hypedditOriginal === true,
-    inputStorageKey: payload.inputStorageKey,
-    deleteObject: deps.deleteObjectStrict ?? deleteObjectStrict,
-  });
-  const deleteTemporaryInput = () => stagingOwner.delete();
-  return withTemporaryInputCleanup({
-    temporary: payload.hypedditOriginal === true,
-    inputStorageKey: payload.inputStorageKey,
-    deleteObject: deleteTemporaryInput,
-    run: () =>
-      withRetagPathCleanup({
-        workDir,
-        state: cleanupState,
-        run: () =>
-          runRetagJobCore(
-            deps,
-            workDir,
-            outDir,
-            cleanupState,
-            deleteTemporaryInput,
-          ),
-        removeOutput: (filePath) => fs.rm(filePath, { force: true }),
-        removeWorkDir: (dirPath) =>
-          fs.rm(dirPath, { recursive: true, force: true }),
-      }),
+  return withRetagPathCleanup({
+    workDir,
+    state: cleanupState,
+    run: () => runRetagJobCore(deps, workDir, outDir, cleanupState),
+    removeOutput: (filePath) => fs.rm(filePath, { force: true }),
+    removeWorkDir: (dirPath) =>
+      fs.rm(dirPath, { recursive: true, force: true }),
   });
 }
 
@@ -157,7 +117,6 @@ async function runRetagJobCore(
     retainOutput: boolean;
     cleaned: boolean;
   },
-  deleteTemporaryInput: (key: string) => Promise<void>,
 ): Promise<void> {
   const { db, payload, signal, update } = deps;
   const destination = payload.destination ?? "browser";
@@ -190,8 +149,7 @@ async function runRetagJobCore(
     });
     await ensureNotCancelled(signal, db, payload.jobId);
 
-    // Extension is a hint only — convertAudio probes the real codec. Hypeddit
-    // gates may hand back wav or mp3; manual retag uploads stay WAV.
+    // Extension is a hint only — convertAudio probes the real codec.
     const keyExt =
       path.extname(payload.inputStorageKey).replace(/^\./, "").toLowerCase() ||
       "wav";
@@ -202,8 +160,6 @@ async function runRetagJobCore(
     await materializeRetagInput({
       inputStorageKey: payload.inputStorageKey,
       inputPath,
-      hypedditOriginal: payload.hypedditOriginal === true,
-      deleteObject: deleteTemporaryInput,
     });
 
     let artworkPath: string | null = null;
@@ -216,8 +172,8 @@ async function runRetagJobCore(
       });
     }
 
-    // Hypeddit originals arrive with whatever the artist bothered to embed, and
-    // the SoundCloud page they came from often has no usable art either. Same
+    // Uploads arrive with whatever the artist bothered to embed, and the
+    // SoundCloud page they came from often has no usable art either. Same
     // recovery the download path uses: search SoundCloud and take the cover off
     // a hit that clears the match scorer.
     if (!artworkPath) {
@@ -360,7 +316,6 @@ async function runRetagJobCore(
             extension: "flac",
             mime: "audio/flac",
             audioConverted: true,
-            ...(payload.hypedditOriginal ? { hypedditOriginal: true } : {}),
             ...(payload.clubReadyOnly ? { clubReadyOnly: true } : {}),
           },
         });

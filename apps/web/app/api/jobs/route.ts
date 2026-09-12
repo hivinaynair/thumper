@@ -1,4 +1,4 @@
-import { auth, clerkClient } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { jobs } from "@thumper/db";
 import { getCookieStatus } from "@thumper/pipeline/cookies";
 import {
@@ -14,30 +14,6 @@ import { getBoss } from "../../../lib/boss";
 import { getDb } from "../../../lib/db";
 import { userHasGoogleDriveAccess } from "../../../lib/google-drive";
 import { wakeModalJob } from "../../../lib/wake-modal";
-
-async function clerkGateIdentity(userId: string): Promise<{
-  gateEmail?: string;
-  gateName?: string;
-}> {
-  try {
-    const client = await clerkClient();
-    const user = await client.users.getUser(userId);
-    const gateEmail =
-      user.primaryEmailAddress?.emailAddress ??
-      user.emailAddresses[0]?.emailAddress ??
-      undefined;
-    const gateName =
-      user.fullName?.trim() ||
-      user.firstName?.trim() ||
-      (gateEmail ? gateEmail.split("@")[0] : undefined);
-    return {
-      ...(gateEmail ? { gateEmail } : {}),
-      ...(gateName ? { gateName } : {}),
-    };
-  } catch {
-    return {};
-  }
-}
 
 const TERMINAL_STATUSES = ["completed", "failed", "cancelled"] as const;
 
@@ -198,19 +174,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Job limit reached" }, { status: 429 });
   }
 
-  const gateIdentity =
-    sourceKind === "soundcloud" ? await clerkGateIdentity(userId) : {};
-  const freeDownloadsOnly =
-    sourceKind === "soundcloud" && Boolean(input.freeDownloadsOnly);
-  // Unlike freeDownloadsOnly this is not SoundCloud-specific — a YouTube-only
-  // job can flunk the bar just as easily.
+  // Not SoundCloud-specific — a YouTube-only job can flunk the bar just as easily.
   const clubReadyOnly = Boolean(input.clubReadyOnly);
 
-  const jobResult = {
-    ...gateIdentity,
-    ...(freeDownloadsOnly ? { freeDownloadsOnly: true } : {}),
-    ...(clubReadyOnly ? { clubReadyOnly: true } : {}),
-  };
+  const jobResult = clubReadyOnly ? { clubReadyOnly: true } : {};
 
   const [job] = await db
     .insert(jobs)
@@ -274,9 +241,7 @@ export async function POST(req: Request) {
         destination: input.destination,
         titleHint: input.titleHint,
         artistHint: input.artistHint,
-        freeDownloadsOnly,
         clubReadyOnly,
-        ...gateIdentity,
       })) ?? null;
 
     await db

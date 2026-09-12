@@ -8,7 +8,6 @@ import {
   retryButtonLabel,
 } from "../../lib/cookie-retry";
 import { COOKIE_SYNC_EXTENSION_VERSION } from "./cookie-sync";
-import { COOKIE_SYNC_DISCLOSURE } from "./result-copy";
 import { ChevronDown, Loader2, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -218,7 +217,6 @@ const COOKIE_PROVIDERS = [
 export default function DownloaderPage() {
   const [url, setUrl] = useState("");
   const [destination, setDestination] = useState("browser");
-  const [freeDownloadsOnly, setFreeDownloadsOnly] = useState(false);
   const [clubReadyOnly, setClubReadyOnly] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [cookies, setCookies] = useState<CookieStatus | null>(null);
@@ -329,7 +327,6 @@ export default function DownloaderPage() {
           url,
           audioFormat: "flac",
           destination,
-          freeDownloadsOnly,
           clubReadyOnly,
         }),
       });
@@ -489,22 +486,6 @@ export default function DownloaderPage() {
             <CollapsibleContent className="space-y-3 pt-3">
               <label className="flex cursor-pointer gap-2.5">
                 <Checkbox
-                  checked={freeDownloadsOnly}
-                  onCheckedChange={(v) => setFreeDownloadsOnly(v === true)}
-                  className="mt-0.5"
-                />
-                <span className="text-xs leading-relaxed text-muted-foreground">
-                  <span className="text-foreground">
-                    Free downloads only (artist gates)
-                  </span>{" "}
-                  — skip streams and YouTube mirrors. Tracks without a native
-                  SoundCloud download or a file gate (Hypeddit, ToneDen,
-                  DropLoud, Laylo, GateRush, Dropbox, and similar) fail, so
-                  playlist fills stay masters-only.
-                </span>
-              </label>
-              <label className="flex cursor-pointer gap-2.5">
-                <Checkbox
                   checked={clubReadyOnly}
                   onCheckedChange={(v) => {
                     setClubReadyOnly(v === true);
@@ -534,11 +515,7 @@ export default function DownloaderPage() {
           ) : null}
         </form>
 
-        <p className="mt-5 text-[11px] leading-relaxed text-muted-foreground">
-          {COOKIE_SYNC_DISCLOSURE}
-        </p>
-
-        <div className="mt-2 flex flex-wrap items-center gap-2">
+        <div className="mt-5 flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">Sessions</span>
           {COOKIE_PROVIDERS.map(([key, label]) => {
             const status = cookies?.[key];
@@ -668,7 +645,6 @@ export default function DownloaderPage() {
                   </h2>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {job.stage} · {job.audioFormat} · {job.destination}
-                    {job.result?.freeDownloadsOnly ? " · free downloads only" : ""}
                     {job.result?.clubReadyOnly ? " · club-ready only" : ""}
                     {rollup ? ` · ${rollupSummary(rollup)}` : ""}
                     {job.result?.unmatchedCount
@@ -786,7 +762,7 @@ export default function DownloaderPage() {
                           target="_blank"
                           rel="noreferrer"
                         >
-                          Open gate
+                          Open link
                         </a>
                       </Button>
                     ) : null}

@@ -72,11 +72,6 @@ export const CreateJobInputSchema = z.object({
   titleHint: z.string().optional(),
   artistHint: z.string().optional(),
   /**
-   * SoundCloud only: skip streams / YouTube mirrors. Only Hypeddit Free
-   * Download gates and artist originals are delivered; other tracks fail.
-   */
-  freeDownloadsOnly: z.boolean().optional().default(false),
-  /**
    * Reject any track whose measured tier is not club-ready (see `isClubReady`),
    * after trying alternate sources. Applies to every source kind, not just
    * SoundCloud — a YouTube-only job can flunk the bar just as easily.
@@ -105,14 +100,6 @@ export const DownloadJobPayloadSchema = z.object({
    * the parent playlist job so every upload lands in the same subfolder.
    */
   driveFolderId: z.string().min(1).optional(),
-  /**
-   * Clerk primary email / display name for Hypeddit email gate steps.
-   * Set at job create; playlist children inherit from the parent payload.
-   */
-  gateEmail: z.string().email().optional(),
-  gateName: z.string().min(1).optional(),
-  /** When true, SoundCloud jobs only take Hypeddit Free Downloads. */
-  freeDownloadsOnly: z.boolean().optional().default(false),
   /** When true, only club-ready sources are delivered; the rest fail. */
   clubReadyOnly: z.boolean().optional().default(false),
 });
@@ -182,8 +169,6 @@ export const RetagJobPayloadSchema = z.object({
   artistHint: z.string().optional(),
   destination: DeliveryDestinationSchema.default("browser"),
   driveFolderId: z.string().optional(),
-  /** Set when the input came from a Hypeddit Free Download gate. */
-  hypedditOriginal: z.boolean().optional(),
   clubReadyOnly: z.boolean().optional().default(false),
 });
 export type RetagJobPayload = z.infer<typeof RetagJobPayloadSchema>;

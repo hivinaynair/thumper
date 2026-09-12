@@ -46,25 +46,12 @@ worker_image = (
     .apt_install(
         "ffmpeg",
         "ca-certificates",
-        "chromium",
         "python3",
         "python3-venv",
         "curl",
         "unzip",
     )
-    .add_local_file(
-        str(REPO_ROOT / "scripts/chromium-worker"),
-        remote_path="/tmp/chromium-worker",
-        copy=True,
-    )
     .run_commands(
-        "groupadd --system --gid 922 chromium-worker",
-        "useradd --system --uid 922 --gid chromium-worker "
-        "--home-dir /var/lib/chromium --create-home "
-        "--shell /usr/sbin/nologin chromium-worker",
-        "install -m 0755 /tmp/chromium-worker /usr/local/bin/chromium-worker",
-        "install -d -o 922 -g 922 -m 0700 /var/lib/chromium/xdg /var/lib/chromium/tmp",
-        "grep -q XDG_RUNTIME_DIR /usr/local/bin/chromium-worker",
         # Deno must be on PATH so yt-dlp can run YouTube EJS challenge solvers.
         f'curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s "v{DENO_VERSION}"',
         "deno --version",
@@ -78,9 +65,6 @@ worker_image = (
             "DENO_INSTALL": "/usr/local",
             "PATH": "/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "YT_DLP_PATH": "/opt/venv/bin/yt-dlp",
-            "PUPPETEER_EXECUTABLE_PATH": "/usr/local/bin/chromium-worker",
-            "PUPPETEER_RUN_UID": "922",
-            "PUPPETEER_RUN_GID": "922",
             "DATA_DIR": "/tmp/thumper-data",
         }
     )
@@ -105,7 +89,6 @@ worker_image = (
     .run_commands("cd /app && bun install --frozen-lockfile")
     .add_local_python_source("subprocess_retry")
     .add_local_python_source("playlist_fanout")
-    .add_local_python_source("chromium_isolation")
 )
 
 endpoint_image = (
@@ -120,8 +103,8 @@ secrets = modal.Secret.from_name("thumper-secrets")
 
 
 def _run_process_job(job_id: str) -> str:
-    # Bun and every child inherit root-private creation permissions. Chromium
-    # then drops to uid 922 and cannot read worker temp files or job secrets.
+    # Bun and every child inherit root-private creation permissions, so worker
+    # temp files and job secrets stay unreadable to other uids.
     os.umask(0o077)
     env = os.environ.copy()
     env.setdefault("DATA_DIR", "/tmp/thumper-data")
@@ -243,28 +226,8 @@ def search(item: dict):
     return {"ok": True, "candidates": payload.get("candidates") or []}
 
 
-@app.function(
-    image=worker_image,
-    timeout=120,
-    cpu=1.0,
-    memory=2048,
-)
-def smoke_chromium() -> str:
-    """Launch system Chromium through the uid-922 wrapper on Modal."""
-    try:
-        from .chromium_isolation import run_chromium_isolation_smoke
-    except ImportError:
-        from chromium_isolation import run_chromium_isolation_smoke
-
-    return run_chromium_isolation_smoke()
-
-
 @app.local_entrypoint()
-def main(job_id: str = "", chromium_smoke: bool = False):
-    # modal run apps/modal/thumper_worker.py --chromium-smoke
-    if chromium_smoke:
-        print(smoke_chromium.remote())
-        return
+def main(job_id: str = ""):
     if not job_id:
-        raise SystemExit("job_id required unless --chromium-smoke")
+        raise SystemExit("job_id required")
     print(process_job.remote(job_id))

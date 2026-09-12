@@ -18,7 +18,7 @@ describe("requeueFields", () => {
 });
 
 describe("downloadPayloadFromJob", () => {
-  it("prefers the matched mirror URL and keeps playlist Drive + gate flags", () => {
+  it("prefers the matched mirror URL and keeps playlist Drive flags", () => {
     expect(
       downloadPayloadFromJob({
         id: "child-1",
@@ -30,8 +30,6 @@ describe("downloadPayloadFromJob", () => {
         audioFormat: "flac",
         destination: "drive",
         result: {
-          gateEmail: "hi@vinaynair.dev",
-          gateName: "Vinay",
           clubReadyOnly: true,
           driveFolderId: "folder-uk-140",
           parentJobId: "uk-140",
@@ -45,10 +43,7 @@ describe("downloadPayloadFromJob", () => {
       destination: "drive",
       titleHint: "Voicenote Violence",
       artistHint: "Casey Club",
-      gateEmail: "hi@vinaynair.dev",
-      gateName: "Vinay",
       clubReadyOnly: true,
-      freeDownloadsOnly: false,
       driveFolderId: "folder-uk-140",
       parentJobId: "uk-140",
     });

@@ -10,9 +10,6 @@ export type PlaylistChildKind = "youtube" | "soundcloud";
 export type ChildJobResult = {
   parentJobId: string;
   driveFolderId?: string;
-  gateEmail?: string;
-  gateName?: string;
-  freeDownloadsOnly?: boolean;
   clubReadyOnly?: boolean;
 };
 
@@ -23,10 +20,6 @@ export function childJobResult(
   return {
     parentJobId: parent.jobId,
     ...(context?.driveFolderId ? { driveFolderId: context.driveFolderId } : {}),
-    ...(parent.gateEmail
-      ? { gateEmail: parent.gateEmail, gateName: parent.gateName }
-      : {}),
-    ...(parent.freeDownloadsOnly ? { freeDownloadsOnly: true } : {}),
     ...(parent.clubReadyOnly ? { clubReadyOnly: true } : {}),
   };
 }

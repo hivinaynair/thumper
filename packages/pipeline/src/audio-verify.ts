@@ -351,9 +351,8 @@ const NYQUIST_RATIO_MAX_RATE = 48000;
 
 export type ClassifyOptions = {
   /**
-   * True only when the bytes came from the artist rather than a stream: a
-   * SoundCloud free download / original upload (`format_id=download`), or a
-   * Hypeddit gate.
+   * True only when the bytes came from the artist rather than a stream — a
+   * SoundCloud free download / original upload (`format_id=download`).
    *
    * Required for "master", because spectral analysis alone cannot earn that
    * label. Every YouTube download is Opus, which stops at ~20.5 kHz — above

@@ -4,14 +4,12 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { expect, it } from "bun:test";
 import {
-  createRetagStagingOwner,
   materializeRetagInput,
   runRetagJob,
   uploadRetagToDrive,
 } from "./retag-job";
 
 async function runWithInitialUpdateFailure(params: {
-  hypedditOriginal: boolean;
   deleteObjectStrict: (key: string) => Promise<void>;
   primary: Error;
 }): Promise<void> {
@@ -27,7 +25,6 @@ async function runWithInitialUpdateFailure(params: {
       inputStorageKey: string;
       metadataUrl: string;
       destination: "browser";
-      hypedditOriginal: boolean;
       clubReadyOnly: boolean;
     };
     signal: AbortSignal;
@@ -43,7 +40,6 @@ async function runWithInitialUpdateFailure(params: {
         inputStorageKey: "users/u/uploads/staging.wav",
         metadataUrl: "https://soundcloud.com/artist/track",
         destination: "browser",
-        hypedditOriginal: params.hypedditOriginal,
         clubReadyOnly: false,
       },
       signal: new AbortController().signal,
@@ -82,96 +78,25 @@ it("passes the playlist folder to the retag Drive upload", async () => {
   });
 });
 
-it("strict-deletes Hypeddit staging after materializing the local input", async () => {
-  const events: string[] = [];
-  await materializeRetagInput({
-    inputStorageKey: "users/u/uploads/staging.wav",
-    inputPath: "/work/input.wav",
-    hypedditOriginal: true,
-    materialize: async () => {
-      events.push("materialized");
-    },
-    deleteObject: async () => {
-      events.push("deleted");
-    },
-  });
-
-  expect(events).toEqual(["materialized", "deleted"]);
-});
-
-it("retains user-owned manual retag uploads after materializing", async () => {
-  let deleted = false;
+it("never deletes the uploaded input after materializing it locally", async () => {
+  let materialized = false;
   await materializeRetagInput({
     inputStorageKey: "users/u/uploads/manual.wav",
     inputPath: "/work/input.wav",
-    hypedditOriginal: false,
-    materialize: async () => undefined,
-    deleteObject: async () => {
-      deleted = true;
+    materialize: async () => {
+      materialized = true;
     },
   });
 
-  expect(deleted).toBe(false);
+  expect(materialized).toBe(true);
 });
 
-it("does not delete Hypeddit staging twice after ownership cleanup succeeds", async () => {
-  let deleteCalls = 0;
-  const owner = createRetagStagingOwner({
-    temporary: true,
-    inputStorageKey: "users/u/uploads/staging.wav",
-    deleteObject: async () => {
-      deleteCalls += 1;
-    },
-  });
-  await owner.delete();
-  await owner.delete();
-
-  expect(deleteCalls).toBe(1);
-});
-
-it("deletes Hypeddit staging when retag fails before materialization", async () => {
-  const primary = new Error("initial update failed");
-  const deleted: string[] = [];
-
-  await expect(
-    runWithInitialUpdateFailure({
-      hypedditOriginal: true,
-      primary,
-      deleteObjectStrict: async (key) => {
-        deleted.push(key);
-      },
-    }),
-  ).rejects.toBe(primary);
-
-  expect(deleted).toEqual(["users/u/uploads/staging.wav"]);
-});
-
-it("preserves an early primary failure when staging deletion also fails", async () => {
-  const primary = new Error("initial update failed");
-  const cleanup = new Error("staging deletion failed");
-
-  await expect(
-    runWithInitialUpdateFailure({
-      hypedditOriginal: true,
-      primary,
-      deleteObjectStrict: async () => {
-        throw cleanup;
-      },
-    }),
-  ).rejects.toBe(primary);
-
-  expect((primary as Error & { cleanupError?: unknown }).cleanupError).toBe(
-    cleanup,
-  );
-});
-
-it("never deletes a manual retag upload after an early failure", async () => {
+it("never deletes a retag upload after an early failure", async () => {
   const primary = new Error("initial update failed");
   let deleted = false;
 
   await expect(
     runWithInitialUpdateFailure({
-      hypedditOriginal: false,
       primary,
       deleteObjectStrict: async () => {
         deleted = true;

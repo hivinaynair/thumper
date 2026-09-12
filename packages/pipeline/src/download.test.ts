@@ -12,7 +12,6 @@ import {
   isSoundCloudPreviewError,
   isSoundCloudUnavailableError,
   isYoutubeBotError,
-  soundcloudHasFreeDownload,
   SoundCloudPreviewError,
 } from "./download";
 
@@ -202,34 +201,6 @@ describe("downloadMedia YouTube quality guarantees", () => {
 
   it("keeps the dependency-injected test seam out of the package barrel", () => {
     expect("downloadMediaWithDeps" in pipeline).toBe(false);
-  });
-});
-
-describe("soundcloudHasFreeDownload", () => {
-  it("detects format_id=download in the formats list", () => {
-    expect(
-      soundcloudHasFreeDownload({
-        formats: [
-          { format_id: "http_mp3_128_0" },
-          { format_id: "download" },
-        ],
-      }),
-    ).toBe(true);
-  });
-
-  it("ignores preview-only and ordinary stream formats", () => {
-    expect(
-      soundcloudHasFreeDownload({
-        formats: [
-          { format_id: "http_mp3_128_0" },
-          { format_id: "hls_aac_160_preview" },
-        ],
-      }),
-    ).toBe(false);
-  });
-
-  it("accepts a top-level format_id when formats is missing", () => {
-    expect(soundcloudHasFreeDownload({ format_id: "download" })).toBe(true);
   });
 });
 

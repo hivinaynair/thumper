@@ -9,7 +9,6 @@ import {
   preserveArtifactForLocalDelivery,
   withDeliveryCompensation,
   withRetagPathCleanup,
-  withTemporaryInputCleanup,
 } from "./delivery-artifact";
 
 describe("planDeliveryArtifact", () => {
@@ -110,7 +109,7 @@ describe("planDeliveryArtifact", () => {
 
   it("uses the extension from the downloaded path rather than a filename hint", () => {
     const plan = planDeliveryArtifact({
-      provenance: "hypeddit-original",
+      provenance: "soundcloud-original",
       downloadedPath: "/work/download.MP3",
       originalFilename: "Artist upload.wav",
       requestedFormat: "flac",
@@ -121,56 +120,6 @@ describe("planDeliveryArtifact", () => {
     expect(plan.filename).toBe("Artist upload.mp3");
     expect(plan.extension).toBe("mp3");
     expect(plan.mime).toBe("audio/mpeg");
-  });
-
-  it("routes a Hypeddit WAV through the existing lossless retag path", () => {
-    const plan = planDeliveryArtifact({
-      provenance: "hypeddit-original",
-      downloadedPath: "/work/hypeddit.wav",
-      originalFilename: "Artist upload.wav",
-      requestedFormat: "alac",
-      outputDirectory: "/downloads",
-      displayName: "Artist - Track",
-    });
-
-    expect(plan.action).toBe("convert-wav");
-    if (plan.action !== "convert-wav") throw new Error("expected WAV plan");
-    expect(plan.target).toBe("flac");
-    expect(plan.peakLimitLossy).toBe(false);
-  });
-
-  it("preserves Hypeddit non-WAV originals instead of retagging them", () => {
-    for (const extension of ["aiff", "aif", "flac", "m4a", "bin"]) {
-      const plan = planDeliveryArtifact({
-        provenance: "hypeddit-original",
-        downloadedPath: `/work/hypeddit.${extension}`,
-        originalFilename: `Artist upload.${extension}`,
-        requestedFormat: "flac",
-        outputDirectory: "/downloads",
-        displayName: "Artist - Track",
-      });
-
-      expect(plan.action).toBe("preserve-original");
-      expect(plan.path).toBe(`/work/hypeddit.${extension}`);
-      expect(plan.audioConverted).toBe(false);
-    }
-  });
-
-  it("tags a Hypeddit MP3 original that has no artwork", () => {
-    const plan = planDeliveryArtifact({
-      provenance: "hypeddit-original",
-      downloadedPath: "/work/hypeddit.mp3",
-      originalFilename: "Artist upload.mp3",
-      requestedFormat: "flac",
-      outputDirectory: "/downloads",
-      displayName: "Artist - Track",
-      hasAttachedArtwork: false,
-    });
-
-    expect(plan.action).toBe("tag-mp3");
-    expect(plan.path).toBe("/downloads/Artist - Track.mp3");
-    expect(plan.filename).toBe("Artist - Track.mp3");
-    expect(plan.audioConverted).toBe(true);
   });
 
   it("retains requested format and peak limiting for streams and mirrors", () => {
@@ -232,10 +181,6 @@ describe("executeOriginalArtifact", () => {
         calls.push("convert");
         return "converted";
       },
-      retagWav: async () => {
-        calls.push("retag");
-        return "retagged";
-      },
       tagMp3: async () => {
         calls.push("tag-mp3");
         return "tagged";
@@ -243,10 +188,9 @@ describe("executeOriginalArtifact", () => {
     };
   }
 
-  it("invokes preservation, not conversion, for a direct non-WAV original", async () => {
+  it("invokes preservation, not conversion, for a non-WAV original", async () => {
     const ops = operations();
     const result = await executeOriginalArtifact({
-      provenance: "soundcloud-original",
       action: "preserve-original",
       ...ops,
     });
@@ -255,10 +199,9 @@ describe("executeOriginalArtifact", () => {
     expect(ops.calls).toEqual(["preserve"]);
   });
 
-  it("invokes conversion for a direct WAV original", async () => {
+  it("invokes conversion for a WAV original", async () => {
     const ops = operations();
     const result = await executeOriginalArtifact({
-      provenance: "soundcloud-original",
       action: "convert-wav",
       ...ops,
     });
@@ -267,183 +210,15 @@ describe("executeOriginalArtifact", () => {
     expect(ops.calls).toEqual(["convert"]);
   });
 
-  it("invokes preservation, not retagging, for a Hypeddit non-WAV original", async () => {
+  it("invokes MP3 tagging for an original without artwork", async () => {
     const ops = operations();
     const result = await executeOriginalArtifact({
-      provenance: "hypeddit-original",
-      action: "preserve-original",
-      ...ops,
-    });
-
-    expect(result).toBe("preserved");
-    expect(ops.calls).toEqual(["preserve"]);
-  });
-
-  it("invokes retagging for a Hypeddit WAV original", async () => {
-    const ops = operations();
-    const result = await executeOriginalArtifact({
-      provenance: "hypeddit-original",
-      action: "convert-wav",
-      ...ops,
-    });
-
-    expect(result).toBe("retagged");
-    expect(ops.calls).toEqual(["retag"]);
-  });
-
-  it("invokes MP3 tagging for a direct original without artwork", async () => {
-    const ops = operations();
-    const result = await executeOriginalArtifact({
-      provenance: "soundcloud-original",
       action: "tag-mp3",
       ...ops,
     });
 
     expect(result).toBe("tagged");
     expect(ops.calls).toEqual(["tag-mp3"]);
-  });
-
-  it("invokes MP3 tagging for a Hypeddit original without artwork", async () => {
-    const ops = operations();
-    const result = await executeOriginalArtifact({
-      provenance: "hypeddit-original",
-      action: "tag-mp3",
-      ...ops,
-    });
-
-    expect(result).toBe("tagged");
-    expect(ops.calls).toEqual(["tag-mp3"]);
-  });
-});
-
-describe("withTemporaryInputCleanup", () => {
-  it("deletes a Hypeddit staging object after success", async () => {
-    const deleted: string[] = [];
-    const result = await withTemporaryInputCleanup({
-      temporary: true,
-      inputStorageKey: "users/u/uploads/staged.wav",
-      run: async () => "completed",
-      deleteObject: async (key) => {
-        deleted.push(key);
-      },
-    });
-
-    expect(result).toBe("completed");
-    expect(deleted).toEqual(["users/u/uploads/staged.wav"]);
-  });
-
-  for (const message of ["failed", "Cancelled"]) {
-    it(`deletes a Hypeddit staging object when processing is ${message}`, async () => {
-      const deleted: string[] = [];
-      const run = withTemporaryInputCleanup({
-        temporary: true,
-        inputStorageKey: "users/u/uploads/staged.wav",
-        run: async () => {
-          throw new Error(message);
-        },
-        deleteObject: async (key) => {
-          deleted.push(key);
-        },
-      });
-
-      await expect(run).rejects.toThrow(message);
-      expect(deleted).toEqual(["users/u/uploads/staged.wav"]);
-    });
-  }
-
-  it("does not delete a user-owned manual retag upload", async () => {
-    const deleted: string[] = [];
-    await withTemporaryInputCleanup({
-      temporary: false,
-      inputStorageKey: "users/u/uploads/manual.wav",
-      run: async () => undefined,
-      deleteObject: async (key) => {
-        deleted.push(key);
-      },
-    });
-
-    expect(deleted).toEqual([]);
-  });
-
-  it("preserves the processing error when cleanup also fails", async () => {
-    const primary = new Error("processing failed");
-    const cleanup = new Error("cleanup failed");
-
-    let thrown: unknown;
-    try {
-      await withTemporaryInputCleanup({
-        temporary: true,
-        inputStorageKey: "users/u/uploads/staged.wav",
-        run: async () => {
-          throw primary;
-        },
-        deleteObject: async () => {
-          throw cleanup;
-        },
-      });
-    } catch (error) {
-      thrown = error;
-    }
-
-    expect(thrown).toBe(primary);
-    expect((thrown as Error & { cleanupError?: unknown }).cleanupError).toBe(
-      cleanup,
-    );
-  });
-
-  it("surfaces a cleanup-only failure", async () => {
-    const cleanup = new Error("cleanup failed");
-    const run = withTemporaryInputCleanup({
-      temporary: true,
-      inputStorageKey: "users/u/uploads/staged.wav",
-      run: async () => "completed",
-      deleteObject: async () => {
-        throw cleanup;
-      },
-    });
-
-    await expect(run).rejects.toBe(cleanup);
-  });
-
-  it("preserves undefined as the primary thrown value", async () => {
-    let thrown: unknown = "not thrown";
-    try {
-      await withTemporaryInputCleanup({
-        temporary: true,
-        inputStorageKey: "users/u/uploads/staged.wav",
-        run: async () => {
-          throw undefined;
-        },
-        deleteObject: async () => {
-          throw new Error("cleanup failed");
-        },
-      });
-    } catch (error) {
-      thrown = error;
-    }
-
-    expect(thrown).toBeUndefined();
-  });
-
-  it("does not mask a non-extensible primary Error", async () => {
-    const primary = Object.preventExtensions(new Error("processing failed"));
-    let thrown: unknown;
-    try {
-      await withTemporaryInputCleanup({
-        temporary: true,
-        inputStorageKey: "users/u/uploads/staged.wav",
-        run: async () => {
-          throw primary;
-        },
-        deleteObject: async () => {
-          throw new Error("cleanup failed");
-        },
-      });
-    } catch (error) {
-      thrown = error;
-    }
-
-    expect(thrown).toBe(primary);
   });
 });
 

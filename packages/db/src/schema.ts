@@ -86,16 +86,9 @@ export const jobs = pgTable("jobs", {
     /** Retag (WAV→FLAC) jobs store the uploaded input key here. */
     retag?: boolean;
     inputStorageKey?: string;
-    /** SoundCloud Free Download via Hypeddit gate → preserved original or tagged FLAC. */
-    hypedditOriginal?: boolean;
-    /** Non-Hypeddit purchase_url — user must download manually. */
+    /** Buy/stream purchase_url — user must download manually. */
     manualDownloadUrl?: string;
     manualDownloadTitle?: string | null;
-    /** Clerk identity for Hypeddit email gates (set at job create). */
-    gateEmail?: string;
-    gateName?: string;
-    /** SoundCloud: Hypeddit Free Downloads only (no stream / YT fallback). */
-    freeDownloadsOnly?: boolean;
     /** Club-ready-only mode was on for this job. */
     clubReadyOnly?: boolean;
     /** Google Drive folder for `Thumper/<playlist>/` (parent and children). */
