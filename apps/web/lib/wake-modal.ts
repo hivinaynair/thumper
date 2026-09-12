@@ -31,10 +31,26 @@ export async function wakeModalJob(jobId: string): Promise<void> {
 }
 
 /**
+ * Point a sibling Modal function's URL at `toFn`, given the `wake` URL.
+ *
+ * Modal names endpoints by hostname — `<workspace>--<app>-<fn>.modal.run` —
+ * so the function name is a host suffix, not a path segment. The path form is
+ * still handled for a custom/proxied deployment.
+ *
+ * Exported for tests; returns null when neither shape matches.
+ */
+export function deriveModalSiblingUrl(jobUrl: string, fromFn: string, toFn: string): string | null {
+  const host = new RegExp(`-${fromFn}(?=\\.modal\\.run)`, "i");
+  if (host.test(jobUrl)) return jobUrl.replace(host, `-${toFn}`);
+  const path = new RegExp(`/${fromFn}/?$`, "i");
+  if (path.test(jobUrl)) return jobUrl.replace(path, `/${toFn}`);
+  return null;
+}
+
+/**
  * Wake the GPU stem-separation worker. Separate endpoint from `wake` because
  * it runs a different Modal function on a different (GPU) image.
- * Uses MODAL_STEMS_URL when set; otherwise derives it from MODAL_JOB_URL by
- * replacing the trailing `/wake` with `/wake-stems`.
+ * Uses MODAL_STEMS_URL when set; otherwise derives it from MODAL_JOB_URL.
  */
 export async function wakeModalStemJob(jobId: string): Promise<void> {
   const backend = (process.env.PROCESS_BACKEND ?? "pgboss").toLowerCase();
@@ -46,10 +62,11 @@ export async function wakeModalStemJob(jobId: string): Promise<void> {
     if (!jobUrl) {
       throw new Error("PROCESS_BACKEND=modal requires MODAL_STEMS_URL or MODAL_JOB_URL");
     }
-    url = jobUrl.replace(/\/wake\/?$/, "/wake-stems");
-    if (url === jobUrl) {
+    const derived = deriveModalSiblingUrl(jobUrl, "wake", "wake-stems");
+    if (!derived) {
       throw new Error("Set MODAL_STEMS_URL — could not derive it from MODAL_JOB_URL");
     }
+    url = derived;
   }
 
   const secret = process.env.MODAL_WEBHOOK_SECRET?.trim();
