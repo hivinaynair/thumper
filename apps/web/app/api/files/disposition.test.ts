@@ -3,8 +3,7 @@ import { contentDispositionAttachment } from "./disposition";
 
 describe("contentDispositionAttachment", () => {
   it("keeps a YouTube curly apostrophe out of the HTTP header", () => {
-    const filename =
-      "Odd Mob, OMNOM, HYPERBEAM - Coming Up (It\u2019s Dare).flac";
+    const filename = "Odd Mob, OMNOM, HYPERBEAM - Coming Up (It\u2019s Dare).flac";
 
     const value = contentDispositionAttachment(filename);
 
@@ -15,9 +14,7 @@ describe("contentDispositionAttachment", () => {
   });
 
   it("lets Disclosure She's Gone download without a header 500", () => {
-    const value = contentDispositionAttachment(
-      "Disclosure - She\u2019s Gone, Dance On.flac",
-    );
+    const value = contentDispositionAttachment("Disclosure - She\u2019s Gone, Dance On.flac");
     expect(() => new Headers({ "Content-Disposition": value })).not.toThrow();
     expect(value).toMatch(/filename="Disclosure - She's Gone, Dance On\.flac"/);
   });

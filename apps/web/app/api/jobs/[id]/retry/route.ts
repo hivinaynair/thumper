@@ -5,16 +5,13 @@ import { QUEUE_NAME_DOWNLOAD } from "@thumper/shared";
 import { and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getBoss } from "../../../../../lib/boss";
-import {
-  jobsToRetry,
-  missingCookiesForRetry,
-} from "../../../../../lib/cookie-retry";
+import { jobsToRetry, missingCookiesForRetry } from "../../../../../lib/cookie-retry";
 import { getDb } from "../../../../../lib/db";
 import {
   downloadPayloadFromJob,
+  type JobResultMeta,
   playlistContextForChild,
   requeueFields,
-  type JobResultMeta,
 } from "../../../../../lib/retry-job";
 import { wakeModalJob } from "../../../../../lib/wake-modal";
 
@@ -38,9 +35,7 @@ export async function POST(_req: Request, ctx: Ctx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const childIds = Array.isArray(
-    (target.result as JobResultMeta | null)?.childJobIds,
-  )
+  const childIds = Array.isArray((target.result as JobResultMeta | null)?.childJobIds)
     ? ((target.result as JobResultMeta).childJobIds ?? []).filter(
         (childId) => typeof childId === "string",
       )
@@ -57,10 +52,7 @@ export async function POST(_req: Request, ctx: Ctx) {
   const catalog = [target, ...children];
   const targets = jobsToRetry(target, catalog);
   if (targets.length === 0) {
-    return NextResponse.json(
-      { error: "Nothing to retry with new cookies" },
-      { status: 409 },
-    );
+    return NextResponse.json({ error: "Nothing to retry with new cookies" }, { status: 409 });
   }
 
   const cookies = await getCookieStatus(userId);
@@ -99,16 +91,12 @@ export async function POST(_req: Request, ctx: Ctx) {
           destination: row.destination,
           result: {
             ...(row.result as JobResultMeta | null),
-            ...(ctxForChild.driveFolderId
-              ? { driveFolderId: ctxForChild.driveFolderId }
-              : {}),
+            ...(ctxForChild.driveFolderId ? { driveFolderId: ctxForChild.driveFolderId } : {}),
           },
         });
         const bossId = await boss.send(QUEUE_NAME_DOWNLOAD, {
           ...payload,
-          ...(ctxForChild.parentJobId
-            ? { parentJobId: ctxForChild.parentJobId }
-            : {}),
+          ...(ctxForChild.parentJobId ? { parentJobId: ctxForChild.parentJobId } : {}),
         });
         await db
           .update(jobs)
@@ -123,8 +111,7 @@ export async function POST(_req: Request, ctx: Ctx) {
         .set({
           status: "failed",
           stage: "error",
-          error:
-            err instanceof Error ? err.message : "Failed to wake worker",
+          error: err instanceof Error ? err.message : "Failed to wake worker",
           completedAt: new Date(),
           updatedAt: new Date(),
         })

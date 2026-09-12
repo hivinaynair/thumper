@@ -3,25 +3,21 @@ import { classifyStemFile, parseSeparationProgress } from "./separate";
 
 describe("classifyStemFile", () => {
   it("reads the role marker audio-separator writes", () => {
-    expect(
-      classifyStemFile(
-        "track_(Instrumental)_melband_roformer_instvox_duality_v2.flac",
-      ),
-    ).toBe("instrumental");
-    expect(
-      classifyStemFile(
-        "track_(Vocals)_melband_roformer_instvox_duality_v2.flac",
-      ),
-    ).toBe("vocals");
+    expect(classifyStemFile("track_(Instrumental)_melband_roformer_instvox_duality_v2.flac")).toBe(
+      "instrumental",
+    );
+    expect(classifyStemFile("track_(Vocals)_melband_roformer_instvox_duality_v2.flac")).toBe(
+      "vocals",
+    );
   });
 
   it("still classifies when the model suffix was truncated at a dot", () => {
     // audio-separator cuts the model name at its first ".", so a checkpoint
     // named `..._sdr_12.9755.ckpt` lands as `..._sdr_12`. The role marker is
     // the only stable part of the name.
-    expect(
-      classifyStemFile("track_(Instrumental)_model_bs_roformer_ep_317_sdr_12.flac"),
-    ).toBe("instrumental");
+    expect(classifyStemFile("track_(Instrumental)_model_bs_roformer_ep_317_sdr_12.flac")).toBe(
+      "instrumental",
+    );
   });
 
   it("ignores unrelated files left in the output directory", () => {
@@ -38,9 +34,9 @@ describe("classifyStemFile", () => {
 
 describe("parseSeparationProgress", () => {
   it("reads the tqdm chunk ratio", () => {
-    expect(
-      parseSeparationProgress(" 27%|██▋       | 20/73 [02:52<09:50, 11.14s/it]"),
-    ).toBeCloseTo(20 / 73);
+    expect(parseSeparationProgress(" 27%|██▋       | 20/73 [02:52<09:50, 11.14s/it]")).toBeCloseTo(
+      20 / 73,
+    );
   });
 
   it("takes the last ratio when several are buffered together", () => {

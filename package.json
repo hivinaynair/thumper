@@ -1,21 +1,26 @@
 {
   "name": "thumper",
   "private": true,
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --filter=web --filter=worker",
     "dev:web": "turbo run dev --filter=web",
     "dev:worker": "turbo run dev --filter=worker",
-    "lint": "turbo run lint",
     "test": "turbo run test",
     "check-types": "turbo run check-types",
     "db:generate": "bun run --filter @thumper/db generate",
     "db:migrate": "bun run --filter @thumper/db migrate",
-    "format": "prettier --write \"**/*.{ts,tsx,md,json}\""
+    "format-and-lint": "biome check .",
+    "format-and-lint:fix": "biome check . --write",
+    "prepare": "lefthook install"
   },
   "devDependencies": {
-    "prettier": "^3.7.4",
+    "@biomejs/biome": "^2.5.8",
+    "lefthook": "^2.1.10",
     "turbo": "^2.10.7",
     "typescript": "^5.9.2"
   },

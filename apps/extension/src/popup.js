@@ -12,20 +12,16 @@ document.getElementById("sync").addEventListener("click", async () => {
   await chrome.storage.sync.set({ origin });
   msg.textContent = "Refreshing sessions…";
 
-  chrome.runtime.sendMessage(
-    { type: "sync-all-cookies", origin },
-    (response) => {
-      if (chrome.runtime.lastError) {
-        msg.textContent = chrome.runtime.lastError.message || "Extension error";
-        return;
-      }
-      if (!response?.ok) {
-        msg.textContent = response?.error || response?.message || "Refresh failed";
-        return;
-      }
-      msg.textContent =
-        response.message ||
-        "Refreshed. Stay signed in to YouTube/SoundCloud in this browser.";
-    },
-  );
+  chrome.runtime.sendMessage({ type: "sync-all-cookies", origin }, (response) => {
+    if (chrome.runtime.lastError) {
+      msg.textContent = chrome.runtime.lastError.message || "Extension error";
+      return;
+    }
+    if (!response?.ok) {
+      msg.textContent = response?.error || response?.message || "Refresh failed";
+      return;
+    }
+    msg.textContent =
+      response.message || "Refreshed. Stay signed in to YouTube/SoundCloud in this browser.";
+  });
 });

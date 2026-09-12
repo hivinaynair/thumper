@@ -187,16 +187,12 @@ function bandEnergyDb(spectrumDb: Float64Array, lo: number, hi: number): number 
  * The midband is immune to both: a lowpass never touches 1-5 kHz, and it is
  * loud in every genre.
  */
-export function estimateCutoff(
-  spectrumDb: Float64Array,
-  sampleRate: number,
-): CutoffEstimate {
+export function estimateCutoff(spectrumDb: Float64Array, sampleRate: number): CutoffEstimate {
   const n = spectrumDb.length;
   const nyquist = sampleRate / 2;
   const binHz = nyquist / (n - 1);
 
-  const binAt = (hz: number) =>
-    Math.max(0, Math.min(n - 1, Math.round(hz / binHz)));
+  const binAt = (hz: number) => Math.max(0, Math.min(n - 1, Math.round(hz / binHz)));
   const refDb = bandEnergyDb(spectrumDb, binAt(REF_LO_HZ), binAt(REF_HI_HZ));
   if (!Number.isFinite(refDb)) {
     return { cutoffHz: 0, ratio: 0, floorDb: -Infinity, detected: false };

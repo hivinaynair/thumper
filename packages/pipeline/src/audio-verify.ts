@@ -73,10 +73,7 @@ type ProbeResult = {
   durationSec: number;
 };
 
-async function probe(
-  filePath: string,
-  options: SpawnOptions,
-): Promise<ProbeResult> {
+async function probe(filePath: string, options: SpawnOptions): Promise<ProbeResult> {
   const { stdout } = await runCommandOk(
     "ffprobe",
     [
@@ -99,9 +96,7 @@ async function probe(
   const stream = parsed.streams?.[0] ?? {};
   const format = parsed.format ?? {};
   const rawBitrate =
-    Number.parseInt(stream.bit_rate ?? "", 10) ||
-    Number.parseInt(format.bit_rate ?? "", 10) ||
-    0;
+    Number.parseInt(stream.bit_rate ?? "", 10) || Number.parseInt(format.bit_rate ?? "", 10) || 0;
 
   return {
     codec: (stream.codec_name ?? "").toLowerCase(),
@@ -225,10 +220,7 @@ export async function measureLoudness(
       samplePeakDb:
         sampleIdx === -1
           ? null
-          : lastMatch(
-              peakRe,
-              stderr.slice(sampleIdx, trueIdx === -1 ? undefined : trueIdx),
-            ),
+          : lastMatch(peakRe, stderr.slice(sampleIdx, trueIdx === -1 ? undefined : trueIdx)),
       truePeakDb: trueIdx === -1 ? null : lastMatch(peakRe, stderr.slice(trueIdx)),
     };
   } catch (err) {
@@ -245,8 +237,7 @@ export async function analyzeAudioFile(
 
   // Start a fifth of the way in: intros are often sparse or silent, and a
   // spectrum measured over a filtered pad reads as a false lowpass.
-  const start =
-    info.durationSec > ANALYSIS_SECONDS ? Math.floor(info.durationSec * 0.2) : 0;
+  const start = info.durationSec > ANALYSIS_SECONDS ? Math.floor(info.durationSec * 0.2) : 0;
 
   const { stdout, stderr, code } = await runCommandBuffer(
     "ffmpeg",
@@ -275,9 +266,7 @@ export async function analyzeAudioFile(
   // path distinct from "verified and it's bad". A partial decode is not safe to
   // judge either: the samples we did get may be the tail of a truncated file.
   if (code !== 0) {
-    throw new Error(
-      `Audio analysis decode failed (${code}): ${stderr.trim().slice(0, 200)}`,
-    );
+    throw new Error(`Audio analysis decode failed (${code}): ${stderr.trim().slice(0, 200)}`);
   }
   if (stdout.byteLength < 4) {
     throw new Error(`Could not decode audio for analysis: ${filePath}`);
@@ -285,9 +274,7 @@ export async function analyzeAudioFile(
 
   // Float32Array needs 4-byte alignment; Buffer.concat does not guarantee it.
   const aligned =
-    stdout.byteOffset % 4 === 0
-      ? stdout
-      : Buffer.from(stdout.subarray(0, stdout.byteLength));
+    stdout.byteOffset % 4 === 0 ? stdout : Buffer.from(stdout.subarray(0, stdout.byteLength));
   const samples = new Float32Array(
     aligned.buffer,
     aligned.byteOffset,
@@ -365,13 +352,9 @@ export type ClassifyOptions = {
   artistOriginal?: boolean;
 };
 
-export function classifyForDj(
-  analysis: AudioAnalysis,
-  options: ClassifyOptions = {},
-): DjVerdict {
+export function classifyForDj(analysis: AudioAnalysis, options: ClassifyOptions = {}): DjVerdict {
   const warnings: string[] = [];
-  const { cutoffHz, cutoffRatio, losslessContainer, peakDb, sampleRate } =
-    analysis;
+  const { cutoffHz, cutoffRatio, losslessContainer, peakDb, sampleRate } = analysis;
   const artistOriginal = options.artistOriginal === true;
 
   // Two bars, because the two decisions have opposite failure costs.
@@ -381,8 +364,7 @@ export function classifyForDj(
   // passes on ratio and a wide 44.1 kHz file passes on the absolute threshold.
   const fullBandLenient =
     cutoffHz >= FULL_BAND_HZ ||
-    (sampleRate <= NYQUIST_RATIO_MAX_RATE &&
-      cutoffRatio >= NYQUIST_FULL_BAND_RATIO);
+    (sampleRate <= NYQUIST_RATIO_MAX_RATE && cutoffRatio >= NYQUIST_FULL_BAND_RATIO);
 
   // Strict (ratio only, at or below 48 kHz) guards promotion to "master".
   // Opus stops at 20.5 kHz, which clears 19.5 kHz absolutely but is only 0.854
@@ -404,12 +386,7 @@ export function classifyForDj(
   // artistOriginal — see ClassifyOptions. A stream rewrapped losslessly tops
   // out at "club" however wide its spectrum looks.
   let tier: DjTier;
-  if (
-    artistOriginal &&
-    losslessContainer &&
-    fullBandStrict &&
-    cutoffHz >= CLUB_HZ
-  ) {
+  if (artistOriginal && losslessContainer && fullBandStrict && cutoffHz >= CLUB_HZ) {
     tier = "master";
   } else if (cutoffHz >= CLUB_HZ) {
     tier = "club";
@@ -454,8 +431,7 @@ export function classifyForDj(
 
   // Don't call a genuinely lossless file a lossy source just because it is
   // narrow — a 32 kHz master is band-limited, not laundered.
-  const provenance =
-    losslessContainer && !launderedLossy ? "lossless source" : "lossy source";
+  const provenance = losslessContainer && !launderedLossy ? "lossless source" : "lossy source";
 
   const headline =
     tier === "master"
@@ -496,26 +472,22 @@ export class QualityGateError extends Error {
    * 0.0 kHz" reads as a corrupt file and sends the user after the wrong bug.
    */
   constructor(
-    params:
-      /**
-       * `source` is the human name of the attempt, e.g. "SoundCloud stream".
-       *
-       * `remedy` replaces the default advice for cases where turning the switch
-       * off is not the useful next step — a remix with no YouTube mirror is
-       * better fetched from the artist's own SoundCloud download than shipped
-       * as the lossy stream the switch just refused.
-       */
+    params: /**
+     * `source` is the human name of the attempt, e.g. "SoundCloud stream".
+     *
+     * `remedy` replaces the default advice for cases where turning the switch
+     * off is not the useful next step — a remix with no YouTube mirror is
+     * better fetched from the artist's own SoundCloud download than shipped
+     * as the lossy stream the switch just refused.
+     */
       | { tier: DjTier; cutoffHz: number; source: string; remedy?: string }
       | { tier: null; source: string; remedy?: string },
   ) {
-    const remedy =
-      params.remedy ?? "Turn off Club-ready only to download it anyway.";
+    const remedy = params.remedy ?? "Turn off Club-ready only to download it anyway.";
     super(
       params.tier === null
         ? `${params.source} could not be verified, and club-ready-only mode does not ship unverified audio. ${remedy}`
-        : `${params.source} is not club-ready — audio stops at ${kHz(
-            params.cutoffHz,
-          )}. ${remedy}`,
+        : `${params.source} is not club-ready — audio stops at ${kHz(params.cutoffHz)}. ${remedy}`,
     );
     this.name = "QualityGateError";
     this.tier = params.tier;

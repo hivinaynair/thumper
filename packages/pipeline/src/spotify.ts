@@ -36,21 +36,20 @@ type SpotifyEmbedEntity = {
 };
 
 function parseEmbedUrl(url: string): { type: string; id: string } | null {
-  const match = url.match(
-    /spotify\.com\/(playlist|album|track)\/([a-zA-Z0-9]+)/,
-  );
+  const match = url.match(/spotify\.com\/(playlist|album|track)\/([a-zA-Z0-9]+)/);
   if (!match?.[1] || !match[2]) return null;
   return { type: match[1], id: match[2] };
 }
 
 function artistsFromEntity(entity: SpotifyEmbedEntity): string[] {
   if (Array.isArray(entity.artists)) {
-    return entity.artists
-      .map((a) => (typeof a === "string" ? a : a.name))
-      .filter(Boolean);
+    return entity.artists.map((a) => (typeof a === "string" ? a : a.name)).filter(Boolean);
   }
   if (typeof entity.subtitle === "string") {
-    return entity.subtitle.split(",").map((s) => s.trim()).filter(Boolean);
+    return entity.subtitle
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
   }
   return [];
 }
@@ -58,9 +57,7 @@ function artistsFromEntity(entity: SpotifyEmbedEntity): string[] {
 function artworkFromEntity(entity: SpotifyEmbedEntity): string | undefined {
   const images = entity.visualIdentity?.image ?? [];
   if (images.length === 0) return undefined;
-  const best = [...images].sort(
-    (a, b) => (b.maxWidth ?? 0) - (a.maxWidth ?? 0),
-  )[0];
+  const best = [...images].sort((a, b) => (b.maxWidth ?? 0) - (a.maxWidth ?? 0))[0];
   return best?.url || undefined;
 }
 
@@ -78,13 +75,12 @@ async function fetchSpotifyEmbedEntity(
   );
   if (!res.ok) return null;
   const html = await res.text();
-  const nextData = html.match(
-    /<script id="__NEXT_DATA__"[^>]*>([^<]+)<\/script>/,
-  )?.[1];
+  const nextData = html.match(/<script id="__NEXT_DATA__"[^>]*>([^<]+)<\/script>/)?.[1];
   if (!nextData) return null;
 
-  const entity = JSON.parse(nextData)?.props?.pageProps?.state?.data
-    ?.entity as SpotifyEmbedEntity | undefined;
+  const entity = JSON.parse(nextData)?.props?.pageProps?.state?.data?.entity as
+    | SpotifyEmbedEntity
+    | undefined;
   if (!entity) return null;
   return { parsed, entity };
 }

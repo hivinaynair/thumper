@@ -3,22 +3,18 @@ import {
   detectSourceKind,
   isRetagInput,
   isSupportedSource,
-  retagInputExtension,
   looksLikePlaylistUrl,
+  RetagJobPayloadSchema,
+  retagInputExtension,
   sanitizeFilename,
   trackDisplayName,
-  RetagJobPayloadSchema,
 } from "./index";
 
 describe("detectSourceKind", () => {
   it("detects youtube soundcloud spotify", () => {
-    expect(detectSourceKind("https://www.youtube.com/watch?v=abc")).toBe(
-      "youtube",
-    );
+    expect(detectSourceKind("https://www.youtube.com/watch?v=abc")).toBe("youtube");
     expect(detectSourceKind("https://soundcloud.com/x/y")).toBe("soundcloud");
-    expect(detectSourceKind("https://open.spotify.com/playlist/1")).toBe(
-      "spotify",
-    );
+    expect(detectSourceKind("https://open.spotify.com/playlist/1")).toBe("spotify");
   });
 });
 
@@ -33,12 +29,8 @@ describe("isSupportedSource", () => {
 
 describe("looksLikePlaylistUrl", () => {
   it("detects playlists including spotify", () => {
-    expect(
-      looksLikePlaylistUrl("https://open.spotify.com/playlist/abc"),
-    ).toBe(true);
-    expect(
-      looksLikePlaylistUrl("https://www.youtube.com/playlist?list=PLxx"),
-    ).toBe(true);
+    expect(looksLikePlaylistUrl("https://open.spotify.com/playlist/abc")).toBe(true);
+    expect(looksLikePlaylistUrl("https://www.youtube.com/playlist?list=PLxx")).toBe(true);
   });
 });
 
@@ -48,23 +40,23 @@ describe("sanitizeFilename", () => {
   });
 
   it("turns a curly apostrophe into ASCII so Disclosure downloads", () => {
-    expect(
-      sanitizeFilename("Disclosure - She\u2019s Gone, Dance On.flac"),
-    ).toBe("Disclosure - She's Gone, Dance On.flac");
+    expect(sanitizeFilename("Disclosure - She\u2019s Gone, Dance On.flac")).toBe(
+      "Disclosure - She's Gone, Dance On.flac",
+    );
   });
 });
 
 describe("trackDisplayName", () => {
   it("drops a leading artist when the title already credits them", () => {
-    expect(
-      trackDisplayName("grayshift", "benny benassi - cinema (grayshift remix)"),
-    ).toBe("benny benassi - cinema (grayshift remix)");
-    expect(
-      trackDisplayName("MAXARKA", "Baby - Prospa (MAXARKA UKG DUB)"),
-    ).toBe("Baby - Prospa (MAXARKA UKG DUB)");
-    expect(
-      trackDisplayName("bread.man", "RUNAWAY (BREAD.MAN REMIX)"),
-    ).toBe("RUNAWAY (BREAD.MAN REMIX)");
+    expect(trackDisplayName("grayshift", "benny benassi - cinema (grayshift remix)")).toBe(
+      "benny benassi - cinema (grayshift remix)",
+    );
+    expect(trackDisplayName("MAXARKA", "Baby - Prospa (MAXARKA UKG DUB)")).toBe(
+      "Baby - Prospa (MAXARKA UKG DUB)",
+    );
+    expect(trackDisplayName("bread.man", "RUNAWAY (BREAD.MAN REMIX)")).toBe(
+      "RUNAWAY (BREAD.MAN REMIX)",
+    );
   });
 
   it("keeps Artist - Title when the title does not mention the artist", () => {

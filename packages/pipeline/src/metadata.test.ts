@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it } from "bun:test";
 import {
   artistNamesFromInfo,
   fetchSoundCloudOEmbed,
-  soundCloudOEmbedTarget,
-  stripFreeDownloadLabel,
   isMusicEntry,
   pillarboxColumns,
+  soundCloudOEmbedTarget,
+  stripFreeDownloadLabel,
   stripTopicSuffix,
   youtubeMusicTagsFromInfo,
 } from "./metadata";
@@ -28,9 +28,9 @@ describe("soundCloudOEmbedTarget", () => {
   it("rewrites the api-v2 track URLs yt-dlp emits for flat playlists", () => {
     // soundcloud.com/oembed 404s on api-v2 URLs but resolves api.soundcloud.com
     // ones — which is the only handle we have on a geo-blocked playlist entry.
-    expect(
-      soundCloudOEmbedTarget("https://api-v2.soundcloud.com/tracks/2243789501"),
-    ).toBe("https://api.soundcloud.com/tracks/2243789501");
+    expect(soundCloudOEmbedTarget("https://api-v2.soundcloud.com/tracks/2243789501")).toBe(
+      "https://api.soundcloud.com/tracks/2243789501",
+    );
   });
 
   it("passes permalinks through untouched", () => {
@@ -58,9 +58,7 @@ describe("fetchSoundCloudOEmbed", () => {
       thumbnail_url: "http://i1.sndcdn.com/artwork-t500x500.jpg",
     });
 
-    const meta = await fetchSoundCloudOEmbed(
-      "https://api-v2.soundcloud.com/tracks/2243789501",
-    );
+    const meta = await fetchSoundCloudOEmbed("https://api-v2.soundcloud.com/tracks/2243789501");
 
     expect(meta?.title).toBe("Take Me Under");
     expect(meta?.artist).toBe("Daniel Allan");
@@ -83,11 +81,8 @@ describe("fetchSoundCloudOEmbed", () => {
   });
 
   it("returns null when SoundCloud has nothing for the URL", async () => {
-    globalThis.fetch = (async () =>
-      new Response("", { status: 404 })) as typeof fetch;
-    expect(
-      await fetchSoundCloudOEmbed("https://api-v2.soundcloud.com/tracks/1"),
-    ).toBeNull();
+    globalThis.fetch = (async () => new Response("", { status: 404 })) as typeof fetch;
+    expect(await fetchSoundCloudOEmbed("https://api-v2.soundcloud.com/tracks/1")).toBeNull();
   });
 });
 
@@ -119,17 +114,11 @@ describe("artistNamesFromInfo", () => {
   });
 
   it("dedupes across the separator split too", () => {
-    expect(artistNamesFromInfo({ artist: "WINK, wink, borne" })).toEqual([
-      "WINK",
-      "borne",
-    ]);
+    expect(artistNamesFromInfo({ artist: "WINK, wink, borne" })).toEqual(["WINK", "borne"]);
   });
 
   it("keeps genuinely different artists in order", () => {
-    expect(artistNamesFromInfo({ artists: ["WINK", "borne"] })).toEqual([
-      "WINK",
-      "borne",
-    ]);
+    expect(artistNamesFromInfo({ artists: ["WINK", "borne"] })).toEqual(["WINK", "borne"]);
   });
 
   it("ignores surrounding whitespace when comparing", () => {
@@ -186,18 +175,12 @@ describe("isMusicEntry", () => {
 
   it("accepts an Official Artist Channel carrying release metadata", () => {
     // These were silently skipped and came out with no artwork at all.
-    expect(
-      isMusicEntry({ uploader: "Oppidan", album: "Gravity" }),
-    ).toBe(true);
-    expect(
-      isMusicEntry({ uploader: "Oppidan", artists: ["Oppidan"] }),
-    ).toBe(true);
+    expect(isMusicEntry({ uploader: "Oppidan", album: "Gravity" })).toBe(true);
+    expect(isMusicEntry({ uploader: "Oppidan", artists: ["Oppidan"] })).toBe(true);
   });
 
   it("refuses an ordinary upload", () => {
-    expect(isMusicEntry({ uploader: "Some Guy", title: "my dj set" })).toBe(
-      false,
-    );
+    expect(isMusicEntry({ uploader: "Some Guy", title: "my dj set" })).toBe(false);
   });
 });
 
@@ -207,16 +190,13 @@ describe("pillarboxColumns", () => {
 
   function raster(fill: (x: number, y: number) => number): Uint8Array {
     const out = new Uint8Array(W * H);
-    for (let y = 0; y < H; y++)
-      for (let x = 0; x < W; x++) out[y * W + x] = fill(x, y);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) out[y * W + x] = fill(x, y);
     return out;
   }
 
   it("measures the flat border of pillarboxed cover art", () => {
     // Square art centred on 16:9 leaves ~14 flat columns each side.
-    const bars = raster((x, y) =>
-      x < 14 || x >= W - 14 ? 49 : 60 + ((x * 7 + y * 13) % 150),
-    );
+    const bars = raster((x, y) => (x < 14 || x >= W - 14 ? 49 : 60 + ((x * 7 + y * 13) % 150)));
     expect(pillarboxColumns(bars, W, H)).toBeGreaterThanOrEqual(13);
   });
 

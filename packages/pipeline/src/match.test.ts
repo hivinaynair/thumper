@@ -1,10 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import {
   MIN_MATCH_SCORE,
+  type MirrorCandidate,
   normalizeTrackForMatch,
   parseCreditTitle,
   scoreMirrorCandidate,
-  type MirrorCandidate,
 } from "./match";
 import { splitArtistNames } from "./metadata";
 import { ratio, slugify } from "./similarity";
@@ -29,9 +29,7 @@ describe("parseCreditTitle / normalizeTrackForMatch", () => {
       artists: ["WINK", "borne"],
       durationMs: 185_189,
     });
-    expect(buildYoutubeSearchQuery(normalized)).toBe(
-      "ytsearch8:WINK borne Drown",
-    );
+    expect(buildYoutubeSearchQuery(normalized)).toBe("ytsearch8:WINK borne Drown");
   });
 
   it("keeps multi-artist dumpJson credits when already present", () => {
@@ -207,10 +205,7 @@ describe("scoreMirrorCandidate without a known duration", () => {
 
 describe("splitArtistNames", () => {
   it("splits the separators SoundCloud credits actually use", () => {
-    expect(splitArtistNames("Oppidan and Hans Glader")).toEqual([
-      "Oppidan",
-      "Hans Glader",
-    ]);
+    expect(splitArtistNames("Oppidan and Hans Glader")).toEqual(["Oppidan", "Hans Glader"]);
     expect(splitArtistNames("Daniel Allan, Liv Grace Blue")).toEqual([
       "Daniel Allan",
       "Liv Grace Blue",
@@ -220,20 +215,12 @@ describe("splitArtistNames", () => {
       "Daniel Allan",
       "Liv Grace Blue",
     ]);
-    expect(splitArtistNames("Oppidan feat. Strategy")).toEqual([
-      "Oppidan",
-      "Strategy",
-    ]);
-    expect(splitArtistNames("Hans Glader & Isenberg")).toEqual([
-      "Hans Glader",
-      "Isenberg",
-    ]);
+    expect(splitArtistNames("Oppidan feat. Strategy")).toEqual(["Oppidan", "Strategy"]);
+    expect(splitArtistNames("Hans Glader & Isenberg")).toEqual(["Hans Glader", "Isenberg"]);
   });
 
   it("keeps band names that merely contain a separator word", () => {
-    expect(splitArtistNames("Florence and the Machine")).toEqual([
-      "Florence and the Machine",
-    ]);
+    expect(splitArtistNames("Florence and the Machine")).toEqual(["Florence and the Machine"]);
     expect(splitArtistNames("AC/DC")).toEqual(["AC/DC"]);
     expect(splitArtistNames("")).toEqual([]);
   });

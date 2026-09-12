@@ -3,18 +3,12 @@ import { queryFromAudioFilename } from "./retag-search";
 
 describe("queryFromAudioFilename", () => {
   it("strips extension and normalizes separators", () => {
-    expect(queryFromAudioFilename("Artist_-_Track_Title.wav")).toBe(
-      "Artist - Track Title",
-    );
+    expect(queryFromAudioFilename("Artist_-_Track_Title.wav")).toBe("Artist - Track Title");
   });
 
   it("drops trailing free-download / format tags", () => {
-    expect(queryFromAudioFilename("Oppidan - Borne (Free Download).wav")).toBe(
-      "Oppidan - Borne",
-    );
-    expect(queryFromAudioFilename("MPH - Swoon (free DL).wav")).toBe(
-      "MPH - Swoon",
-    );
+    expect(queryFromAudioFilename("Oppidan - Borne (Free Download).wav")).toBe("Oppidan - Borne");
+    expect(queryFromAudioFilename("MPH - Swoon (free DL).wav")).toBe("MPH - Swoon");
     expect(queryFromAudioFilename("Track Name HQ.wav")).toBe("Track Name");
   });
 

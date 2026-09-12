@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { ProcessCancelledError, type PlaylistEntry } from "@thumper/pipeline";
-import { detectSourceKind, type DownloadJobPayload } from "@thumper/shared";
+import { type PlaylistEntry, ProcessCancelledError } from "@thumper/pipeline";
+import { type DownloadJobPayload, detectSourceKind } from "@thumper/shared";
 
 export const PLAYLIST_FANOUT_DIR = "/tmp/thumper-fanout";
 
@@ -40,17 +40,12 @@ export async function writeFanoutChildIds(
   directory = PLAYLIST_FANOUT_DIR,
 ): Promise<void> {
   await mkdir(directory, { recursive: true, mode: 0o700 });
-  await writeFile(
-    path.join(directory, `${parentJobId}.json`),
-    JSON.stringify({ childJobIds }),
-    { mode: 0o600 },
-  );
+  await writeFile(path.join(directory, `${parentJobId}.json`), JSON.stringify({ childJobIds }), {
+    mode: 0o600,
+  });
 }
 
-function trackKind(
-  url: string,
-  parentUrl: string,
-): PlaylistChildKind | null {
+function trackKind(url: string, parentUrl: string): PlaylistChildKind | null {
   const kind = detectSourceKind(url) ?? detectSourceKind(parentUrl);
   if (kind === "youtube" || kind === "soundcloud") return kind;
   return null;

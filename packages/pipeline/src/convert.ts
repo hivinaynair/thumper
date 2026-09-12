@@ -1,11 +1,11 @@
-import { runCommandOk, type SpawnOptions } from "./process";
 import {
+  type AudioTargetFormat,
   audioQualityLabel,
   isLosslessSource,
   isPcmSource,
-  type AudioTargetFormat,
 } from "./audio-quality";
-import { measureLoudness, type LoudnessMeasurement } from "./audio-verify";
+import { type LoudnessMeasurement, measureLoudness } from "./audio-verify";
+import { runCommandOk, type SpawnOptions } from "./process";
 
 /**
  * Loudness a quiet track is raised *towards*, in LUFS. Not a level every track
@@ -128,8 +128,7 @@ export function lossyProcessingPlan(
   const wantedBoost = Math.max(TARGET_LUFS - integratedLufs, 0);
   const cleanHeadroom = Math.max(SAMPLE_PEAK_CEILING_DB - samplePeakDb, 0);
   const rawGain = Math.min(wantedBoost, cleanHeadroom);
-  const gainDb =
-    rawGain >= MIN_MEANINGFUL_GAIN_DB ? Number(rawGain.toFixed(3)) : null;
+  const gainDb = rawGain >= MIN_MEANINGFUL_GAIN_DB ? Number(rawGain.toFixed(3)) : null;
   const peakAfterGain = samplePeakDb + (gainDb ?? 0);
 
   return {
@@ -198,15 +197,13 @@ export async function probeAudio(
     );
     const stream = JSON.parse(stdout).streams?.[0] ?? {};
     const rawBits = Number.parseInt(String(stream.bits_per_raw_sample ?? ""), 10);
-    const codedBits = Number.parseInt(
-      String(stream.bits_per_coded_sample ?? ""),
-      10,
-    );
-    const bitsPerRawSample = Number.isFinite(rawBits) && rawBits > 0
-      ? rawBits
-      : Number.isFinite(codedBits) && codedBits > 0
-        ? codedBits
-        : null;
+    const codedBits = Number.parseInt(String(stream.bits_per_coded_sample ?? ""), 10);
+    const bitsPerRawSample =
+      Number.isFinite(rawBits) && rawBits > 0
+        ? rawBits
+        : Number.isFinite(codedBits) && codedBits > 0
+          ? codedBits
+          : null;
     return {
       codec: stream.codec_name || "",
       channels: stream.channels || 2,
@@ -301,16 +298,7 @@ export function buildMp3TagArgs(params: Mp3TagParams): string[] {
       params.outputPath,
     ];
   }
-  return [
-    "-y",
-    "-i",
-    params.inputPath,
-    "-c:a",
-    "copy",
-    ...version,
-    ...meta,
-    params.outputPath,
-  ];
+  return ["-y", "-i", params.inputPath, "-c:a", "copy", ...version, ...meta, params.outputPath];
 }
 
 export async function tagMp3Copy(params: Mp3TagParams): Promise<void> {
@@ -349,13 +337,12 @@ export function buildFfmpegArgs(
   info: AudioProbe,
   processing: LossyProcessingPlan,
 ): string[] {
-  const sampleRate = Number.parseInt(info.sampleRate) || 44100;
+  const sampleRate = Number.parseInt(info.sampleRate, 10) || 44100;
   const channels = info.channels || 2;
   const gain = lossyFilterArgs(processing);
   const meta = buildMetadataArgs(params);
   const canEmbedArt =
-    Boolean(params.artworkPath) &&
-    (params.target === "flac" || params.target === "alac");
+    Boolean(params.artworkPath) && (params.target === "flac" || params.target === "alac");
 
   if (params.target === "wav") {
     // WAV keeps text tags; cover art is unreliable in DJ tools — skip artwork.
@@ -380,8 +367,7 @@ export function buildFfmpegArgs(
   }
 
   if (params.target === "flac") {
-    const alreadyFlac =
-      info.codec === "flac" || params.inputPath.toLowerCase().endsWith(".flac");
+    const alreadyFlac = info.codec === "flac" || params.inputPath.toLowerCase().endsWith(".flac");
     if (canEmbedArt) {
       return [
         "-y",
@@ -395,7 +381,17 @@ export function buildFfmpegArgs(
         "1:0",
         ...(alreadyFlac
           ? ["-c:a", "copy"]
-          : [...gain, "-c:a", "flac", "-compression_level", "8", "-ar", String(sampleRate), "-ac", String(channels)]),
+          : [
+              ...gain,
+              "-c:a",
+              "flac",
+              "-compression_level",
+              "8",
+              "-ar",
+              String(sampleRate),
+              "-ac",
+              String(channels),
+            ]),
         "-c:v",
         "mjpeg",
         "-disposition:v:0",
@@ -492,8 +488,7 @@ export async function convertAudio(params: ConvertAudioParams): Promise<{
   };
   if (!isLosslessSource(info.codec, params.inputPath)) {
     const loudness =
-      params.loudness ??
-      (await measureLoudness(params.inputPath, { signal: params.signal }));
+      params.loudness ?? (await measureLoudness(params.inputPath, { signal: params.signal }));
     processing = lossyProcessingPlan(loudness, params.peakLimitLossy === true);
   }
   if (processing.peakLimited) {

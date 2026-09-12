@@ -4,9 +4,7 @@
  */
 import { searchSoundCloudTracks } from "@thumper/pipeline";
 
-const raw =
-  process.argv.find((a) => a.startsWith("--query="))?.slice("--query=".length) ??
-  "";
+const raw = process.argv.find((a) => a.startsWith("--query="))?.slice("--query=".length) ?? "";
 const query = decodeURIComponent(raw).trim();
 
 if (!query) {

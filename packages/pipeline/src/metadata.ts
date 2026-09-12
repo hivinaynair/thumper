@@ -1,13 +1,10 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import { detectSourceKind } from "@thumper/shared";
 import { dumpJson } from "./download";
 import { runCommandOk } from "./process";
-import {
-  fetchSpotifyCatalog,
-  fetchSpotifyTrackArtworkUrl,
-} from "./spotify";
+import { fetchSpotifyCatalog, fetchSpotifyTrackArtworkUrl } from "./spotify";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -113,18 +110,14 @@ export function dedupeArtistNames(names: string[]): string[] {
  */
 export function artistNamesFromInfo(info: Record<string, unknown>): string[] {
   const credited = Array.isArray(info.artists)
-    ? info.artists.flatMap((a) =>
-        typeof a === "string" ? splitArtistNames(a) : [],
-      )
+    ? info.artists.flatMap((a) => (typeof a === "string" ? splitArtistNames(a) : []))
     : [];
   if (credited.length) return dedupeArtistNames(credited);
 
   const fallback = [info.artist, info.uploader, info.creator].find(
     (v): v is string => typeof v === "string" && v.trim().length > 0,
   );
-  return dedupeArtistNames(
-    splitArtistNames(fallback).map(stripTopicSuffix).filter(Boolean),
-  );
+  return dedupeArtistNames(splitArtistNames(fallback).map(stripTopicSuffix).filter(Boolean));
 }
 
 /**
@@ -144,26 +137,18 @@ export function isMusicEntry(info: Record<string, unknown>): boolean {
   return typeof info.album === "string" && info.album.trim().length > 0;
 }
 
-export function youtubeMusicTagsFromInfo(
-  info: Record<string, unknown>,
-): TrackTags | null {
+export function youtubeMusicTagsFromInfo(info: Record<string, unknown>): TrackTags | null {
   if (!isMusicEntry(info)) return null;
 
   const title =
-    [info.track, info.title].find(
-      (v): v is string => typeof v === "string" && v.trim().length > 0,
-    )?.trim() ?? undefined;
+    [info.track, info.title]
+      .find((v): v is string => typeof v === "string" && v.trim().length > 0)
+      ?.trim() ?? undefined;
   const artist = artistNamesFromInfo(info).join(", ") || undefined;
   if (!title && !artist) return null;
 
-  const album =
-    typeof info.album === "string" && info.album.trim()
-      ? info.album.trim()
-      : undefined;
-  const genre =
-    typeof info.genre === "string" && info.genre.trim()
-      ? info.genre.trim()
-      : undefined;
+  const album = typeof info.album === "string" && info.album.trim() ? info.album.trim() : undefined;
+  const genre = typeof info.genre === "string" && info.genre.trim() ? info.genre.trim() : undefined;
   const release = info.release_date ?? info.upload_date;
   const date =
     typeof release === "string" && /^\d{8}$/.test(release)
@@ -175,8 +160,7 @@ export function youtubeMusicTagsFromInfo(
   const thumb =
     (typeof info.thumbnail === "string" && info.thumbnail) ||
     (Array.isArray(info.thumbnails) &&
-      [...info.thumbnails].reverse().find((t) => typeof t?.url === "string")
-        ?.url) ||
+      [...info.thumbnails].reverse().find((t) => typeof t?.url === "string")?.url) ||
     null;
 
   return {
@@ -186,9 +170,7 @@ export function youtubeMusicTagsFromInfo(
     genre,
     date,
     artworkUrl:
-      typeof thumb === "string" && thumb
-        ? thumb.replace(/^http:\/\//i, "https://")
-        : undefined,
+      typeof thumb === "string" && thumb ? thumb.replace(/^http:\/\//i, "https://") : undefined,
     artworkNeedsSquareCrop: true,
     source: "youtube-music",
   };
@@ -288,9 +270,7 @@ export async function fetchSoundCloudTags(
       const thumb =
         (typeof info.thumbnail === "string" && info.thumbnail) ||
         (Array.isArray(info.thumbnails) &&
-          [...info.thumbnails]
-            .reverse()
-            .find((t) => typeof t?.url === "string")?.url) ||
+          [...info.thumbnails].reverse().find((t) => typeof t?.url === "string")?.url) ||
         null;
       if (typeof thumb === "string" && thumb) {
         artworkUrl = thumb.replace(/^http:\/\//i, "https://");
@@ -298,8 +278,7 @@ export async function fetchSoundCloudTags(
     }
     const rawGenre =
       (typeof info.genre === "string" && info.genre) ||
-      (Array.isArray(info.genres) &&
-        info.genres.find((g): g is string => typeof g === "string")) ||
+      (Array.isArray(info.genres) && info.genres.find((g): g is string => typeof g === "string")) ||
       "";
     if (rawGenre.trim()) genre = rawGenre.trim();
     if (typeof info.album === "string" && info.album.trim()) {
@@ -355,9 +334,7 @@ export async function resolveTrackTags(params: {
   cookiePath?: string | null;
   signal?: AbortSignal;
 }): Promise<TrackTags> {
-  const candidates = [params.catalogUrl, params.downloadUrl].filter(
-    (u): u is string => Boolean(u),
-  );
+  const candidates = [params.catalogUrl, params.downloadUrl].filter((u): u is string => Boolean(u));
 
   for (const url of candidates) {
     const kind = detectSourceKind(url);
@@ -422,11 +399,7 @@ const FLAT_STDDEV = 1.5;
  * Pure so it can be tested without ffmpeg. Returns 0 when the edges carry
  * detail, which is what a real 16:9 video frame looks like.
  */
-export function pillarboxColumns(
-  gray: Uint8Array,
-  width = PROBE_W,
-  height = PROBE_H,
-): number {
+export function pillarboxColumns(gray: Uint8Array, width = PROBE_W, height = PROBE_H): number {
   const stats = (x: number) => {
     let sum = 0;
     for (let y = 0; y < height; y++) sum += gray[y * width + x]!;
@@ -475,13 +448,20 @@ async function cropPillarboxedSquare(
     await runCommandOk(
       "ffmpeg",
       [
-        "-v", "error",
-        "-i", filePath,
-        "-vf", `scale=${PROBE_W}:${PROBE_H}`,
-        "-pix_fmt", "gray",
-        "-frames:v", "1",
-        "-f", "rawvideo",
-        "-y", rasterPath,
+        "-v",
+        "error",
+        "-i",
+        filePath,
+        "-vf",
+        `scale=${PROBE_W}:${PROBE_H}`,
+        "-pix_fmt",
+        "gray",
+        "-frames:v",
+        "1",
+        "-f",
+        "rawvideo",
+        "-y",
+        rasterPath,
       ],
       { signal },
     );
@@ -496,11 +476,9 @@ async function cropPillarboxedSquare(
 
   const out = filePath.replace(/(\.[^.]+)$/, "_sq$1");
   try {
-    await runCommandOk(
-      "ffmpeg",
-      ["-v", "error", "-i", filePath, "-vf", "crop=ih:ih", "-y", out],
-      { signal },
-    );
+    await runCommandOk("ffmpeg", ["-v", "error", "-i", filePath, "-vf", "crop=ih:ih", "-y", out], {
+      signal,
+    });
     await fs.unlink(filePath).catch(() => undefined);
     return out;
   } catch {
@@ -523,15 +501,8 @@ export async function downloadArtworkFile(params: {
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.byteLength < 100) return null;
     const ctype = res.headers.get("content-type") ?? "";
-    const ext = ctype.includes("png")
-      ? "png"
-      : ctype.includes("webp")
-        ? "webp"
-        : "jpg";
-    const filePath = path.join(
-      params.workDir,
-      `cover_${randomUUID()}.${ext}`,
-    );
+    const ext = ctype.includes("png") ? "png" : ctype.includes("webp") ? "webp" : "jpg";
+    const filePath = path.join(params.workDir, `cover_${randomUUID()}.${ext}`);
     await fs.writeFile(filePath, buf);
     if (!params.squareCrop) return filePath;
     const square = await cropPillarboxedSquare(filePath, params.signal);

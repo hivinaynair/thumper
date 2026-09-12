@@ -3,8 +3,8 @@ import { jobs } from "@thumper/db";
 import { QUEUE_NAME_DOWNLOAD } from "@thumper/shared";
 import { and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { getDb } from "../../../../lib/db";
 import { getBoss } from "../../../../lib/boss";
+import { getDb } from "../../../../lib/db";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -29,17 +29,13 @@ export async function GET(_req: Request, ctx: Ctx) {
   return NextResponse.json({ job });
 }
 
-async function cancelBossJobs(
-  rows: Array<{ pgBossId: string | null }>,
-): Promise<void> {
+async function cancelBossJobs(rows: Array<{ pgBossId: string | null }>): Promise<void> {
   const ids = rows.map((r) => r.pgBossId).filter((id): id is string => Boolean(id));
   if (ids.length === 0) return;
   try {
     const boss = await getBoss();
     await Promise.all(
-      ids.map((bossId) =>
-        boss.cancel(QUEUE_NAME_DOWNLOAD, bossId).catch(() => undefined),
-      ),
+      ids.map((bossId) => boss.cancel(QUEUE_NAME_DOWNLOAD, bossId).catch(() => undefined)),
     );
   } catch {
     /* queue may be unavailable — DB status is what the worker polls */
@@ -68,9 +64,7 @@ export async function DELETE(_req: Request, ctx: Ctx) {
   // A finished playlist parent still owns running children — cancelling it
   // must stop those tracks. Lone completed/failed/cancelled jobs are no-ops.
   const parentTerminal =
-    job.status === "completed" ||
-    job.status === "failed" ||
-    job.status === "cancelled";
+    job.status === "completed" || job.status === "failed" || job.status === "cancelled";
   if (parentTerminal && childIds.length === 0) {
     return NextResponse.json({ job });
   }
@@ -87,15 +81,10 @@ export async function DELETE(_req: Request, ctx: Ctx) {
       status: jobs.status,
     })
     .from(jobs)
-    .where(
-      and(eq(jobs.userId, userId), inArray(jobs.id, targetIds)),
-    );
+    .where(and(eq(jobs.userId, userId), inArray(jobs.id, targetIds)));
 
   const toCancel = active.filter(
-    (row) =>
-      row.status !== "completed" &&
-      row.status !== "failed" &&
-      row.status !== "cancelled",
+    (row) => row.status !== "completed" && row.status !== "failed" && row.status !== "cancelled",
   );
 
   if (toCancel.length === 0) {

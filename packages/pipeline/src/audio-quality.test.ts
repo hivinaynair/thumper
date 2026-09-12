@@ -4,8 +4,8 @@ import {
   AUDIO_FORMAT_SORT,
   audioQualityLabel,
   DEFAULT_YOUTUBE_PLAYER_CLIENTS,
-  YOUTUBE_AUDIO_FORMAT_SELECTOR,
   withoutPreview,
+  YOUTUBE_AUDIO_FORMAT_SELECTOR,
   youtubeExtractorArgs,
 } from "./audio-quality";
 
@@ -13,13 +13,9 @@ describe("withoutPreview", () => {
   it("excludes preview format ids and never falls through to bare best", () => {
     const out = withoutPreview("bestaudio[ext=wav]/bestaudio/best");
     expect(out).toContain("format_id!*=preview");
-    expect(out).toBe(
-      "bestaudio[format_id!*=preview][ext=wav]/bestaudio[format_id!*=preview]",
-    );
+    expect(out).toBe("bestaudio[format_id!*=preview][ext=wav]/bestaudio[format_id!*=preview]");
     expect(out.endsWith("/best")).toBe(false);
-    expect(out.includes("/bestaudio/") || out.endsWith("/bestaudio")).toBe(
-      false,
-    );
+    expect(out.includes("/bestaudio/") || out.endsWith("/bestaudio")).toBe(false);
   });
 
   it("keeps the real SoundCloud selector fail-closed", () => {
@@ -35,9 +31,7 @@ describe("AUDIO_FORMAT_SELECTOR", () => {
   it("asks for the SoundCloud original upload before any transcode", () => {
     const groups = AUDIO_FORMAT_SELECTOR.split("/");
     expect(groups[0]).toBe("bestaudio[format_id=download]");
-    expect(groups.indexOf("bestaudio")).toBeGreaterThan(
-      groups.indexOf("bestaudio[acodec^=flac]"),
-    );
+    expect(groups.indexOf("bestaudio")).toBeGreaterThan(groups.indexOf("bestaudio[acodec^=flac]"));
   });
 
   it("still ends in an unconditional fallback", () => {
@@ -81,21 +75,14 @@ describe("AUDIO_FORMAT_SORT", () => {
   it("keeps YouTube selection codec-neutral so bitrate wins", () => {
     expect(YOUTUBE_AUDIO_FORMAT_SELECTOR).toBe("bestaudio/best");
     expect(YOUTUBE_AUDIO_FORMAT_SELECTOR).not.toContain("acodec");
-    expect(AUDIO_FORMAT_SORT.split(",")).toEqual([
-      "abr",
-      "asr",
-      "channels",
-      "acodec",
-    ]);
+    expect(AUDIO_FORMAT_SORT.split(",")).toEqual(["abr", "asr", "channels", "acodec"]);
   });
 });
 
 describe("youtubeExtractorArgs", () => {
   it("requests clients that can see Premium itags", () => {
     delete process.env.YT_PLAYER_CLIENTS;
-    expect(youtubeExtractorArgs()).toBe(
-      `youtube:player_client=${DEFAULT_YOUTUBE_PLAYER_CLIENTS}`,
-    );
+    expect(youtubeExtractorArgs()).toBe(`youtube:player_client=${DEFAULT_YOUTUBE_PLAYER_CLIENTS}`);
     expect(DEFAULT_YOUTUBE_PLAYER_CLIENTS).toContain("web_music");
     // android_vr still serves itag 251 without a PO token; bare tv is DRM-locked.
     expect(DEFAULT_YOUTUBE_PLAYER_CLIENTS).toContain("android_vr");
@@ -125,9 +112,7 @@ describe("audioQualityLabel", () => {
   });
 
   it("does not misfire on a real lossless master", () => {
-    expect(audioQualityLabel("flac", "flac", "in.flac", 21500)).toBe(
-      "Lossless (original FLAC)",
-    );
+    expect(audioQualityLabel("flac", "flac", "in.flac", 21500)).toBe("Lossless (original FLAC)");
   });
 
   it("notes the cutoff when converting a known-lossy source", () => {
@@ -137,8 +122,6 @@ describe("audioQualityLabel", () => {
   });
 
   it("still works when no cutoff was measured", () => {
-    expect(audioQualityLabel("alac", "alac", "in.m4a")).toBe(
-      "Lossless (original ALAC)",
-    );
+    expect(audioQualityLabel("alac", "alac", "in.m4a")).toBe("Lossless (original ALAC)");
   });
 });

@@ -13,8 +13,7 @@ export default function SignInPage() {
           <p className="hero-kicker">Welcome back</p>
           <h1>Sign in</h1>
           <p className="hero-lede">
-            Access your private Thumper booth — queue downloads and manage
-            cookies.
+            Access your private Thumper booth — queue downloads and manage cookies.
           </p>
           <div className="auth-clerk">
             <SignIn />

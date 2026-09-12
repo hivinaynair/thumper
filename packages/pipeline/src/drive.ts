@@ -1,6 +1,6 @@
-import { google } from "googleapis";
-import type { drive_v3 } from "googleapis";
 import fs from "node:fs";
+import type { drive_v3 } from "googleapis";
+import { google } from "googleapis";
 
 const FOLDER_NAME = "Thumper";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
@@ -39,9 +39,7 @@ async function ensureFolder(
 ): Promise<string | undefined> {
   try {
     const safe = sanitizeDriveFolderName(name);
-    const parentClause = parentId
-      ? ` and '${parentId}' in parents`
-      : "";
+    const parentClause = parentId ? ` and '${parentId}' in parents` : "";
     const found = await drive.files.list({
       q: `name = '${escapeDriveQueryValue(safe)}' and mimeType = '${FOLDER_MIME}' and trashed = false${parentClause}`,
       fields: "files(id)",
@@ -65,9 +63,7 @@ async function ensureFolder(
   }
 }
 
-async function ensureThumperFolder(
-  drive: drive_v3.Drive,
-): Promise<string | undefined> {
+async function ensureThumperFolder(drive: drive_v3.Drive): Promise<string | undefined> {
   return ensureFolder(drive, FOLDER_NAME);
 }
 
@@ -103,8 +99,7 @@ export async function uploadToDrive(params: {
   auth.setCredentials({ access_token: params.accessToken });
   const drive = google.drive({ version: "v3", auth });
 
-  const parentId =
-    params.folderId || (await ensureThumperFolder(drive)) || undefined;
+  const parentId = params.folderId || (await ensureThumperFolder(drive)) || undefined;
 
   const res = await drive.files.create({
     requestBody: {

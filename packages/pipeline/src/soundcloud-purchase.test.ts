@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import {
   classifySoundCloudPurchaseUrl,
-  ManualDownloadRequiredError,
   isManualDownloadRequiredError,
+  ManualDownloadRequiredError,
   pickPreferredSoundCloudPurchase,
   soundCloudPurchaseApiUrl,
 } from "./soundcloud-purchase";
@@ -24,45 +24,28 @@ describe("soundCloudPurchaseApiUrl", () => {
       "testclientid",
     );
     expect(url.pathname).toBe("/resolve");
-    expect(url.searchParams.get("url")).toBe(
-      "https://soundcloud.com/crankdat/work-crankdat-remix",
-    );
+    expect(url.searchParams.get("url")).toBe("https://soundcloud.com/crankdat/work-crankdat-remix");
   });
 });
 
 describe("classifySoundCloudPurchaseUrl", () => {
   it("detects streaming smart links", () => {
+    expect(classifySoundCloudPurchaseUrl("https://marshmello.ffm.to/dtmf")).toBe("stream");
+    expect(classifySoundCloudPurchaseUrl("https://nm.ffm.to/talkabout")).toBe("stream");
     expect(
-      classifySoundCloudPurchaseUrl("https://marshmello.ffm.to/dtmf"),
-    ).toBe("stream");
-    expect(classifySoundCloudPurchaseUrl("https://nm.ffm.to/talkabout")).toBe(
-      "stream",
-    );
-    expect(
-      classifySoundCloudPurchaseUrl(
-        "https://listen.ukf.com/casey-club-voicenote-violence",
-      ),
+      classifySoundCloudPurchaseUrl("https://listen.ukf.com/casey-club-voicenote-violence"),
     ).toBe("stream");
   });
 
   it("flags paid store hosts as other", () => {
-    expect(
-      classifySoundCloudPurchaseUrl(
-        "https://artist.bandcamp.com/track/foo",
-      ),
-    ).toBe("other");
-    expect(
-      classifySoundCloudPurchaseUrl("https://www.beatport.com/track/x/1"),
-    ).toBe("other");
+    expect(classifySoundCloudPurchaseUrl("https://artist.bandcamp.com/track/foo")).toBe("other");
+    expect(classifySoundCloudPurchaseUrl("https://www.beatport.com/track/x/1")).toBe("other");
   });
 });
 
 describe("ManualDownloadRequiredError", () => {
   it("carries the purchase URL", () => {
-    const err = new ManualDownloadRequiredError(
-      "https://listen.ukf.com/x",
-      "Stream",
-    );
+    const err = new ManualDownloadRequiredError("https://listen.ukf.com/x", "Stream");
     expect(isManualDownloadRequiredError(err)).toBe(true);
     expect(err.manualDownloadUrl).toBe("https://listen.ukf.com/x");
     expect(err.message).toContain("https://listen.ukf.com/x");

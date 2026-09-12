@@ -37,40 +37,26 @@ export async function POST(req: Request) {
   const input = parsed.data;
 
   const expectedPrefix = `users/${safeUserId(userId)}/`;
-  if (
-    !input.inputStorageKey.startsWith(expectedPrefix) ||
-    input.inputStorageKey.includes("..")
-  ) {
-    return NextResponse.json(
-      { error: "Invalid inputStorageKey" },
-      { status: 400 },
-    );
+  if (!input.inputStorageKey.startsWith(expectedPrefix) || input.inputStorageKey.includes("..")) {
+    return NextResponse.json({ error: "Invalid inputStorageKey" }, { status: 400 });
   }
 
   const meta = await headObject(input.inputStorageKey);
   if (!meta) {
-    return NextResponse.json(
-      { error: "Uploaded audio not found — upload again" },
-      { status: 404 },
-    );
+    return NextResponse.json({ error: "Uploaded audio not found — upload again" }, { status: 404 });
   }
 
   if (input.destination === "drive" || input.destination === "both") {
     const hasDrive = await userHasGoogleDriveAccess(userId);
     if (!hasDrive) {
-      return NextResponse.json(
-        { error: GOOGLE_DRIVE_TOKEN_ERROR },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: GOOGLE_DRIVE_TOKEN_ERROR }, { status: 400 });
     }
   }
 
   // Stem jobs have no catalog URL, but `jobs.source_url` is NOT NULL. Record
   // where the audio actually came from instead of inventing a fake track URL.
-  const uploadedName =
-    input.inputStorageKey.split("/").pop() || input.inputStorageKey;
-  const displayTitle =
-    input.titleHint ?? uploadedName.replace(/\.[a-z0-9]+$/i, "");
+  const uploadedName = input.inputStorageKey.split("/").pop() || input.inputStorageKey;
+  const displayTitle = input.titleHint ?? uploadedName.replace(/\.[a-z0-9]+$/i, "");
 
   const db = getDb();
   const [job] = await db
@@ -93,10 +79,7 @@ export async function POST(req: Request) {
     .returning();
 
   if (!job) {
-    return NextResponse.json(
-      { error: "Failed to create job" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Failed to create job" }, { status: 500 });
   }
 
   const backend = (process.env.PROCESS_BACKEND ?? "pgboss").toLowerCase();
@@ -105,8 +88,7 @@ export async function POST(req: Request) {
     try {
       await wakeModalStemJob(job.id);
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to wake Modal stem worker";
+      const message = err instanceof Error ? err.message : "Failed to wake Modal stem worker";
       await db
         .update(jobs)
         .set({
@@ -122,8 +104,7 @@ export async function POST(req: Request) {
   } else {
     const boss = await getBoss();
     await boss.createQueue(QUEUE_NAME_DOWNLOAD);
-    const bossId =
-      (await boss.send(QUEUE_NAME_DOWNLOAD, { jobId: job.id })) ?? null;
+    const bossId = (await boss.send(QUEUE_NAME_DOWNLOAD, { jobId: job.id })) ?? null;
     await db
       .update(jobs)
       .set({ pgBossId: bossId, updatedAt: new Date() })

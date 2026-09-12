@@ -27,23 +27,20 @@ window.addEventListener("message", (event) => {
   const requestId = data.requestId;
   const origin = window.location.origin;
 
-  chrome.runtime.sendMessage(
-    { type: "sync-all-cookies", origin },
-    (response) => {
-      const err = chrome.runtime.lastError;
-      window.postMessage(
-        {
-          source: EXT_SOURCE,
-          type: "sync-cookies-result",
-          requestId,
-          ...(err
-            ? { ok: false, error: err.message || "Extension unavailable" }
-            : response || { ok: false, error: "No response from extension" }),
-        },
-        window.location.origin,
-      );
-    },
-  );
+  chrome.runtime.sendMessage({ type: "sync-all-cookies", origin }, (response) => {
+    const err = chrome.runtime.lastError;
+    window.postMessage(
+      {
+        source: EXT_SOURCE,
+        type: "sync-cookies-result",
+        requestId,
+        ...(err
+          ? { ok: false, error: err.message || "Extension unavailable" }
+          : response || { ok: false, error: "No response from extension" }),
+      },
+      window.location.origin,
+    );
+  });
 });
 
 // Content scripts often run before React mounts — announce now and again shortly after.

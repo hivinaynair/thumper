@@ -7,9 +7,9 @@ import {
   runSeparateJob,
 } from "@thumper/pipeline";
 import {
+  type DownloadJobPayload,
   detectSourceKind,
   oauthScopesIncludeDrive,
-  type DownloadJobPayload,
   type RetagJobPayload,
   type StemJobPayload,
 } from "@thumper/shared";
@@ -68,11 +68,7 @@ export async function processJobById(jobId: string): Promise<void> {
     if (patch.matchedUrl !== undefined) values.matchedUrl = patch.matchedUrl;
     if (patch.error !== undefined) values.error = patch.error;
     if (patch.result !== undefined) values.result = patch.result;
-    if (
-      patch.status === "completed" ||
-      patch.status === "failed" ||
-      patch.status === "cancelled"
-    ) {
+    if (patch.status === "completed" || patch.status === "failed" || patch.status === "cancelled") {
       values.completedAt = new Date();
     }
     await db.update(jobs).set(values).where(eq(jobs.id, id));
@@ -94,16 +90,11 @@ export async function processJobById(jobId: string): Promise<void> {
       })
       .from(jobs)
       .where(
-        and(
-          eq(jobs.userId, userId),
-          sql`jsonb_exists(${jobs.result}->'childJobIds', ${childId})`,
-        ),
+        and(eq(jobs.userId, userId), sql`jsonb_exists(${jobs.result}->'childJobIds', ${childId})`),
       )
       .limit(1);
     if (!parent) return {};
-    const folder = (
-      parent.result as { driveFolderId?: string } | null | undefined
-    )?.driveFolderId;
+    const folder = (parent.result as { driveFolderId?: string } | null | undefined)?.driveFolderId;
     return {
       parentJobId: parent.id,
       playlistTitle: parent.title ?? undefined,
@@ -172,9 +163,7 @@ export async function processJobById(jobId: string): Promise<void> {
       destination: row.destination,
       titleHint: row.title ?? undefined,
       artistHint: row.artist ?? undefined,
-      ...(retagMeta?.driveFolderId
-        ? { driveFolderId: retagMeta.driveFolderId }
-        : {}),
+      ...(retagMeta?.driveFolderId ? { driveFolderId: retagMeta.driveFolderId } : {}),
     };
     try {
       log.info({ jobId }, "Stem separation job started");
@@ -260,9 +249,7 @@ export async function processJobById(jobId: string): Promise<void> {
       ? { parentJobId: jobMeta?.parentJobId ?? playlistCtx.parentJobId }
       : {}),
     ...(driveFolderId ? { driveFolderId } : {}),
-    ...(detectSourceKind(row.sourceUrl) === "spotify"
-      ? { spotifyUrl: row.sourceUrl }
-      : {}),
+    ...(detectSourceKind(row.sourceUrl) === "spotify" ? { spotifyUrl: row.sourceUrl } : {}),
   };
 
   async function runOne(p: DownloadJobPayload): Promise<void> {
@@ -306,9 +293,7 @@ export async function processJobById(jobId: string): Promise<void> {
                   playlist: true,
                   trackCount: tracks.length,
                   childJobIds: childIds,
-                  ...(context?.driveFolderId
-                    ? { driveFolderId: context.driveFolderId }
-                    : {}),
+                  ...(context?.driveFolderId ? { driveFolderId: context.driveFolderId } : {}),
                   ...(p.clubReadyOnly ? { clubReadyOnly: true } : {}),
                 },
               });

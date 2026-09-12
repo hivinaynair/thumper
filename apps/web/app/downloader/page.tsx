@@ -1,22 +1,12 @@
 "use client";
 
 import { detectSourceKind } from "@thumper/shared";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  cookieNeedsRefresh,
-  jobsToRetry,
-  retryButtonLabel,
-} from "../../lib/cookie-retry";
-import { COOKIE_SYNC_EXTENSION_VERSION } from "./cookie-sync";
 import { ChevronDown, Loader2, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -26,17 +16,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { cookieNeedsRefresh, jobsToRetry, retryButtonLabel } from "../../lib/cookie-retry";
+import { StatusDot } from "../components/status-dot";
+import { COOKIE_SYNC_EXTENSION_VERSION } from "./cookie-sync";
 import {
+  type CookieStatus,
   groupJobs,
+  type Job,
   jobLabel,
   playlistRollup,
   rollupSummary,
-  verdictOf,
-  type CookieStatus,
-  type Job,
   type VerdictTier,
+  verdictOf,
 } from "./job-view";
-import { StatusDot } from "../components/status-dot";
 import "../ui-theme.css";
 
 const CLUB_READY_KEY = "thumper.clubReadyOnly";
@@ -93,10 +85,7 @@ function cookiesReadyForUrl(
     return { ready: false, reason: "Checking cookie sync…" };
   }
   const kind = url.trim() ? detectSourceKind(url.trim()) : null;
-  if (
-    !kind ||
-    (kind !== "youtube" && kind !== "soundcloud" && kind !== "spotify")
-  ) {
+  if (!kind || (kind !== "youtube" && kind !== "soundcloud" && kind !== "spotify")) {
     if (!cookies.youtube.present && !cookies.soundcloud.present) {
       return {
         ready: false,
@@ -124,15 +113,10 @@ function cookiesReadyForUrl(
         "Tip: sync YouTube cookies too — after free downloads, SoundCloud tracks prefer YouTube mirrors",
     };
   }
-  if (
-    kind === "spotify" &&
-    !cookies.youtube.present &&
-    !cookies.soundcloud.present
-  ) {
+  if (kind === "spotify" && !cookies.youtube.present && !cookies.soundcloud.present) {
     return {
       ready: false,
-      reason:
-        "Sync YouTube or SoundCloud cookies before queuing Spotify mirrors",
+      reason: "Sync YouTube or SoundCloud cookies before queuing Spotify mirrors",
     };
   }
   if (
@@ -156,8 +140,7 @@ function requestExtensionSync(timeoutMs = 45000): Promise<SyncResult> {
       window.removeEventListener("message", onMessage);
       resolve({
         ok: false,
-        error:
-          "No response from the Thumper extension. Install/reload it, then try again.",
+        error: "No response from the Thumper extension. Install/reload it, then try again.",
       });
     }, timeoutMs);
 
@@ -263,10 +246,7 @@ export default function DownloaderPage() {
         type?: string;
         version?: string;
       };
-      if (
-        data?.source === "thumper-extension" &&
-        data.type === "extension-ready"
-      ) {
+      if (data?.source === "thumper-extension" && data.type === "extension-ready") {
         setExtensionReady(true);
       }
     };
@@ -275,10 +255,7 @@ export default function DownloaderPage() {
 
     const ping = () => {
       if (extensionReadyRef.current) return;
-      window.postMessage(
-        { source: "thumper-page", type: "ping" },
-        window.location.origin,
-      );
+      window.postMessage({ source: "thumper-page", type: "ping" }, window.location.origin);
     };
     ping();
     const pingTimer = window.setInterval(ping, 2000);
@@ -302,10 +279,7 @@ export default function DownloaderPage() {
   const gate = useMemo(() => cookiesReadyForUrl(url, cookies), [url, cookies]);
   const canQueue = !busy && gate.ready;
   const finishedCount = jobs.filter(
-    (job) =>
-      job.status === "completed" ||
-      job.status === "failed" ||
-      job.status === "cancelled",
+    (job) => job.status === "completed" || job.status === "failed" || job.status === "cancelled",
   ).length;
   const downloadableCount = jobs.filter(
     (job) => job.status === "completed" && job.result?.fileId,
@@ -408,12 +382,9 @@ export default function DownloaderPage() {
     }
   }
 
-  const anyCookiesPresent = Boolean(
-    cookies?.youtube.present || cookies?.soundcloud.present,
-  );
+  const anyCookiesPresent = Boolean(cookies?.youtube.present || cookies?.soundcloud.present);
   const youtubeStale =
-    Boolean(cookies?.youtube.present) &&
-    isCookieStale(cookies?.youtube.updatedAt ?? null);
+    Boolean(cookies?.youtube.present) && isCookieStale(cookies?.youtube.updatedAt ?? null);
   const failedNeedRefresh = jobs.some(
     (job) => job.status === "failed" && cookieNeedsRefresh(job.error),
   );
@@ -468,8 +439,8 @@ export default function DownloaderPage() {
 
           {driveSelected ? (
             <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-              Drive needs Google connected with <code>drive.file</code> — open
-              your account menu, reconnect Google, then queue again.
+              Drive needs Google connected with <code>drive.file</code> — open your account menu,
+              reconnect Google, then queue again.
             </p>
           ) : null}
 
@@ -479,6 +450,7 @@ export default function DownloaderPage() {
               Filters
             </CollapsibleTrigger>
             <CollapsibleContent className="space-y-3 pt-3">
+              {/* biome-ignore lint/a11y/noLabelWithoutControl: wraps the shadcn Checkbox, which biome cannot resolve to an input element. */}
               <label className="flex cursor-pointer gap-2.5">
                 <Checkbox
                   checked={clubReadyOnly}
@@ -489,9 +461,8 @@ export default function DownloaderPage() {
                   className="mt-0.5"
                 />
                 <span className="text-xs leading-relaxed text-muted-foreground">
-                  <span className="text-foreground">Club-ready only</span> —
-                  rejects anything whose audio stops short of 19 kHz, a lossy
-                  stream whatever the file says it is.
+                  <span className="text-foreground">Club-ready only</span> — rejects anything whose
+                  audio stops short of 19 kHz, a lossy stream whatever the file says it is.
                 </span>
               </label>
             </CollapsibleContent>
@@ -540,9 +511,7 @@ export default function DownloaderPage() {
                   }`}
                 />
                 {label}
-                {present && age ? (
-                  <span className="text-[10px] opacity-70">{age}</span>
-                ) : null}
+                {present && age ? <span className="text-[10px] opacity-70">{age}</span> : null}
               </Badge>
             );
           })}
@@ -599,29 +568,25 @@ export default function DownloaderPage() {
                 Open <code>chrome://extensions</code>, enable Developer mode
               </li>
               <li>
-                Load unpacked → pick the unzipped folder (or Reload if already
-                installed), then reload this page
+                Load unpacked → pick the unzipped folder (or Reload if already installed), then
+                reload this page
               </li>
             </ol>
           </div>
         ) : failedNeedRefresh ? (
           <p className="mt-3 rounded-md border border-border bg-muted px-3 py-2.5 text-xs text-muted-foreground">
-            A job failed on stale or blocked cookies — Refresh, then retry the
-            failed tracks.
+            A job failed on stale or blocked cookies — Refresh, then retry the failed tracks.
           </p>
         ) : youtubeStale ? (
           <p className="mt-3 rounded-md border border-border bg-muted px-3 py-2.5 text-xs text-muted-foreground">
-            YouTube session looks older than 12h. Refresh before the next
-            download.
+            YouTube session looks older than 12h. Refresh before the next download.
           </p>
         ) : null}
 
         <Separator className="my-6" />
 
         {topLevel.length === 0 ? (
-          <p className="py-16 text-center text-sm text-muted-foreground">
-            Nothing queued yet.
-          </p>
+          <p className="py-16 text-center text-sm text-muted-foreground">Nothing queued yet.</p>
         ) : (
           <div className="space-y-7">
             {topLevel.map((job) => {
@@ -635,16 +600,12 @@ export default function DownloaderPage() {
                     <StatusDot status={job.status} />
                   </span>
 
-                  <h2 className="text-[15px] leading-tight font-semibold">
-                    {jobLabel(job)}
-                  </h2>
+                  <h2 className="text-[15px] leading-tight font-semibold">{jobLabel(job)}</h2>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {job.stage} · {job.audioFormat} · {job.destination}
                     {job.result?.clubReadyOnly ? " · club-ready only" : ""}
                     {rollup ? ` · ${rollupSummary(rollup)}` : ""}
-                    {job.result?.unmatchedCount
-                      ? ` · ${job.result.unmatchedCount} unmatched`
-                      : ""}
+                    {job.result?.unmatchedCount ? ` · ${job.result.unmatchedCount} unmatched` : ""}
                     {job.result?.matchScore ? ` · match ${job.result.matchScore}` : ""}
                   </p>
 
@@ -752,11 +713,7 @@ export default function DownloaderPage() {
                     ) : null}
                     {job.result?.manualDownloadUrl ? (
                       <Button asChild variant="secondary" size="sm">
-                        <a
-                          href={job.result.manualDownloadUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
+                        <a href={job.result.manualDownloadUrl} target="_blank" rel="noreferrer">
                           Open link
                         </a>
                       </Button>

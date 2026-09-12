@@ -1,5 +1,5 @@
-import { getYtDlpPath } from "./paths";
 import { fetchSoundCloudOEmbed, stripFreeDownloadLabel } from "./metadata";
+import { getYtDlpPath } from "./paths";
 import { runCommandOk, type SpawnOptions } from "./process";
 
 export type SoundCloudSearchHit = {

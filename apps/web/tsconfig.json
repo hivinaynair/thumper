@@ -6,13 +6,7 @@
       "@/*": ["./*"]
     }
   },
-  "include": [
-    "**/*.ts",
-    "**/*.tsx",
-    "next-env.d.ts",
-    "next.config.js",
-    ".next/types/**/*.ts"
-  ],
+  "include": ["**/*.ts", "**/*.tsx", "next-env.d.ts", "next.config.js", ".next/types/**/*.ts"],
   // Tests run under `bun test`, whose globals clash with the DOM lib this app
   // needs; they get typechecked by bun itself, not by `next typegen`.
   "exclude": ["node_modules", "**/*.test.ts", "**/*.test.tsx"]

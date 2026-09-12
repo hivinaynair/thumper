@@ -44,15 +44,11 @@ export async function wakeModalStemJob(jobId: string): Promise<void> {
   if (!url) {
     const jobUrl = process.env.MODAL_JOB_URL?.trim();
     if (!jobUrl) {
-      throw new Error(
-        "PROCESS_BACKEND=modal requires MODAL_STEMS_URL or MODAL_JOB_URL",
-      );
+      throw new Error("PROCESS_BACKEND=modal requires MODAL_STEMS_URL or MODAL_JOB_URL");
     }
     url = jobUrl.replace(/\/wake\/?$/, "/wake-stems");
     if (url === jobUrl) {
-      throw new Error(
-        "Set MODAL_STEMS_URL — could not derive it from MODAL_JOB_URL",
-      );
+      throw new Error("Set MODAL_STEMS_URL — could not derive it from MODAL_JOB_URL");
     }
   }
 
@@ -65,9 +61,7 @@ export async function wakeModalStemJob(jobId: string): Promise<void> {
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(
-      `Modal stem wake failed (${res.status}): ${text.slice(0, 500)}`,
-    );
+    throw new Error(`Modal stem wake failed (${res.status}): ${text.slice(0, 500)}`);
   }
 }
 
@@ -84,23 +78,17 @@ export type ModalSearchCandidate = {
  * Uses MODAL_SEARCH_URL when set; otherwise derives it from MODAL_JOB_URL
  * by replacing the trailing `/wake` with `/search`.
  */
-export async function wakeModalSearch(
-  query: string,
-): Promise<ModalSearchCandidate[]> {
+export async function wakeModalSearch(query: string): Promise<ModalSearchCandidate[]> {
   const secret = process.env.MODAL_WEBHOOK_SECRET?.trim();
   let url = process.env.MODAL_SEARCH_URL?.trim();
   if (!url) {
     const jobUrl = process.env.MODAL_JOB_URL?.trim();
     if (!jobUrl) {
-      throw new Error(
-        "PROCESS_BACKEND=modal requires MODAL_SEARCH_URL or MODAL_JOB_URL",
-      );
+      throw new Error("PROCESS_BACKEND=modal requires MODAL_SEARCH_URL or MODAL_JOB_URL");
     }
     url = jobUrl.replace(/\/wake\/?$/, "/search");
     if (url === jobUrl) {
-      throw new Error(
-        "Set MODAL_SEARCH_URL — could not derive it from MODAL_JOB_URL",
-      );
+      throw new Error("Set MODAL_SEARCH_URL — could not derive it from MODAL_JOB_URL");
     }
   }
 
@@ -115,9 +103,7 @@ export async function wakeModalSearch(
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(
-      `Modal search failed (${res.status}): ${text.slice(0, 500)}`,
-    );
+    throw new Error(`Modal search failed (${res.status}): ${text.slice(0, 500)}`);
   }
 
   const data = (await res.json()) as {

@@ -1,12 +1,4 @@
-import {
-  integer,
-  jsonb,
-  pgEnum,
-  pgTable,
-  text,
-  timestamp,
-  uuid,
-} from "drizzle-orm/pg-core";
+import { integer, jsonb, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 export const jobStatusEnum = pgEnum("job_status", [
   "queued",
@@ -29,18 +21,9 @@ export const jobStageEnum = pgEnum("job_stage", [
   "error",
 ]);
 
-export const audioFormatEnum = pgEnum("audio_format", [
-  "flac",
-  "wav",
-  "alac",
-  "aiff",
-]);
+export const audioFormatEnum = pgEnum("audio_format", ["flac", "wav", "alac", "aiff"]);
 
-export const destinationEnum = pgEnum("destination", [
-  "browser",
-  "drive",
-  "both",
-]);
+export const destinationEnum = pgEnum("destination", ["browser", "drive", "both"]);
 
 export const sourceKindEnum = pgEnum("source_kind", [
   "youtube",
@@ -115,12 +98,8 @@ export const jobs = pgTable("jobs", {
     /** Set when the club-ready gate rejected every source. */
     qualityRejected?: boolean;
   }>(),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt: timestamp("completed_at", { withTimezone: true }),
 });
 
@@ -137,18 +116,12 @@ export const files = pgTable("files", {
   driveFileId: text("drive_file_id"),
   driveUrl: text("drive_url"),
   expiresAt: timestamp("expires_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const userSettings = pgTable("user_settings", {
   userId: text("user_id").primaryKey(),
   defaultFormat: audioFormatEnum("default_format").notNull().default("flac"),
-  defaultDestination: destinationEnum("default_destination")
-    .notNull()
-    .default("browser"),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
+  defaultDestination: destinationEnum("default_destination").notNull().default("browser"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

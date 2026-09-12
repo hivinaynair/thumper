@@ -75,13 +75,8 @@ export function classifySoundCloudPurchaseUrl(
   return "other";
 }
 
-export function soundCloudPurchaseApiUrl(
-  trackUrl: string,
-  clientId: string,
-): URL {
-  const id = trackUrl.match(
-    /^https?:\/\/api(?:-v2)?\.soundcloud\.com\/tracks\/(\d+)/i,
-  )?.[1];
+export function soundCloudPurchaseApiUrl(trackUrl: string, clientId: string): URL {
+  const id = trackUrl.match(/^https?:\/\/api(?:-v2)?\.soundcloud\.com\/tracks\/(\d+)/i)?.[1];
   if (id) {
     const direct = new URL(`https://api-v2.soundcloud.com/tracks/${id}`);
     direct.searchParams.set("client_id", clientId);
@@ -152,8 +147,6 @@ export class ManualDownloadRequiredError extends Error {
   }
 }
 
-export function isManualDownloadRequiredError(
-  err: unknown,
-): err is ManualDownloadRequiredError {
+export function isManualDownloadRequiredError(err: unknown): err is ManualDownloadRequiredError {
   return err instanceof ManualDownloadRequiredError;
 }

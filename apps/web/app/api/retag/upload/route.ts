@@ -1,19 +1,14 @@
+import { randomUUID } from "node:crypto";
 import { auth } from "@clerk/nextjs/server";
-import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
-import {
-  putBytes,
-  safeUserId,
-  useBlobStorage,
-  userStorageKey,
-} from "@thumper/pipeline/storage";
 import { queryFromAudioFilename } from "@thumper/pipeline/retag-search";
+import { hasBlobStorage, putBytes, safeUserId, userStorageKey } from "@thumper/pipeline/storage";
 import {
   isRetagInput,
   RETAG_INPUT_CONTENT_TYPES,
   RETAG_INPUT_LABEL,
   retagInputExtension,
 } from "@thumper/shared";
-import { randomUUID } from "node:crypto";
+import { type HandleUploadBody, handleUpload } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -32,7 +27,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   return NextResponse.json({
-    mode: useBlobStorage() ? "blob" : "local",
+    mode: hasBlobStorage() ? "blob" : "local",
     maxBytes: MAX_BYTES,
   });
 }
@@ -52,11 +47,8 @@ export async function POST(req: Request) {
 
   // Client token handshake for @vercel/blob/client upload()
   if (contentType.includes("application/json")) {
-    if (!useBlobStorage()) {
-      return NextResponse.json(
-        { error: "Blob storage is not configured" },
-        { status: 503 },
-      );
+    if (!hasBlobStorage()) {
+      return NextResponse.json({ error: "Blob storage is not configured" }, { status: 503 });
     }
 
     let body: HandleUploadBody;
@@ -122,19 +114,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Empty file" }, { status: 400 });
   }
   if (file.size > MAX_BYTES) {
-    return NextResponse.json(
-      { error: "File too large (max 500 MB)" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "File too large (max 500 MB)" }, { status: 400 });
   }
 
   const buf = Buffer.from(await file.arrayBuffer());
-  const key = userStorageKey(
-    userId,
-    "uploads",
-    randomUUID(),
-    sanitizeName(name),
-  );
+  const key = userStorageKey(userId, "uploads", randomUUID(), sanitizeName(name));
   // Keep the browser's type when it gave a real one; the extension carries the
   // format downstream either way.
   await putBytes(key, buf, {

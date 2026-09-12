@@ -1,8 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
-import {
-  queryFromAudioFilename,
-  searchSoundCloudTracks,
-} from "@thumper/pipeline/retag-search";
+import { queryFromAudioFilename, searchSoundCloudTracks } from "@thumper/pipeline/retag-search";
 import { NextResponse } from "next/server";
 import { wakeModalSearch } from "../../../../lib/wake-modal";
 
@@ -28,14 +25,9 @@ export async function POST(req: Request) {
   }
 
   const query =
-    body.query?.trim() ||
-    (body.filename ? queryFromAudioFilename(body.filename) : "") ||
-    "";
+    body.query?.trim() || (body.filename ? queryFromAudioFilename(body.filename) : "") || "";
   if (!query) {
-    return NextResponse.json(
-      { error: "query or filename required" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "query or filename required" }, { status: 400 });
   }
 
   const backend = (process.env.PROCESS_BACKEND ?? "pgboss").toLowerCase();
@@ -50,9 +42,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ query, candidates });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json(
-      { error: `SoundCloud search failed: ${message}` },
-      { status: 502 },
-    );
+    return NextResponse.json({ error: `SoundCloud search failed: ${message}` }, { status: 502 });
   }
 }

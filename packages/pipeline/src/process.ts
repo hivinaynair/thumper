@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 
 export class ProcessCancelledError extends Error {
   constructor(message = "Process cancelled") {
@@ -142,9 +142,7 @@ export async function runCommandOk(
 ): Promise<{ stdout: string; stderr: string }> {
   const result = await runCommand(command, args, options);
   if (result.code !== 0) {
-    throw new Error(
-      `${command} failed (${result.code}): ${result.stderr.slice(-2000)}`,
-    );
+    throw new Error(`${command} failed (${result.code}): ${result.stderr.slice(-2000)}`);
   }
   return result;
 }

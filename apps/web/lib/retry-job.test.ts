@@ -1,9 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import {
-  downloadPayloadFromJob,
-  playlistContextForChild,
-  requeueFields,
-} from "./retry-job";
+import { downloadPayloadFromJob, playlistContextForChild, requeueFields } from "./retry-job";
 
 describe("requeueFields", () => {
   it("clears failure so the worker can pick the job up again", () => {

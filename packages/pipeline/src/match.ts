@@ -1,8 +1,8 @@
 import { MAX_PLAYLIST_TRACKS } from "@thumper/shared";
+import { splitArtistNames, stripDecorative } from "./metadata";
 import { getYtDlpPath } from "./paths";
 import type { PlaylistEntry } from "./playlist";
 import { runCommandOk, type SpawnOptions } from "./process";
-import { splitArtistNames, stripDecorative } from "./metadata";
 import { containsSlug, ratio, slugify } from "./similarity";
 import {
   buildSoundCloudSearchQuery,
@@ -14,9 +14,7 @@ import {
  * Label uploads often title tracks "WINK & borne - Drown" with uploader "UKF".
  * Mirror search needs the real credit + song name, not the label as artist.
  */
-export function parseCreditTitle(
-  rawTitle: string,
-): { artists: string[]; title: string } | null {
+export function parseCreditTitle(rawTitle: string): { artists: string[]; title: string } | null {
   const trimmed = stripDecorative(rawTitle);
   // Prefer " - " (SoundCloud / YouTube convention); also accept en-dash.
   const match = trimmed.match(/^(.+?)\s+[–—-]\s+(.+)$/);
@@ -25,7 +23,10 @@ export function parseCreditTitle(
   let right = match[2].trim();
   // Drop trailing "(Official Video)" / "[Free Download]" noise from the song.
   right = right
-    .replace(/\s*[[(][^)\]]*(official|video|audio|lyric|visualiser|visualizer|free\s*download)[^)\]]*[)\]]\s*$/i, "")
+    .replace(
+      /\s*[[(][^)\]]*(official|video|audio|lyric|visualiser|visualizer|free\s*download)[^)\]]*[)\]]\s*$/i,
+      "",
+    )
     .trim();
   if (!left || !right) return null;
   // Avoid treating "Song Title - Live at Brixton" as artist/title.
@@ -41,9 +42,7 @@ export function parseCreditTitle(
  * 2) split collab credits
  * 3) parse "Artist - Song" titles (label uploads)
  */
-export function normalizeTrackForMatch(
-  track: SpotifyTrackMeta,
-): SpotifyTrackMeta {
+export function normalizeTrackForMatch(track: SpotifyTrackMeta): SpotifyTrackMeta {
   let title = stripDecorative(track.title);
   let artists = track.artists.map(stripDecorative).filter(Boolean);
   const parsed = parseCreditTitle(title);
@@ -99,10 +98,7 @@ export type ScoredMirror = MirrorCandidate & {
   };
 };
 
-function parseCandidates(
-  stdout: string,
-  source: "youtube" | "soundcloud",
-): MirrorCandidate[] {
+function parseCandidates(stdout: string, source: "youtube" | "soundcloud"): MirrorCandidate[] {
   const out: MirrorCandidate[] = [];
   for (const line of stdout.split("\n")) {
     const trimmed = line.trim();
@@ -178,9 +174,7 @@ function calcNameMatch(track: SpotifyTrackMeta, candidate: MirrorCandidate): num
     .trim();
   const cleanedRatio = ratio(song, cleaned);
   // If title is "Artist - Song", compare against song part
-  const afterDash = cleaned.includes(" - ")
-    ? cleaned.split(" - ").slice(1).join(" - ")
-    : cleaned;
+  const afterDash = cleaned.includes(" - ") ? cleaned.split(" - ").slice(1).join(" - ") : cleaned;
   const dashRatio = ratio(song, afterDash);
   return Math.max(direct, cleanedRatio, dashRatio);
 }
@@ -196,10 +190,7 @@ function calcTimeMatch(track: SpotifyTrackMeta, candidate: MirrorCandidate): num
   return Math.exp(-0.06 * diff) * 100;
 }
 
-function durationDiffSec(
-  track: SpotifyTrackMeta,
-  candidate: MirrorCandidate,
-): number | null {
+function durationDiffSec(track: SpotifyTrackMeta, candidate: MirrorCandidate): number | null {
   if (!track.durationMs || track.durationMs <= 0 || candidate.durationSec <= 0) {
     return null;
   }
@@ -303,10 +294,7 @@ export function scoreMirrorCandidate(
   };
 }
 
-function artistChannelBonus(
-  track: SpotifyTrackMeta,
-  candidate: MirrorCandidate,
-): number {
+function artistChannelBonus(track: SpotifyTrackMeta, candidate: MirrorCandidate): number {
   // Prefer the artist's own channel over a label dump when scores tie.
   for (const artist of track.artists) {
     if (containsSlug(candidate.uploader, artist)) return 1;
@@ -314,10 +302,7 @@ function artistChannelBonus(
   return 0;
 }
 
-function pickBest(
-  track: SpotifyTrackMeta,
-  candidates: MirrorCandidate[],
-): ScoredMirror | null {
+function pickBest(track: SpotifyTrackMeta, candidates: MirrorCandidate[]): ScoredMirror | null {
   const scored = candidates
     .map((c) => scoreMirrorCandidate(track, c))
     .filter((c) => c.score >= MIN_MATCH_SCORE)

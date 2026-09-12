@@ -1,11 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import {
   groupJobs,
+  type Job,
   jobLabel,
   playlistRollup,
   rollupSummary,
   verdictOf,
-  type Job,
 } from "./job-view";
 
 function job(partial: Partial<Job> & Pick<Job, "id">): Job {
@@ -30,9 +30,7 @@ describe("jobLabel", () => {
   });
 
   it("falls back to the source URL when the track is unidentified", () => {
-    expect(jobLabel(job({ id: "a", sourceUrl: "https://x.test/t" }))).toBe(
-      "https://x.test/t",
-    );
+    expect(jobLabel(job({ id: "a", sourceUrl: "https://x.test/t" }))).toBe("https://x.test/t");
   });
 });
 
@@ -92,12 +90,12 @@ describe("playlistRollup", () => {
   });
 
   it("summarises only the non-zero counts", () => {
-    expect(
-      rollupSummary({ total: 3, done: 3, failed: 0, pending: 0, failedTracks: [] }),
-    ).toBe("3/3 downloaded");
-    expect(
-      rollupSummary({ total: 3, done: 1, failed: 1, pending: 1, failedTracks: [] }),
-    ).toBe("1/3 downloaded · 1 failed · 1 in progress");
+    expect(rollupSummary({ total: 3, done: 3, failed: 0, pending: 0, failedTracks: [] })).toBe(
+      "3/3 downloaded",
+    );
+    expect(rollupSummary({ total: 3, done: 1, failed: 1, pending: 1, failedTracks: [] })).toBe(
+      "1/3 downloaded · 1 failed · 1 in progress",
+    );
   });
 });
 
@@ -116,16 +114,12 @@ describe("verdictOf", () => {
   });
 
   it("treats a store page as needing manual work", () => {
-    const v = verdictOf(
-      job({ id: "a", result: { manualDownloadUrl: "https://store.test" } }),
-    );
+    const v = verdictOf(job({ id: "a", result: { manualDownloadUrl: "https://store.test" } }));
     expect(v).toMatchObject({ tier: "unsuitable", lead: "manual" });
   });
 
   it("marks artist originals as provenance wins", () => {
-    expect(verdictOf(job({ id: "b", result: { soundcloudOriginal: true } })).tier).toBe(
-      "original",
-    );
+    expect(verdictOf(job({ id: "b", result: { soundcloudOriginal: true } })).tier).toBe("original");
   });
 
   it("carries the dj tier and its headline", () => {
@@ -142,9 +136,7 @@ describe("verdictOf", () => {
   it("prefers provenance over a lower dj tier, losing the tier", () => {
     // Documents the ordering rather than endorsing it: an artist original that
     // also reads marginal reports only "original".
-    const v = verdictOf(
-      job({ id: "a", result: { soundcloudOriginal: true, djTier: "marginal" } }),
-    );
+    const v = verdictOf(job({ id: "a", result: { soundcloudOriginal: true, djTier: "marginal" } }));
     expect(v.tier).toBe("original");
   });
 

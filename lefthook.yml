@@ -1,0 +1,11 @@
+pre-commit:
+  parallel: true
+  commands:
+    biome:
+      glob: "*.{js,ts,cjs,mjs,d.cts,d.mts,jsx,tsx,json,jsonc,css}"
+      run: bunx biome check --write --staged --no-errors-on-unmatched --files-ignore-unknown=true
+      stage_fixed: true
+
+    check-types:
+      glob: "*.{ts,tsx}"
+      run: TURBO_UI=0 bunx turbo run check-types --filter='...[HEAD]'

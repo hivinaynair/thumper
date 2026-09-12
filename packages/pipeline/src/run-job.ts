@@ -1,39 +1,41 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { eq, inArray } from "drizzle-orm";
 import type { Db } from "@thumper/db";
 import { files, jobs } from "@thumper/db";
 import {
+  type AudioFormat,
+  type DeliveryDestination,
+  type DownloadJobPayload,
   detectSourceKind,
   GOOGLE_DRIVE_TOKEN_ERROR,
   isPlaylistUrl,
   MAX_PLAYLIST_TRACKS,
   sanitizeFilename,
   trackDisplayName,
-  type AudioFormat,
-  type DeliveryDestination,
-  type DownloadJobPayload,
 } from "@thumper/shared";
+import { eq, inArray } from "drizzle-orm";
 import { findFallbackArtworkUrl } from "./artwork-fallback";
 import {
+  type DjVerdict,
   isClubReady,
   isQualityGateError,
   QualityGateError,
   verifyForDj,
-  type DjVerdict,
 } from "./audio-verify";
 import { FILE_TTL_MS } from "./cleanup";
 import { convertAudio, hasAttachedArtwork, tagMp3Copy } from "./convert";
 import { materializeCookieFile } from "./cookies";
 import {
+  completeDeliveryTransaction,
+  type DeliveryArtifactPlan,
   executeOriginalArtifact,
   extensionFromPath,
   planDeliveryArtifact,
   preserveArtifactForLocalDelivery,
-  completeDeliveryTransaction,
-  type DeliveryArtifactPlan,
 } from "./delivery-artifact";
 import {
+  type DownloadMediaResult,
   downloadMedia,
   dumpJson,
   isSoundCloudPreviewError,
@@ -63,13 +65,7 @@ import {
   resolveSoundCloudPurchase,
 } from "./soundcloud-purchase";
 import { fetchSpotifyCatalog, type SpotifyTrackMeta } from "./spotify";
-import {
-  deleteObjectStrict,
-  putLocalFile,
-  useBlobStorage,
-  userStorageKey,
-} from "./storage";
-import { randomUUID } from "node:crypto";
+import { deleteObjectStrict, hasBlobStorage, putLocalFile, userStorageKey } from "./storage";
 
 export type ProgressUpdater = (patch: {
   status?: "running" | "cancelling" | "cancelled" | "completed" | "failed";
@@ -176,11 +172,7 @@ async function ensureNotCancelled(
     .from(jobs)
     .where(inArray(jobs.id, ids));
   // Cancelling the playlist parent must stop every child mid-download.
-  if (
-    rows.some(
-      (row) => row.status === "cancelling" || row.status === "cancelled",
-    )
-  ) {
+  if (rows.some((row) => row.status === "cancelling" || row.status === "cancelled")) {
     throw new ProcessCancelledError();
   }
   // Parent deleted (e.g. Clear finished) while Modal is still expanding —
@@ -262,10 +254,9 @@ async function deliverArtifact(params: {
     create: async (registerCleanup) => {
       const { deps, artifact, outDir } = params;
       const { db, payload } = deps;
-      const blobMode = useBlobStorage();
+      const blobMode = hasBlobStorage();
       const skipObjectStore = blobMode && payload.destination === "drive";
-      const copiedLocalOriginal =
-        !blobMode && artifact.action === "preserve-original";
+      const copiedLocalOriginal = !blobMode && artifact.action === "preserve-original";
       const deliveryPath = copiedLocalOriginal
         ? await preserveArtifactForLocalDelivery({
             sourcePath: artifact.path,
@@ -280,12 +271,7 @@ async function deliverArtifact(params: {
       let relativePath = path.relative(userRoot(payload.userId), deliveryPath);
 
       if (blobMode && !skipObjectStore) {
-        const key = userStorageKey(
-          payload.userId,
-          "downloads",
-          randomUUID(),
-          artifact.filename,
-        );
+        const key = userStorageKey(payload.userId, "downloads", randomUUID(), artifact.filename);
         await putLocalFile(key, deliveryPath, { contentType: artifact.mime });
         registerCleanup(() => deleteObjectStrict(key));
         relativePath = key;
@@ -313,8 +299,7 @@ async function deliverArtifact(params: {
 
       let driveFileId: string | undefined;
       let driveUrl: string | undefined;
-      const wantsDrive =
-        payload.destination === "drive" || payload.destination === "both";
+      const wantsDrive = payload.destination === "drive" || payload.destination === "both";
       if (wantsDrive) {
         const token = await deps.getGoogleAccessToken?.(payload.userId);
         if (!token) throw new Error(GOOGLE_DRIVE_TOKEN_ERROR);
@@ -327,14 +312,9 @@ async function deliverArtifact(params: {
         });
         driveFileId = uploaded.fileId;
         driveUrl = uploaded.webViewLink;
-        registerCleanup(() =>
-          deleteDriveFile({ accessToken: token, fileId: uploaded.fileId }),
-        );
+        registerCleanup(() => deleteDriveFile({ accessToken: token, fileId: uploaded.fileId }));
         if (fileRow) {
-          await db
-            .update(files)
-            .set({ driveFileId, driveUrl })
-            .where(eq(files.id, fileRow.id));
+          await db.update(files).set({ driveFileId, driveUrl }).where(eq(files.id, fileRow.id));
         }
       }
 
@@ -467,7 +447,7 @@ async function processTrack(params: {
   });
   await ensureNotCancelled(signal, db, payload.jobId, payload.parentJobId);
 
-  let downloaded;
+  let downloaded: DownloadMediaResult;
   try {
     downloaded = await downloadMedia({
       url: params.trackUrl,
@@ -494,9 +474,7 @@ async function processTrack(params: {
     }
   } catch (err) {
     if (canTryYoutubeMirror() && isSoundCloudUnavailableError(err)) {
-      await tryYoutubeMirror(
-        isSoundCloudPreviewError(err) ? "preview-only" : "blocked",
-      );
+      await tryYoutubeMirror(isSoundCloudPreviewError(err) ? "preview-only" : "blocked");
       return;
     }
     throw err;
@@ -518,11 +496,7 @@ async function processTrack(params: {
       : isArtistOriginal
         ? "The artist’s SoundCloud download"
         : "SoundCloud’s stream");
-  const verdict = await safeVerifyForDj(
-    downloaded.filePath,
-    signal,
-    isArtistOriginal,
-  );
+  const verdict = await safeVerifyForDj(downloaded.filePath, signal, isArtistOriginal);
 
   // Both "measured and too lossy" and "could not measure at all" are rejections
   // here: an unmeasurable file is not evidence of a good one, and the switch
@@ -569,12 +543,7 @@ async function processTrack(params: {
       action: initialArtifact.action,
       preserve: async () => {
         await update({ title, artist, stage: "delivering", progress: 80 });
-        await ensureNotCancelled(
-          signal,
-          db,
-          payload.jobId,
-          payload.parentJobId,
-        );
+        await ensureNotCancelled(signal, db, payload.jobId, payload.parentJobId);
         await deliverArtifact({
           deps,
           artifact: initialArtifact,
@@ -593,8 +562,7 @@ async function processTrack(params: {
                 djHeadline: verdict?.headline,
                 warnings: warnings.length ? warnings : undefined,
                 sourceCodec: verdict?.analysis.codec ?? downloaded.acodec,
-                sourceBitrateKbps:
-                  verdict?.analysis.bitrateKbps ?? downloaded.abr ?? null,
+                sourceBitrateKbps: verdict?.analysis.bitrateKbps ?? downloaded.abr ?? null,
                 cutoffHz: verdict?.analysis.cutoffHz,
                 sourceFormatId: downloaded.formatId,
                 soundcloudOriginal: true,
@@ -690,12 +658,7 @@ async function processTrack(params: {
           signal,
         });
         await update({ stage: "delivering", progress: 80 });
-        await ensureNotCancelled(
-          signal,
-          db,
-          payload.jobId,
-          payload.parentJobId,
-        );
+        await ensureNotCancelled(signal, db, payload.jobId, payload.parentJobId);
         await deliverArtifact({
           deps,
           artifact,
@@ -714,8 +677,7 @@ async function processTrack(params: {
                 djHeadline: verdict?.headline,
                 warnings: warnings.length ? warnings : undefined,
                 sourceCodec: verdict?.analysis.codec ?? downloaded.acodec,
-                sourceBitrateKbps:
-                  verdict?.analysis.bitrateKbps ?? downloaded.abr ?? null,
+                sourceBitrateKbps: verdict?.analysis.bitrateKbps ?? downloaded.abr ?? null,
                 cutoffHz: verdict?.analysis.cutoffHz,
                 sourceFormatId: downloaded.formatId,
                 soundcloudOriginal: true,
@@ -766,9 +728,7 @@ async function processTrack(params: {
   await ensureNotCancelled(signal, db, payload.jobId, payload.parentJobId);
   const sourceFormatId = downloaded.formatId;
   const soundcloudOriginal =
-    soundcloud &&
-    typeof sourceFormatId === "string" &&
-    sourceFormatId.toLowerCase() === "download";
+    soundcloud && typeof sourceFormatId === "string" && sourceFormatId.toLowerCase() === "download";
 
   await deliverArtifact({
     deps,
@@ -788,8 +748,7 @@ async function processTrack(params: {
           djHeadline: verdict?.headline,
           warnings: warnings.length ? warnings : undefined,
           sourceCodec: verdict?.analysis.codec ?? downloaded.acodec,
-          sourceBitrateKbps:
-            verdict?.analysis.bitrateKbps ?? downloaded.abr ?? null,
+          sourceBitrateKbps: verdict?.analysis.bitrateKbps ?? downloaded.abr ?? null,
           cutoffHz: verdict?.analysis.cutoffHz,
           sourceFormatId,
           soundcloudOriginal: soundcloudOriginal || undefined,
@@ -814,11 +773,7 @@ async function resolveSoundCloudMeta(params: {
   // Prefer yt-dlp credits over oEmbed author_name — label pages (UKF) set
   // author to the channel while `artist`/`artists` still carry "WINK, borne".
   try {
-    const info = await dumpJson(
-      params.trackUrl,
-      params.cookieTmp,
-      params.signal,
-    );
+    const info = await dumpJson(params.trackUrl, params.cookieTmp, params.signal);
     const credited = artistNamesFromInfo(info);
     if (credited.length) artist = credited.join(", ");
     const dumpedTitle = String(info.title ?? info.track ?? "").trim();
@@ -860,8 +815,7 @@ async function resolveSoundCloudMeta(params: {
   });
 }
 
-export type YoutubePreferResult =
-  "downloaded" | "no_mirror" | "no_cookies" | "youtube_failed";
+export type YoutubePreferResult = "downloaded" | "no_mirror" | "no_cookies" | "youtube_failed";
 
 /** What is left for a SoundCloud track once the YouTube-first attempt is over. */
 export type SoundCloudStepAfterMirror = "done" | "soundcloud";
@@ -1032,9 +986,7 @@ async function fallbackSoundCloudToYoutube(params: {
       preferYoutube: false,
       allowYoutubeFallback: false,
       qualitySourceLabel:
-        params.reason === "low-quality"
-          ? "The YouTube mirror of this SoundCloud track"
-          : undefined,
+        params.reason === "low-quality" ? "The YouTube mirror of this SoundCloud track" : undefined,
     });
   } finally {
     await fs.unlink(ytCookieTmp).catch(() => undefined);
@@ -1074,9 +1026,7 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
 
     const kind = detectSourceKind(payload.url);
     if (kind !== "youtube" && kind !== "soundcloud" && kind !== "spotify") {
-      throw new Error(
-        "Only YouTube, SoundCloud, and Spotify (mirror) URLs are supported",
-      );
+      throw new Error("Only YouTube, SoundCloud, and Spotify (mirror) URLs are supported");
     }
 
     // Child jobs are enqueued by the worker and skip the API route's Drive
@@ -1121,12 +1071,7 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
         const childJobIds = await deps.enqueueChildTracks(matched, {
           driveFolderId,
         });
-        await ensureNotCancelled(
-          signal,
-          db,
-          payload.jobId,
-          payload.parentJobId,
-        );
+        await ensureNotCancelled(signal, db, payload.jobId, payload.parentJobId);
         await update({
           status: "completed",
           stage: "done",
@@ -1186,11 +1131,7 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
 
     // Single tracks skip yt-dlp expand so purchase_url resolution is not
     // blocked by SoundCloud client_id scrape failures in the worker.
-    if (
-      !payload.parentJobId &&
-      deps.enqueueChildTracks &&
-      isPlaylistUrl(payload.url)
-    ) {
+    if (!payload.parentJobId && deps.enqueueChildTracks && isPlaylistUrl(payload.url)) {
       // yt-dlp raises SoundCloud's DRM / geo errors during extraction, so they
       // land here rather than in processTrack's catch. Swallow those and carry
       // on: processTrack will hit the same error inside its own try, where the
@@ -1221,12 +1162,7 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
         const childJobIds = await deps.enqueueChildTracks(expanded.entries, {
           driveFolderId,
         });
-        await ensureNotCancelled(
-          signal,
-          db,
-          payload.jobId,
-          payload.parentJobId,
-        );
+        await ensureNotCancelled(signal, db, payload.jobId, payload.parentJobId);
         await update({
           status: "completed",
           stage: "done",
@@ -1260,8 +1196,7 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
       workDir,
       outDir,
       matchedUrl: payload.spotifyUrl ? trackUrl : undefined,
-      catalogUrl:
-        payload.spotifyUrl ?? (kind === "soundcloud" ? payload.url : null),
+      catalogUrl: payload.spotifyUrl ?? (kind === "soundcloud" ? payload.url : null),
     });
   } catch (err) {
     if (err instanceof ProcessCancelledError) {
@@ -1311,9 +1246,7 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
     if (cookieTmp) {
       await fs.unlink(cookieTmp).catch(() => undefined);
     }
-    await fs
-      .rm(workDir, { recursive: true, force: true })
-      .catch(() => undefined);
+    await fs.rm(workDir, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 

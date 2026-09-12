@@ -1,12 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import {
+  type AudioAnalysis,
   classifyForDj,
   impliedBitrateKbps,
   isClubReady,
   isLosslessCodec,
   isQualityGateError,
   QualityGateError,
-  type AudioAnalysis,
 } from "./audio-verify";
 import { averageSpectrumDb, estimateCutoff, SPECTRUM_FFT_SIZE } from "./spectrum";
 
@@ -145,9 +145,7 @@ describe("classifyForDj", () => {
   });
 
   it("flags zero headroom separately from the codec problem", () => {
-    const v = classifyForDj(
-      analysis({ codec: "aac", losslessContainer: false, peakDb: 0 }),
-    );
+    const v = classifyForDj(analysis({ codec: "aac", losslessContainer: false, peakDb: 0 }));
     expect(v.warnings.some((w) => w.includes("headroom"))).toBe(true);
   });
 
@@ -180,10 +178,9 @@ describe("classifyForDj", () => {
   it("does not penalise a lossless file for a benign 20 kHz roll-off", () => {
     // 20 kHz of 22.05 is ratio 0.907 — above the laundering threshold, so a
     // gently filtered but genuine master still reads as a master.
-    const v = classifyForDj(
-      analysis({ cutoffHz: 20100, cutoffRatio: 20100 / (SR / 2) }),
-      { artistOriginal: true },
-    );
+    const v = classifyForDj(analysis({ cutoffHz: 20100, cutoffRatio: 20100 / (SR / 2) }), {
+      artistOriginal: true,
+    });
     expect(v.tier).toBe("master");
   });
 
@@ -239,9 +236,7 @@ describe("classifyForDj", () => {
   });
 
   it("says nothing about headroom when the peak could not be measured", () => {
-    const v = classifyForDj(
-      analysis({ codec: "aac", losslessContainer: false, peakDb: null }),
-    );
+    const v = classifyForDj(analysis({ codec: "aac", losslessContainer: false, peakDb: null }));
     expect(v.warnings.some((w) => w.includes("headroom"))).toBe(false);
   });
 });

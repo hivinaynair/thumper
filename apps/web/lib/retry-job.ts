@@ -38,9 +38,7 @@ export function requeueFields(): {
   };
 }
 
-export function downloadPayloadFromJob(
-  row: StoredJobRow,
-): DownloadJobPayload {
+export function downloadPayloadFromJob(row: StoredJobRow): DownloadJobPayload {
   const result = row.result ?? {};
   return {
     jobId: row.id,
@@ -65,12 +63,9 @@ export function playlistContextForChild(
   }>,
 ): { parentJobId?: string; driveFolderId?: string } {
   const child = jobs.find((row) => row.id === childId);
-  const parent = jobs.find((row) =>
-    row.result?.childJobIds?.includes(childId),
-  );
+  const parent = jobs.find((row) => row.result?.childJobIds?.includes(childId));
   return {
     ...(parent ? { parentJobId: parent.id } : {}),
-    driveFolderId:
-      child?.result?.driveFolderId || parent?.result?.driveFolderId,
+    driveFolderId: child?.result?.driveFolderId || parent?.result?.driveFolderId,
   };
 }

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import * as pipeline from "./index";
 import {
   AUDIO_FORMAT_SORT,
   YOUTUBE_AUDIO_FORMAT_SELECTOR,
@@ -14,6 +13,7 @@ import {
   isYoutubeBotError,
   SoundCloudPreviewError,
 } from "./download";
+import * as pipeline from "./index";
 
 const youtubeParams = {
   url: "https://www.youtube.com/watch?v=quality",
@@ -23,11 +23,7 @@ const youtubeParams = {
 
 const selectedFile = "/virtual/work/selected.m4a";
 
-const selectedOutput = (overrides: {
-  formatId?: string;
-  acodec?: string;
-  abr?: string;
-} = {}) =>
+const selectedOutput = (overrides: { formatId?: string; acodec?: string; abr?: string } = {}) =>
   [
     `__filepath__=${selectedFile}`,
     `__format_id__=${overrides.formatId ?? "premium-audio"}`,
@@ -223,9 +219,7 @@ describe("isSoundCloudUnavailableError", () => {
   });
 
   it("still covers preview-only tracks", () => {
-    expect(
-      isSoundCloudUnavailableError(new SoundCloudPreviewError("preview-only")),
-    ).toBe(true);
+    expect(isSoundCloudUnavailableError(new SoundCloudPreviewError("preview-only"))).toBe(true);
     expect(
       isSoundCloudUnavailableError(
         new SoundCloudPreviewError(
@@ -246,9 +240,7 @@ describe("isSoundCloudUnavailableError", () => {
   });
 
   it("does not treat DRM as preview-only", () => {
-    expect(isSoundCloudPreviewError(new Error("This video is DRM protected"))).toBe(
-      false,
-    );
+    expect(isSoundCloudPreviewError(new Error("This video is DRM protected"))).toBe(false);
   });
 });
 
@@ -264,9 +256,7 @@ describe("isFormatUnavailable", () => {
   });
 
   it("ignores unrelated failures", () => {
-    expect(isFormatUnavailable(new Error("HTTP Error 403: Forbidden"))).toBe(
-      false,
-    );
+    expect(isFormatUnavailable(new Error("HTTP Error 403: Forbidden"))).toBe(false);
     expect(isFormatUnavailable(new Error("Video unavailable"))).toBe(false);
   });
 });
@@ -291,16 +281,12 @@ describe("isRateLimitError", () => {
   it("matches HTTP 429", () => {
     expect(
       isRateLimitError(
-        new Error(
-          "/opt/venv/bin/yt-dlp failed (1): ERROR: HTTP Error 429: Too Many Requests",
-        ),
+        new Error("/opt/venv/bin/yt-dlp failed (1): ERROR: HTTP Error 429: Too Many Requests"),
       ),
     ).toBe(true);
   });
 
   it("ignores other HTTP errors", () => {
-    expect(isRateLimitError(new Error("HTTP Error 403: Forbidden"))).toBe(
-      false,
-    );
+    expect(isRateLimitError(new Error("HTTP Error 403: Forbidden"))).toBe(false);
   });
 });

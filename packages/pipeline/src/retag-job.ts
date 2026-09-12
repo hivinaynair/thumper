@@ -1,35 +1,35 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
 import type { Db } from "@thumper/db";
 import { files, jobs } from "@thumper/db";
 import {
   GOOGLE_DRIVE_TOKEN_ERROR,
+  type RetagJobPayload,
   sanitizeFilename,
   trackDisplayName,
-  type RetagJobPayload,
 } from "@thumper/shared";
+import { eq } from "drizzle-orm";
+import { findFallbackArtworkUrl } from "./artwork-fallback";
 import { FILE_TTL_MS } from "./cleanup";
 import { convertAudio } from "./convert";
-import { deleteDriveFile, uploadToDrive } from "./drive";
 import {
   cleanupRetagPaths,
   completeDeliveryTransaction,
   withRetagPathCleanup,
 } from "./delivery-artifact";
-import { findFallbackArtworkUrl } from "./artwork-fallback";
+import { deleteDriveFile, uploadToDrive } from "./drive";
 import { downloadArtworkFile, resolveTrackTags } from "./metadata";
 import { assertPathInside, userRoot } from "./paths";
 import { ProcessCancelledError } from "./process";
+import type { ProgressUpdater } from "./run-job";
 import {
   deleteObjectStrict,
+  hasBlobStorage,
   materializeObject,
   putLocalFile,
-  useBlobStorage,
   userStorageKey,
 } from "./storage";
-import type { ProgressUpdater } from "./run-job";
 
 export type RunRetagJobDeps = {
   db: Db;
@@ -61,10 +61,7 @@ export async function materializeRetagInput(params: {
   inputPath: string;
   materialize?: typeof materializeObject;
 }): Promise<void> {
-  await (params.materialize ?? materializeObject)(
-    params.inputStorageKey,
-    params.inputPath,
-  );
+  await (params.materialize ?? materializeObject)(params.inputStorageKey, params.inputPath);
 }
 
 async function ensureNotCancelled(signal: AbortSignal, db: Db, jobId: string) {
@@ -103,8 +100,7 @@ export async function runRetagJob(deps: RunRetagJobDeps): Promise<void> {
     state: cleanupState,
     run: () => runRetagJobCore(deps, workDir, outDir, cleanupState),
     removeOutput: (filePath) => fs.rm(filePath, { force: true }),
-    removeWorkDir: (dirPath) =>
-      fs.rm(dirPath, { recursive: true, force: true }),
+    removeWorkDir: (dirPath) => fs.rm(dirPath, { recursive: true, force: true }),
   });
 }
 
@@ -150,9 +146,7 @@ async function runRetagJobCore(
     await ensureNotCancelled(signal, db, payload.jobId);
 
     // Extension is a hint only — convertAudio probes the real codec.
-    const keyExt =
-      path.extname(payload.inputStorageKey).replace(/^\./, "").toLowerCase() ||
-      "wav";
+    const keyExt = path.extname(payload.inputStorageKey).replace(/^\./, "").toLowerCase() || "wav";
     const inputPath = path.join(
       workDir,
       `input_${randomUUID()}.${keyExt === "bin" ? "wav" : keyExt}`,
@@ -191,9 +185,7 @@ async function runRetagJobCore(
       }
     }
 
-    const filename = `${sanitizeFilename(
-      trackDisplayName(artist, title),
-    )}.flac`;
+    const filename = `${sanitizeFilename(trackDisplayName(artist, title))}.flac`;
     const outPath = assertPathInside(outDir, path.join(outDir, filename));
     cleanupState.outputPath = outPath;
 
@@ -214,7 +206,7 @@ async function runRetagJobCore(
     await update({ stage: "delivering", progress: 80 });
     await ensureNotCancelled(signal, db, payload.jobId);
 
-    const blobMode = useBlobStorage();
+    const blobMode = hasBlobStorage();
     const skipObjectStore = blobMode && destination === "drive";
     await completeDeliveryTransaction({
       create: async (registerCleanup) => {
@@ -226,12 +218,7 @@ async function runRetagJobCore(
         }
 
         if (blobMode && !skipObjectStore) {
-          const key = userStorageKey(
-            payload.userId,
-            "downloads",
-            randomUUID(),
-            filename,
-          );
+          const key = userStorageKey(payload.userId, "downloads", randomUUID(), filename);
           await putLocalFile(key, outPath, { contentType: "audio/flac" });
           registerCleanup(() => deleteObjectStrict(key));
           relativePath = key;
@@ -271,14 +258,9 @@ async function runRetagJobCore(
           });
           driveFileId = uploaded.fileId;
           driveUrl = uploaded.webViewLink;
-          registerCleanup(() =>
-            deleteDriveFile({ accessToken: token, fileId: uploaded.fileId }),
-          );
+          registerCleanup(() => deleteDriveFile({ accessToken: token, fileId: uploaded.fileId }));
           if (fileRow) {
-            await db
-              .update(files)
-              .set({ driveFileId, driveUrl })
-              .where(eq(files.id, fileRow.id));
+            await db.update(files).set({ driveFileId, driveUrl }).where(eq(files.id, fileRow.id));
           }
         }
 
@@ -296,8 +278,7 @@ async function runRetagJobCore(
           workDir,
           state: cleanupState,
           removeOutput: (filePath) => fs.rm(filePath, { force: true }),
-          removeWorkDir: (dirPath) =>
-            fs.rm(dirPath, { recursive: true, force: true }),
+          removeWorkDir: (dirPath) => fs.rm(dirPath, { recursive: true, force: true }),
         });
         cleanupState.cleaned = true;
       },

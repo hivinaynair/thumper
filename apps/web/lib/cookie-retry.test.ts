@@ -1,13 +1,13 @@
+import { describe, expect, it } from "bun:test";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "bun:test";
 import {
   cookieNeedsRefresh,
   cookieProvidersNeeded,
   jobsToRetry,
   missingCookiesForRetry,
-  retryButtonLabel,
   type RetryableJob,
+  retryButtonLabel,
 } from "./cookie-retry";
 
 const BOT_CHECK =
@@ -28,18 +28,14 @@ describe("cookieNeedsRefresh", () => {
   });
 
   it("ignores quality-gate failures", () => {
-    expect(cookieNeedsRefresh("Not club-ready — source rolls off at 16 kHz")).toBe(
-      false,
-    );
+    expect(cookieNeedsRefresh("Not club-ready — source rolls off at 16 kHz")).toBe(false);
   });
 });
 
 describe("jobsToRetry", () => {
   it("retries a single failed track that needs fresh cookies", () => {
     const failed = job({ id: "track-1", error: BOT_CHECK });
-    expect(jobsToRetry(failed, [failed]).map((row) => row.id)).toEqual([
-      "track-1",
-    ]);
+    expect(jobsToRetry(failed, [failed]).map((row) => row.id)).toEqual(["track-1"]);
   });
 
   it("retries only cookie-failed children of a still-running playlist", () => {
@@ -63,9 +59,10 @@ describe("jobsToRetry", () => {
       job({ id: "pending", status: "running", error: null }),
     ];
 
-    expect(
-      jobsToRetry(parent, [parent, ...children]).map((row) => row.id),
-    ).toEqual(["fail-a", "fail-b"]);
+    expect(jobsToRetry(parent, [parent, ...children]).map((row) => row.id)).toEqual([
+      "fail-a",
+      "fail-b",
+    ]);
   });
 
   it("does not re-expand a playlist parent that already has children", () => {
@@ -76,9 +73,7 @@ describe("jobsToRetry", () => {
       result: { playlist: true, childJobIds: ["fail-a"] },
     });
     const child = job({ id: "fail-a", error: BOT_CHECK });
-    expect(jobsToRetry(parent, [parent, child]).map((row) => row.id)).toEqual([
-      "fail-a",
-    ]);
+    expect(jobsToRetry(parent, [parent, child]).map((row) => row.id)).toEqual(["fail-a"]);
   });
 
   it("does not retry cancelled tracks", () => {
@@ -96,9 +91,7 @@ describe("jobsToRetry", () => {
       error: BOT_CHECK,
       result: { playlist: true, childJobIds: [] },
     });
-    expect(jobsToRetry(parent, [parent]).map((row) => row.id)).toEqual([
-      "uk-140",
-    ]);
+    expect(jobsToRetry(parent, [parent]).map((row) => row.id)).toEqual(["uk-140"]);
   });
 });
 
@@ -126,8 +119,7 @@ describe("missingCookiesForRetry", () => {
 
 describe("cookieProvidersNeeded", () => {
   it("asks for SoundCloud cookies on a SoundCloud session failure", () => {
-    const error =
-      "SoundCloud session is no longer usable — refresh SoundCloud cookies and retry.";
+    const error = "SoundCloud session is no longer usable — refresh SoundCloud cookies and retry.";
     expect(cookieNeedsRefresh(error)).toBe(true);
     expect(cookieProvidersNeeded(error)).toEqual(["soundcloud"]);
   });

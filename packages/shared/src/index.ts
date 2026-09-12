@@ -11,8 +11,7 @@ export const DeliveryDestinationSchema = z.enum(["browser", "drive", "both"]);
 export type DeliveryDestination = z.infer<typeof DeliveryDestinationSchema>;
 
 /** Google OAuth scope required for Drive delivery (`drive.file`). */
-export const GOOGLE_DRIVE_FILE_SCOPE =
-  "https://www.googleapis.com/auth/drive.file";
+export const GOOGLE_DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 
 export const GOOGLE_DRIVE_TOKEN_ERROR =
   "Google Drive selected but no Google token with drive.file — open your account menu and reconnect Google";
@@ -27,20 +26,11 @@ export function oauthScopesIncludeDrive(scopes: readonly string[]): boolean {
   );
 }
 
-export const SourceKindSchema = z.enum([
-  "youtube",
-  "soundcloud",
-  "spotify",
-  "patreon",
-]);
+export const SourceKindSchema = z.enum(["youtube", "soundcloud", "spotify", "patreon"]);
 export type SourceKind = z.infer<typeof SourceKindSchema>;
 
 /** Accepted inputs. Spotify is catalog-only — audio is mirrored from YT/SC. */
-export const SupportedSourceKindSchema = z.enum([
-  "youtube",
-  "soundcloud",
-  "spotify",
-]);
+export const SupportedSourceKindSchema = z.enum(["youtube", "soundcloud", "spotify"]);
 export type SupportedSourceKind = z.infer<typeof SupportedSourceKindSchema>;
 
 export const JobStatusSchema = z.enum([
@@ -133,9 +123,7 @@ export const RETAG_INPUT_LABEL = "WAV, MP3, M4A, or FLAC";
 export function retagInputExtension(filename: string): string | null {
   const match = /\.([a-z0-9]+)$/i.exec(filename.trim());
   const ext = match?.[1]?.toLowerCase();
-  return ext && (RETAG_INPUT_EXTENSIONS as readonly string[]).includes(ext)
-    ? ext
-    : null;
+  return ext && (RETAG_INPUT_EXTENSIONS as readonly string[]).includes(ext) ? ext : null;
 }
 
 /**
@@ -145,8 +133,10 @@ export function retagInputExtension(filename: string): string | null {
 export function isRetagInput(filename: string, contentType = ""): boolean {
   if (retagInputExtension(filename)) return true;
   const type = contentType.toLowerCase().split(";")[0]?.trim() ?? "";
-  return (RETAG_INPUT_CONTENT_TYPES as readonly string[]).includes(type)
-    && type !== "application/octet-stream";
+  return (
+    (RETAG_INPUT_CONTENT_TYPES as readonly string[]).includes(type) &&
+    type !== "application/octet-stream"
+  );
 }
 
 export const CreateRetagJobInputSchema = z.object({
@@ -179,8 +169,7 @@ export type RetagJobPayload = z.infer<typeof RetagJobPayloadSchema>;
  * the one that left a vocal chop in the drop, and was 5.6x slower.
  * See scripts/stem-bench/.
  */
-export const STEM_MODEL_DEFAULT =
-  "melband_roformer_instvox_duality_v2.ckpt" as const;
+export const STEM_MODEL_DEFAULT = "melband_roformer_instvox_duality_v2.ckpt" as const;
 
 export const StemRoleSchema = z.enum(["instrumental", "vocals"]);
 export type StemRole = z.infer<typeof StemRoleSchema>;
@@ -230,10 +219,7 @@ export function isPlaylistUrl(url: string): boolean {
     const parsed = new URL(url);
     const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
     if (host.includes("youtube.com")) {
-      return (
-        parsed.pathname.startsWith("/playlist") ||
-        parsed.searchParams.has("list")
-      );
+      return parsed.pathname.startsWith("/playlist") || parsed.searchParams.has("list");
     }
     if (host.includes("soundcloud.com")) {
       return /\/sets\//.test(parsed.pathname);

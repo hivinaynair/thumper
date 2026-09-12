@@ -1,9 +1,7 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { oauthScopesIncludeDrive } from "@thumper/shared";
 
-export async function userHasGoogleDriveAccess(
-  userId?: string | null,
-): Promise<boolean> {
+export async function userHasGoogleDriveAccess(userId?: string | null): Promise<boolean> {
   const id = userId ?? (await auth()).userId;
   if (!id) return false;
 

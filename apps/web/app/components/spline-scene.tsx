@@ -11,13 +11,8 @@ export function SplineScene({ className }: { className?: string }) {
   const [ready, setReady] = useState(false);
 
   return (
-    <div
-      className={`${className ?? "spline-frame"}${ready ? " is-ready" : ""}`}
-    >
-      <Spline
-        scene={THUMPER_SPLINE_SCENE}
-        onLoad={() => setReady(true)}
-      />
+    <div className={`${className ?? "spline-frame"}${ready ? " is-ready" : ""}`}>
+      <Spline scene={THUMPER_SPLINE_SCENE} onLoad={() => setReady(true)} />
     </div>
   );
 }

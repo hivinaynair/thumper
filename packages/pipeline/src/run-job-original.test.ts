@@ -1,7 +1,7 @@
+import { describe, expect, it } from "bun:test";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "bun:test";
 import {
   completeDeliveryTransaction,
   executeOriginalArtifact,
@@ -157,9 +157,7 @@ describe("preserveArtifactForLocalDelivery", () => {
         filename: "Artist - Track.mp3",
       });
 
-      expect(deliveredPath).toBe(
-        path.join(outputDirectory, "Artist - Track.mp3"),
-      );
+      expect(deliveredPath).toBe(path.join(outputDirectory, "Artist - Track.mp3"));
       expect(await fs.readFile(deliveredPath)).toEqual(bytes);
       expect(await fs.readFile(sourcePath)).toEqual(bytes);
     } finally {
@@ -284,9 +282,7 @@ describe("completeDeliveryTransaction", () => {
     const cleanupError = new Error("work directory cleanup failed");
     let completed = false;
     let durableArtifact = true;
-    const completeWithCleanup = completeDeliveryTransaction as unknown as <
-      T,
-    >(params: {
+    const completeWithCleanup = completeDeliveryTransaction as unknown as <T>(params: {
       create: (register: (cleanup: () => Promise<void>) => void) => Promise<T>;
       beforeComplete: (result: T) => Promise<void>;
       complete: (result: T) => Promise<void>;

@@ -28,10 +28,7 @@ export async function expandPlaylistEntries(
     "%(webpage_url)s\t%(title)s\t%(uploader)s\t%(playlist_title)s",
   ];
   if (/soundcloud\.com/i.test(url)) {
-    args.push(
-      "--extractor-args",
-      await soundcloudExtractorArgs(options.signal),
-    );
+    args.push("--extractor-args", await soundcloudExtractorArgs(options.signal));
   }
   if (options.cookiePath) {
     args.push("--cookies", options.cookiePath);
@@ -85,21 +82,15 @@ export async function nameSoundCloudEntries(
   entries: PlaylistEntry[],
   options: {
     signal?: AbortSignal;
-    lookup?: (
-      url: string,
-    ) => Promise<{ title?: string; artist?: string } | null>;
+    lookup?: (url: string) => Promise<{ title?: string; artist?: string } | null>;
   } = {},
 ): Promise<PlaylistEntry[]> {
   const lookup =
-    options.lookup ??
-    ((url: string) => fetchSoundCloudOEmbed(url, { signal: options.signal }));
+    options.lookup ?? ((url: string) => fetchSoundCloudOEmbed(url, { signal: options.signal }));
 
   const pending = entries
     .map((entry, index) => ({ entry, index }))
-    .filter(
-      ({ entry }) =>
-        !entry.title && /^https?:\/\/[^/]*soundcloud\.com\//i.test(entry.url),
-    );
+    .filter(({ entry }) => !entry.title && /^https?:\/\/[^/]*soundcloud\.com\//i.test(entry.url));
   if (pending.length === 0) return entries;
 
   const named = [...entries];

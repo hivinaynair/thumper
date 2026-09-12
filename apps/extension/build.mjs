@@ -25,11 +25,7 @@ for (const [name, src] of FILES) {
 
 // Same files as a zip, for the download link on the site. Built from the
 // source paths rather than by scanning dist/, so it can't contain itself.
-const zip = makeZip(
-  FILES.map(([name, src]) => ({ name, data: readFileSync(src) })),
-);
+const zip = makeZip(FILES.map(([name, src]) => ({ name, data: readFileSync(src) })));
 writeFileSync(join(out, "thumper-extension.zip"), zip);
 
-console.log(
-  "Built extension to apps/extension/dist (Load unpacked) + dist/thumper-extension.zip",
-);
+console.log("Built extension to apps/extension/dist (Load unpacked) + dist/thumper-extension.zip");

@@ -40,9 +40,7 @@ async function scrapeClientIdFromScripts(signal?: AbortSignal): Promise<string |
   if (fromHtml) return fromHtml;
 
   const scriptUrls = [
-    ...html.matchAll(
-      /src=["'](https:\/\/[^"']*sndcdn\.com\/assets\/[^"']+\.js)["']/gi,
-    ),
+    ...html.matchAll(/src=["'](https:\/\/[^"']*sndcdn\.com\/assets\/[^"']+\.js)["']/gi),
   ]
     .map((m) => m[1])
     .filter((u): u is string => Boolean(u))
@@ -66,9 +64,7 @@ async function scrapeClientIdFromScripts(signal?: AbortSignal): Promise<string |
 }
 
 /** Best-effort SoundCloud web client_id (rotates). */
-export async function resolveSoundCloudClientId(
-  signal?: AbortSignal,
-): Promise<string> {
+export async function resolveSoundCloudClientId(signal?: AbortSignal): Promise<string> {
   const envId = clientIdFromEnv();
   if (envId) return envId;
   if (cachedClientId) return cachedClientId;
@@ -86,9 +82,7 @@ export async function resolveSoundCloudClientId(
 }
 
 /** yt-dlp `--extractor-args` value for SoundCloud. */
-export async function soundcloudExtractorArgs(
-  signal?: AbortSignal,
-): Promise<string> {
+export async function soundcloudExtractorArgs(signal?: AbortSignal): Promise<string> {
   const id = await resolveSoundCloudClientId(signal);
   return `soundcloud:client_id=${id}`;
 }

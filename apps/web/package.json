@@ -7,7 +7,6 @@
     "dev": "next dev --port 3004",
     "build": "bun ./scripts/copy-extension.mjs && next build",
     "start": "next start",
-    "lint": "eslint --max-warnings 0",
     "check-types": "next typegen && tsc --noEmit",
     "test": "bun test"
   },
@@ -36,13 +35,11 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
-    "@thumper/eslint-config": "workspace:*",
     "@thumper/typescript-config": "workspace:*",
     "@types/archiver": "8.0.0",
     "@types/node": "^22.15.3",
     "@types/react": "^19.2.13",
     "@types/react-dom": "^19.2.3",
-    "eslint": "^9.39.1",
     "extension": "workspace:*",
     "postcss": "^8.5.28",
     "tailwindcss": "^4.3.3",

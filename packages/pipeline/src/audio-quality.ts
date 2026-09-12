@@ -63,12 +63,10 @@ export const AUDIO_FORMAT_SORT = "abr,asr,channels,acodec";
  *
  * Overridable because YouTube changes which clients work every few months.
  */
-export const DEFAULT_YOUTUBE_PLAYER_CLIENTS =
-  "android_vr,default,mweb,web_music";
+export const DEFAULT_YOUTUBE_PLAYER_CLIENTS = "android_vr,default,mweb,web_music";
 
 export function youtubeExtractorArgs(): string {
-  const clients =
-    process.env.YT_PLAYER_CLIENTS?.trim() || DEFAULT_YOUTUBE_PLAYER_CLIENTS;
+  const clients = process.env.YT_PLAYER_CLIENTS?.trim() || DEFAULT_YOUTUBE_PLAYER_CLIENTS;
   return `youtube:player_client=${clients}`;
 }
 
@@ -94,11 +92,7 @@ export const withoutPreview = (selector: string) => {
 export const isPcmSource = (codec: string, filePath = "") => {
   const lowerCodec = codec.toLowerCase();
   const lowerPath = filePath.toLowerCase();
-  return (
-    lowerCodec.startsWith("pcm_") ||
-    lowerCodec === "lpcm" ||
-    lowerPath.endsWith(".wav")
-  );
+  return lowerCodec.startsWith("pcm_") || lowerCodec === "lpcm" || lowerPath.endsWith(".wav");
 };
 
 export const isLosslessSource = (codec: string, filePath = "") => {
@@ -135,9 +129,9 @@ export const audioQualityLabel = (
     lossless && typeof cutoffHz === "number" && cutoffHz > 0 && cutoffHz < 19000;
 
   if (launderedLossy) {
-    return `${label} — lossy source rewrapped (content stops at ${(
-      cutoffHz / 1000
-    ).toFixed(1)} kHz)`;
+    return `${label} — lossy source rewrapped (content stops at ${(cutoffHz / 1000).toFixed(
+      1,
+    )} kHz)`;
   }
 
   if (lossless) {
@@ -154,7 +148,5 @@ export const audioQualityLabel = (
     typeof cutoffHz === "number" && cutoffHz > 0
       ? `, content to ${(cutoffHz / 1000).toFixed(1)} kHz`
       : "";
-  return `${label} converted from ${
-    lowerCodec || "unknown"
-  } source (no quality gain${cutoffNote})`;
+  return `${label} converted from ${lowerCodec || "unknown"} source (no quality gain${cutoffNote})`;
 };

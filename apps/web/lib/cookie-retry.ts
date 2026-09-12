@@ -21,19 +21,14 @@ export function cookieNeedsRefresh(error: string | null | undefined): boolean {
   return COOKIE_REFRESH_RE.test(error);
 }
 
-export function cookieProvidersNeeded(
-  error: string,
-): Array<"youtube" | "soundcloud"> {
+export function cookieProvidersNeeded(error: string): Array<"youtube" | "soundcloud"> {
   if (/refresh SoundCloud cookies|Sync SoundCloud cookies/i.test(error)) {
     return ["soundcloud"];
   }
   return ["youtube"];
 }
 
-export function jobsToRetry(
-  target: RetryableJob,
-  allJobs: RetryableJob[],
-): RetryableJob[] {
+export function jobsToRetry(target: RetryableJob, allJobs: RetryableJob[]): RetryableJob[] {
   const childIds = Array.isArray(target.result?.childJobIds)
     ? target.result.childJobIds.filter((id) => typeof id === "string")
     : [];
@@ -43,9 +38,7 @@ export function jobsToRetry(
     .filter((row): row is RetryableJob => Boolean(row));
 
   const cookieFailed = (rows: RetryableJob[]) =>
-    rows.filter(
-      (row) => row.status === "failed" && cookieNeedsRefresh(row.error),
-    );
+    rows.filter((row) => row.status === "failed" && cookieNeedsRefresh(row.error));
 
   if (children.length > 0) return cookieFailed(children);
   return cookieFailed([target]);

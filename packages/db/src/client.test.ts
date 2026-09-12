@@ -11,7 +11,5 @@ test("createDb widens the per-address connect budget past Bun's default", () => 
   createDb("postgres://user:pass@localhost:5432/thumper");
 
   expect(CONNECT_ATTEMPT_TIMEOUT_MS).toBeGreaterThanOrEqual(5_000);
-  expect(net.getDefaultAutoSelectFamilyAttemptTimeout()).toBe(
-    CONNECT_ATTEMPT_TIMEOUT_MS,
-  );
+  expect(net.getDefaultAutoSelectFamilyAttemptTimeout()).toBe(CONNECT_ATTEMPT_TIMEOUT_MS);
 });

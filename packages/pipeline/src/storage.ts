@@ -1,9 +1,9 @@
-import { del, get, head, put } from "@vercel/blob";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { del, get, head, put } from "@vercel/blob";
 import { assertPathInside, dataRoot, userRoot } from "./paths";
 
-export function useBlobStorage(): boolean {
+export function hasBlobStorage(): boolean {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim());
 }
 
@@ -42,7 +42,7 @@ export async function putBytes(
     contentType?: string;
   },
 ): Promise<StoredObjectMeta> {
-  if (useBlobStorage()) {
+  if (hasBlobStorage()) {
     const blob = await put(key, Buffer.from(data), {
       access: "private",
       token: blobToken(),
@@ -74,7 +74,7 @@ export async function putLocalFile(
 ): Promise<StoredObjectMeta> {
   const stat = await fs.stat(localFilePath);
 
-  if (useBlobStorage()) {
+  if (hasBlobStorage()) {
     const { createReadStream } = await import("node:fs");
     const blob = await put(key, createReadStream(localFilePath), {
       access: "private",
@@ -103,12 +103,12 @@ export async function putLocalFile(
 }
 
 export async function readBytes(key: string): Promise<Buffer | null> {
-  if (useBlobStorage()) {
+  if (hasBlobStorage()) {
     const result = await get(key, {
       access: "private",
       token: blobToken(),
     });
-    if (!result || result.statusCode !== 200) return null;
+    if (result?.statusCode !== 200) return null;
     const ab = await new Response(result.stream).arrayBuffer();
     return Buffer.from(ab);
   }
@@ -120,10 +120,8 @@ export async function readBytes(key: string): Promise<Buffer | null> {
   }
 }
 
-export async function headObject(
-  key: string,
-): Promise<StoredObjectMeta | null> {
-  if (useBlobStorage()) {
+export async function headObject(key: string): Promise<StoredObjectMeta | null> {
+  if (hasBlobStorage()) {
     try {
       const meta = await head(key, { token: blobToken() });
       return {
@@ -148,7 +146,7 @@ export async function headObject(
 }
 
 export async function deleteObjectStrict(key: string): Promise<void> {
-  if (useBlobStorage()) {
+  if (hasBlobStorage()) {
     await del(key, { token: blobToken() });
     return;
   }
@@ -165,13 +163,10 @@ export async function deleteObject(key: string): Promise<void> {
 }
 
 /** Copy a stored object to a local path for ffmpeg / yt-dlp. */
-export async function materializeObject(
-  key: string,
-  destPath: string,
-): Promise<void> {
+export async function materializeObject(key: string, destPath: string): Promise<void> {
   await fs.mkdir(path.dirname(destPath), { recursive: true });
 
-  if (useBlobStorage()) {
+  if (hasBlobStorage()) {
     const data = await readBytes(key);
     if (!data) throw new Error(`Missing stored object: ${key}`);
     await fs.writeFile(destPath, data);
@@ -203,12 +198,12 @@ export async function resolveDownloadTarget(
       : userStorageKey(userId, relativePath)
     : userStorageKey(userId, relativePath);
 
-  if (useBlobStorage()) {
+  if (hasBlobStorage()) {
     const result = await get(key, {
       access: "private",
       token: blobToken(),
     });
-    if (!result || result.statusCode !== 200) return null;
+    if (result?.statusCode !== 200) return null;
     return {
       kind: "blob",
       stream: result.stream,
@@ -217,10 +212,7 @@ export async function resolveDownloadTarget(
     };
   }
 
-  const absolute = assertPathInside(
-    userRoot(userId),
-    path.join(userRoot(userId), relativePath),
-  );
+  const absolute = assertPathInside(userRoot(userId), path.join(userRoot(userId), relativePath));
   try {
     await fs.stat(absolute);
     return { kind: "file", absolutePath: absolute };

@@ -1,16 +1,12 @@
 import { createClerkClient } from "@clerk/backend";
 import { createDb, jobs } from "@thumper/db";
+import { type PlaylistEntry, runDownloadJob, sweepExpiredFiles } from "@thumper/pipeline";
 import {
-  runDownloadJob,
-  sweepExpiredFiles,
-  type PlaylistEntry,
-} from "@thumper/pipeline";
-import {
-  detectSourceKind,
+  type DownloadJobPayload,
   DownloadJobPayloadSchema,
+  detectSourceKind,
   oauthScopesIncludeDrive,
   QUEUE_NAME_DOWNLOAD,
-  type DownloadJobPayload,
 } from "@thumper/shared";
 import { eq } from "drizzle-orm";
 import { PgBoss } from "pg-boss";
@@ -72,11 +68,7 @@ async function updateJob(
   if (patch.matchedUrl !== undefined) values.matchedUrl = patch.matchedUrl;
   if (patch.error !== undefined) values.error = patch.error;
   if (patch.result !== undefined) values.result = patch.result;
-  if (
-    patch.status === "completed" ||
-    patch.status === "failed" ||
-    patch.status === "cancelled"
-  ) {
+  if (patch.status === "completed" || patch.status === "failed" || patch.status === "cancelled") {
     values.completedAt = new Date();
   }
   await db.update(jobs).set(values).where(eq(jobs.id, jobId));
@@ -197,8 +189,7 @@ async function main() {
           signal: ac.signal,
           update: (patch) => updateJob(payload.jobId, patch),
           getGoogleAccessToken,
-          enqueueChildTracks: (tracks, context) =>
-            enqueueChildTracks(payload, tracks, context),
+          enqueueChildTracks: (tracks, context) => enqueueChildTracks(payload, tracks, context),
         });
       } finally {
         abortControllers.delete(payload.jobId);
@@ -220,10 +211,7 @@ async function main() {
   void sweep();
   setInterval(() => void sweep(), 15 * 60 * 1000).unref();
 
-  log.info(
-    { concurrency: env.WORKER_CONCURRENCY },
-    "Thumper worker listening",
-  );
+  log.info({ concurrency: env.WORKER_CONCURRENCY }, "Thumper worker listening");
 }
 
 main().catch((err) => {

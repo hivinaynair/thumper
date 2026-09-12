@@ -1,8 +1,8 @@
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { classifyForDj, isClubReady } from "./audio-verify";
 import { averageSpectrumDb, estimateCutoff } from "./spectrum";
 
@@ -94,14 +94,7 @@ describe("estimateCutoff on real encodes", () => {
 
   it("tracks MP3 bitrate instead of the codec's band edge", () => {
     const at = (kbps: number) =>
-      cutoffHzOf(
-        encode(lossless, `mp3_${kbps}.mp3`, [
-          "-c:a",
-          "libmp3lame",
-          "-b:a",
-          `${kbps}k`,
-        ]),
-      );
+      cutoffHzOf(encode(lossless, `mp3_${kbps}.mp3`, ["-c:a", "libmp3lame", "-b:a", `${kbps}k`]));
 
     const low = at(64);
     const mid = at(128);
@@ -155,12 +148,7 @@ describe("club-ready gate on real encodes", () => {
     // The case the whole module exists for: 128 kbps MP3 decoded and rewrapped
     // as FLAC. Every codec-name check passes; only the spectrum gives it away.
     // This classified as `master` before the rewrite.
-    const mp3 = encode(lossless, "launder.mp3", [
-      "-c:a",
-      "libmp3lame",
-      "-b:a",
-      "128k",
-    ]);
+    const mp3 = encode(lossless, "launder.mp3", ["-c:a", "libmp3lame", "-b:a", "128k"]);
     const flac = encode(mp3, "laundered.flac", ["-c:a", "flac"]);
 
     const verdict = tierOf(flac, true);

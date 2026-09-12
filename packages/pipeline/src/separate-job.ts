@@ -1,32 +1,32 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
 import type { Db } from "@thumper/db";
 import { files, jobs } from "@thumper/db";
 import {
   GOOGLE_DRIVE_TOKEN_ERROR,
-  sanitizeFilename,
   STEM_MODEL_DEFAULT,
-  stemRoleLabel,
-  trackDisplayName,
   type StemJobPayload,
   type StemRole,
+  sanitizeFilename,
+  stemRoleLabel,
+  trackDisplayName,
 } from "@thumper/shared";
+import { eq } from "drizzle-orm";
 import { FILE_TTL_MS } from "./cleanup";
 import { completeDeliveryTransaction } from "./delivery-artifact";
 import { deleteDriveFile, uploadToDrive } from "./drive";
 import { assertPathInside, userRoot } from "./paths";
 import { ProcessCancelledError } from "./process";
+import type { ProgressUpdater } from "./run-job";
 import { separateStems } from "./separate";
 import {
   deleteObjectStrict,
+  hasBlobStorage,
   materializeObject,
   putLocalFile,
-  useBlobStorage,
   userStorageKey,
 } from "./storage";
-import type { ProgressUpdater } from "./run-job";
 
 export type RunSeparateJobDeps = {
   db: Db;
@@ -108,9 +108,7 @@ export function stemBaseName(payload: StemJobPayload): string {
  * One inference pass emits both stems, so both are always produced and stored
  * — there is no cheaper "instrumental only" path to take.
  */
-export async function runSeparateJob(
-  deps: RunSeparateJobDeps,
-): Promise<void> {
+export async function runSeparateJob(deps: RunSeparateJobDeps): Promise<void> {
   const { payload } = deps;
   const workDir = assertPathInside(
     userRoot(payload.userId),
@@ -134,8 +132,7 @@ export async function runSeparateJob(
         workDir,
         state: cleanupState,
         removeOutput: (filePath) => fs.rm(filePath, { force: true }),
-        removeWorkDir: (dirPath) =>
-          fs.rm(dirPath, { recursive: true, force: true }),
+        removeWorkDir: (dirPath) => fs.rm(dirPath, { recursive: true, force: true }),
       }).catch(() => {
         /* cleanup failures must not mask the original error */
       });
@@ -163,9 +160,7 @@ async function runSeparateJobCore(
     await ensureNotCancelled(signal, db, payload.jobId);
 
     // Extension is a hint only — the separator probes the real codec.
-    const keyExt =
-      path.extname(payload.inputStorageKey).replace(/^\./, "").toLowerCase() ||
-      "wav";
+    const keyExt = path.extname(payload.inputStorageKey).replace(/^\./, "").toLowerCase() || "wav";
     const inputPath = path.join(
       workDir,
       `input_${randomUUID()}.${keyExt === "bin" ? "wav" : keyExt}`,
@@ -191,9 +186,7 @@ async function runSeparateJobCore(
       model: STEM_MODEL_DEFAULT,
       signal,
       onProgress: (fraction) => {
-        const next = Math.round(
-          PROGRESS_START + fraction * (PROGRESS_END - PROGRESS_START),
-        );
+        const next = Math.round(PROGRESS_START + fraction * (PROGRESS_END - PROGRESS_START));
         if (next <= lastReported) return;
         lastReported = next;
         void update({ progress: next }).catch(() => {
@@ -206,8 +199,7 @@ async function runSeparateJobCore(
     await ensureNotCancelled(signal, db, payload.jobId);
 
     // Move each stem out of the work dir under its final name.
-    const staged: Array<{ role: StemRole; outPath: string; filename: string }> =
-      [];
+    const staged: Array<{ role: StemRole; outPath: string; filename: string }> = [];
     for (const role of STEM_ORDER) {
       const filename = `${baseName} (${stemRoleLabel(role)}).flac`;
       const outPath = assertPathInside(outDir, path.join(outDir, filename));
@@ -221,20 +213,16 @@ async function runSeparateJobCore(
       staged.push({ role, outPath, filename });
     }
 
-    const blobMode = useBlobStorage();
+    const blobMode = hasBlobStorage();
     const skipObjectStore = blobMode && destination === "drive";
     const wantsDrive = destination === "drive" || destination === "both";
 
     await completeDeliveryTransaction({
       create: async (registerCleanup) => {
-        const token = wantsDrive
-          ? await deps.getGoogleAccessToken?.(payload.userId)
-          : null;
+        const token = wantsDrive ? await deps.getGoogleAccessToken?.(payload.userId) : null;
         if (wantsDrive && !token) throw new Error(GOOGLE_DRIVE_TOKEN_ERROR);
 
-        const delivered: NonNullable<
-          Parameters<ProgressUpdater>[0]["result"]
-        >["stemFiles"] = [];
+        const delivered: NonNullable<Parameters<ProgressUpdater>[0]["result"]>["stemFiles"] = [];
 
         for (const { role, outPath, filename } of staged) {
           const stat = await fs.stat(outPath);
@@ -245,12 +233,7 @@ async function runSeparateJobCore(
           }
 
           if (blobMode && !skipObjectStore) {
-            const key = userStorageKey(
-              payload.userId,
-              "downloads",
-              randomUUID(),
-              filename,
-            );
+            const key = userStorageKey(payload.userId, "downloads", randomUUID(), filename);
             await putLocalFile(key, outPath, { contentType: "audio/flac" });
             registerCleanup(() => deleteObjectStrict(key));
             relativePath = key;
@@ -288,14 +271,9 @@ async function runSeparateJobCore(
             });
             driveFileId = uploaded.fileId;
             driveUrl = uploaded.webViewLink;
-            registerCleanup(() =>
-              deleteDriveFile({ accessToken: token, fileId: uploaded.fileId }),
-            );
+            registerCleanup(() => deleteDriveFile({ accessToken: token, fileId: uploaded.fileId }));
             if (fileRow) {
-              await db
-                .update(files)
-                .set({ driveFileId, driveUrl })
-                .where(eq(files.id, fileRow.id));
+              await db.update(files).set({ driveFileId, driveUrl }).where(eq(files.id, fileRow.id));
             }
           }
 
@@ -322,8 +300,7 @@ async function runSeparateJobCore(
           workDir,
           state: cleanupState,
           removeOutput: (filePath) => fs.rm(filePath, { force: true }),
-          removeWorkDir: (dirPath) =>
-            fs.rm(dirPath, { recursive: true, force: true }),
+          removeWorkDir: (dirPath) => fs.rm(dirPath, { recursive: true, force: true }),
         });
         cleanupState.cleaned = true;
       },

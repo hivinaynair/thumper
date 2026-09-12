@@ -25,8 +25,7 @@
   --ok: #7a9e6e;
   --warn: var(--bronze);
   --radius: 6px;
-  --shadow-soft:
-    0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 18px 48px rgba(0, 0, 0, 0.45);
+  --shadow-soft: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 18px 48px rgba(0, 0, 0, 0.45);
 }
 
 * {
@@ -48,16 +47,8 @@ body {
 
 body {
   background-image:
-    radial-gradient(
-      ellipse 80% 50% at 85% 0%,
-      rgba(201, 160, 69, 0.12),
-      transparent 55%
-    ),
-    radial-gradient(
-      ellipse 60% 40% at 0% 40%,
-      rgba(128, 87, 74, 0.18),
-      transparent 50%
-    ),
+    radial-gradient(ellipse 80% 50% at 85% 0%, rgba(201, 160, 69, 0.12), transparent 55%),
+    radial-gradient(ellipse 60% 40% at 0% 40%, rgba(128, 87, 74, 0.18), transparent 50%),
     linear-gradient(165deg, var(--obsidian) 0%, var(--void) 100%);
   background-attachment: fixed;
 }
@@ -221,8 +212,7 @@ main.main-flush {
   min-height: 100vh;
   min-width: 0;
   max-width: 34rem;
-  padding: clamp(5rem, 10vh, 7rem) clamp(1.25rem, 5vw, 4rem)
-    clamp(2.5rem, 7vw, 5rem);
+  padding: clamp(5rem, 10vh, 7rem) clamp(1.25rem, 5vw, 4rem) clamp(2.5rem, 7vw, 5rem);
   container-type: inline-size;
   animation: rise 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }

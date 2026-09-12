@@ -19,8 +19,7 @@ const TERMINAL_STATUSES = ["completed", "failed", "cancelled"] as const;
 
 export async function GET() {
   const { userId } = await auth();
-  if (!userId)
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getDb();
 
   const rows = await db
@@ -36,8 +35,7 @@ export async function GET() {
 /** Delete finished jobs (completed / failed / cancelled). Active jobs are kept. */
 export async function DELETE() {
   const { userId } = await auth();
-  if (!userId)
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getDb();
 
   // Never wipe a playlist parent that still has active children — clearing the
@@ -49,27 +47,16 @@ export async function DELETE() {
       result: jobs.result,
     })
     .from(jobs)
-    .where(
-      and(
-        eq(jobs.userId, userId),
-        inArray(jobs.status, [...TERMINAL_STATUSES]),
-      ),
-    );
+    .where(and(eq(jobs.userId, userId), inArray(jobs.status, [...TERMINAL_STATUSES])));
 
   const active = await db
     .select({ id: jobs.id })
     .from(jobs)
-    .where(
-      and(
-        eq(jobs.userId, userId),
-        inArray(jobs.status, ["queued", "running", "cancelling"]),
-      ),
-    );
+    .where(and(eq(jobs.userId, userId), inArray(jobs.status, ["queued", "running", "cancelling"])));
   const activeIds = new Set(active.map((row) => row.id));
 
   const deletable = finished.filter((row) => {
-    const childIds = (row.result as { childJobIds?: string[] } | null)
-      ?.childJobIds;
+    const childIds = (row.result as { childJobIds?: string[] } | null)?.childJobIds;
     if (!Array.isArray(childIds) || childIds.length === 0) return true;
     return !childIds.some((id) => activeIds.has(id));
   });
@@ -96,8 +83,7 @@ export async function DELETE() {
 
 export async function POST(req: Request) {
   const { userId } = await auth();
-  if (!userId)
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const db = getDb();
 
   const body = await req.json();
@@ -113,19 +99,14 @@ export async function POST(req: Request) {
   if (!isSupportedSource(input.url)) {
     return NextResponse.json(
       {
-        error:
-          "Only YouTube, SoundCloud, or Spotify (mirrored via YT/SC) URLs are supported",
+        error: "Only YouTube, SoundCloud, or Spotify (mirrored via YT/SC) URLs are supported",
       },
       { status: 400 },
     );
   }
 
   const sourceKind = detectSourceKind(input.url);
-  if (
-    sourceKind !== "youtube" &&
-    sourceKind !== "soundcloud" &&
-    sourceKind !== "spotify"
-  ) {
+  if (sourceKind !== "youtube" && sourceKind !== "soundcloud" && sourceKind !== "spotify") {
     return NextResponse.json({ error: "Unsupported URL" }, { status: 400 });
   }
 
@@ -149,8 +130,7 @@ export async function POST(req: Request) {
   ) {
     return NextResponse.json(
       {
-        error:
-          "Sync YouTube or SoundCloud cookies before queuing Spotify mirrors",
+        error: "Sync YouTube or SoundCloud cookies before queuing Spotify mirrors",
       },
       { status: 400 },
     );
@@ -159,17 +139,11 @@ export async function POST(req: Request) {
   if (input.destination === "drive" || input.destination === "both") {
     const hasDrive = await userHasGoogleDriveAccess(userId);
     if (!hasDrive) {
-      return NextResponse.json(
-        { error: GOOGLE_DRIVE_TOKEN_ERROR },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: GOOGLE_DRIVE_TOKEN_ERROR }, { status: 400 });
     }
   }
 
-  const recent = await db
-    .select({ id: jobs.id })
-    .from(jobs)
-    .where(eq(jobs.userId, userId));
+  const recent = await db.select({ id: jobs.id }).from(jobs).where(eq(jobs.userId, userId));
   if (recent.length > 500) {
     return NextResponse.json({ error: "Job limit reached" }, { status: 429 });
   }
@@ -197,10 +171,7 @@ export async function POST(req: Request) {
     .returning();
 
   if (!job) {
-    return NextResponse.json(
-      { error: "Failed to create job" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Failed to create job" }, { status: 500 });
   }
 
   const backend = (process.env.PROCESS_BACKEND ?? "pgboss").toLowerCase();
@@ -215,16 +186,14 @@ export async function POST(req: Request) {
         .set({
           status: "failed",
           stage: "error",
-          error:
-            err instanceof Error ? err.message : "Failed to wake Modal worker",
+          error: err instanceof Error ? err.message : "Failed to wake Modal worker",
           completedAt: new Date(),
           updatedAt: new Date(),
         })
         .where(eq(jobs.id, job.id));
       return NextResponse.json(
         {
-          error:
-            err instanceof Error ? err.message : "Failed to wake Modal worker",
+          error: err instanceof Error ? err.message : "Failed to wake Modal worker",
         },
         { status: 502 },
       );
@@ -250,8 +219,5 @@ export async function POST(req: Request) {
       .where(eq(jobs.id, job.id));
   }
 
-  return NextResponse.json(
-    { job: { ...job, pgBossId: bossId } },
-    { status: 201 },
-  );
+  return NextResponse.json({ job: { ...job, pgBossId: bossId } }, { status: 201 });
 }

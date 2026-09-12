@@ -29,10 +29,7 @@ export function userRoot(userId: string): string {
 export function assertPathInside(root: string, candidate: string): string {
   const resolvedRoot = path.resolve(root);
   const resolved = path.resolve(candidate);
-  if (
-    resolved !== resolvedRoot &&
-    !resolved.startsWith(resolvedRoot + path.sep)
-  ) {
+  if (resolved !== resolvedRoot && !resolved.startsWith(resolvedRoot + path.sep)) {
     throw new Error("Path escapes user root");
   }
   return resolved;

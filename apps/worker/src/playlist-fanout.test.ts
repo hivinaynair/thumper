@@ -1,7 +1,7 @@
+import { describe, expect, it } from "bun:test";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "bun:test";
 import { ProcessCancelledError } from "@thumper/pipeline";
 import type { DownloadJobPayload } from "@thumper/shared";
 import {
@@ -13,9 +13,7 @@ import {
 
 const PARENT_ID = "11111111-1111-1111-1111-111111111111";
 
-function parent(
-  overrides: Partial<DownloadJobPayload> = {},
-): DownloadJobPayload {
+function parent(overrides: Partial<DownloadJobPayload> = {}): DownloadJobPayload {
   return {
     jobId: PARENT_ID,
     userId: "user-1",
@@ -28,9 +26,7 @@ function parent(
 
 describe("childJobResult", () => {
   it("stamps parentJobId so a spawned child does not re-expand the playlist", () => {
-    expect(
-      childJobResult(parent(), { driveFolderId: "folder-uk-140" }),
-    ).toEqual({
+    expect(childJobResult(parent(), { driveFolderId: "folder-uk-140" })).toEqual({
       parentJobId: PARENT_ID,
       driveFolderId: "folder-uk-140",
     });
@@ -174,10 +170,7 @@ describe("writeFanoutChildIds", () => {
 
 describe("Modal worker wiring", () => {
   it("fans playlist children out instead of downloading them inline", async () => {
-    const processOne = await readFile(
-      path.join(import.meta.dir, "process-one.ts"),
-      "utf8",
-    );
+    const processOne = await readFile(path.join(import.meta.dir, "process-one.ts"), "utf8");
     expect(processOne).toContain("enqueuePlaylistChildren");
     expect(processOne).toContain("writeFanoutChildIds");
     expect(processOne).not.toContain("TRACK_GAP_MS");

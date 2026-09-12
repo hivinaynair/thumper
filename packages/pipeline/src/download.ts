@@ -1,19 +1,15 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import {
   AUDIO_FORMAT_SELECTOR,
   AUDIO_FORMAT_SORT,
-  YOUTUBE_AUDIO_FORMAT_SELECTOR,
   withoutPreview,
+  YOUTUBE_AUDIO_FORMAT_SELECTOR,
   youtubeExtractorArgs,
 } from "./audio-quality";
 import { getYtDlpPath } from "./paths";
-import {
-  ProcessCancelledError,
-  runCommandOk,
-  type SpawnOptions,
-} from "./process";
+import { ProcessCancelledError, runCommandOk, type SpawnOptions } from "./process";
 import { soundcloudExtractorArgs } from "./soundcloud-client";
 
 const UA =
@@ -24,12 +20,7 @@ const UA =
  * a bot wall. Order matters: android_vr is the most reliable without a PO
  * token; bare `tv` / `web_safari` currently DRM-lock or image-only.
  */
-const YOUTUBE_FALLBACK_CLIENTS = [
-  "android_vr",
-  "android",
-  "mweb",
-  "tv",
-] as const;
+const YOUTUBE_FALLBACK_CLIENTS = ["android_vr", "android", "mweb", "tv"] as const;
 
 const RATE_LIMIT_ATTEMPTS = 4;
 const RATE_LIMIT_BASE_MS = 2_500;
@@ -72,10 +63,7 @@ type DownloadMediaDeps = {
 };
 
 function marker(output: string, name: string): string {
-  return (
-    output.match(new RegExp(`(?:^|\\n)\\s*__${name}__=([^\\n]+)`))?.[1]?.trim() ??
-    ""
-  );
+  return output.match(new RegExp(`(?:^|\\n)\\s*__${name}__=([^\\n]+)`))?.[1]?.trim() ?? "";
 }
 
 function parsePrintMarkers(output: string) {
@@ -107,21 +95,15 @@ async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 
 function withExtractorClients(args: string[], clients: string): string[] {
   return args.map((arg, i) =>
-    args[i - 1] === "--extractor-args"
-      ? `youtube:player_client=${clients}`
-      : arg,
+    args[i - 1] === "--extractor-args" ? `youtube:player_client=${clients}` : arg,
   );
 }
 
 function withoutCookies(args: string[]): string[] {
-  return args.filter(
-    (arg, i) => arg !== "--cookies" && args[i - 1] !== "--cookies",
-  );
+  return args.filter((arg, i) => arg !== "--cookies" && args[i - 1] !== "--cookies");
 }
 
-export async function downloadMedia(
-  params: DownloadMediaParams,
-): Promise<DownloadMediaResult> {
+export async function downloadMedia(params: DownloadMediaParams): Promise<DownloadMediaResult> {
   return downloadMediaWithDeps(params);
 }
 
@@ -130,8 +112,7 @@ export async function downloadMediaWithDeps(
   deps: DownloadMediaDeps = {},
 ): Promise<DownloadMediaResult> {
   const runDownloadCommand = deps.runCommand ?? runCommandOk;
-  const mkdir =
-    deps.mkdir ?? ((directory) => fs.mkdir(directory, { recursive: true }));
+  const mkdir = deps.mkdir ?? ((directory) => fs.mkdir(directory, { recursive: true }));
   const unlink = deps.unlink ?? fs.unlink;
   const createId = deps.randomUUID ?? randomUUID;
   await mkdir(params.workDir);
@@ -191,11 +172,7 @@ export async function downloadMediaWithDeps(
 
   for (let attempt = 0; attempt < RATE_LIMIT_ATTEMPTS; attempt++) {
     try {
-      ({ stdout, stderr } = await runDownloadCommand(
-        getYtDlpPath(),
-        args,
-        spawnOpts,
-      ));
+      ({ stdout, stderr } = await runDownloadCommand(getYtDlpPath(), args, spawnOpts));
       lastErr = undefined;
       break;
     } catch (err) {
@@ -219,10 +196,7 @@ export async function downloadMediaWithDeps(
         continue;
       }
 
-      if (
-        !params.soundcloud &&
-        (isYoutubeBotError(err) || isFormatUnavailable(err))
-      ) {
+      if (!params.soundcloud && (isYoutubeBotError(err) || isFormatUnavailable(err))) {
         const recovered = await tryYoutubeRecovery({
           args,
           spawnOpts,
@@ -264,10 +238,7 @@ export async function downloadMediaWithDeps(
     throw new Error("yt-dlp did not report output filepath");
   }
 
-  if (
-    !params.soundcloud &&
-    (!markers.formatId || !markers.acodec || !markers.abr)
-  ) {
+  if (!params.soundcloud && (!markers.formatId || !markers.acodec || !markers.abr)) {
     await unlink(markers.filepath).catch(() => undefined);
     throw new Error(
       "YouTube quality verification failed: yt-dlp did not report a real format id, audio codec, and positive audio bitrate.",
@@ -286,8 +257,7 @@ export async function downloadMediaWithDeps(
     );
   }
 
-  const title =
-    combined.match(/(?:^|\n)\s*__title__=([^\n]+)/)?.[1]?.trim() ?? undefined;
+  const title = combined.match(/(?:^|\n)\s*__title__=([^\n]+)/)?.[1]?.trim() ?? undefined;
 
   return {
     filePath: markers.filepath,
@@ -311,11 +281,7 @@ async function tryYoutubeRecovery(params: {
   stderr: string;
   anonymousFallback: boolean;
 } | null> {
-  const tryOnce = async (
-    args: string[],
-    clients: string,
-    anonymous: boolean,
-  ) => {
+  const tryOnce = async (args: string[], clients: string, anonymous: boolean) => {
     params.onProgress?.(
       `Retrying YouTube ${anonymous ? "anonymously " : ""}with player_client=${clients}\n`,
     );
@@ -331,8 +297,7 @@ async function tryYoutubeRecovery(params: {
   // Cookie-authenticated requests must never silently downgrade in quality.
   if (
     !params.cookiePath &&
-    (isFormatUnavailable(params.initialErr) ||
-      isYoutubeBotError(params.initialErr))
+    (isFormatUnavailable(params.initialErr) || isYoutubeBotError(params.initialErr))
   ) {
     for (const clients of ["android_vr", "android"] as const) {
       try {
@@ -393,9 +358,7 @@ export function isSoundCloudUnavailableError(err: unknown): boolean {
 export function isFormatUnavailable(err: unknown): boolean {
   return (
     err instanceof Error &&
-    /Requested format is not available|No video formats found/i.test(
-      err.message,
-    )
+    /Requested format is not available|No video formats found/i.test(err.message)
   );
 }
 
@@ -412,8 +375,7 @@ export function isYoutubeBotError(err: unknown): boolean {
 /** Transient HTTP 429 from SoundCloud / YouTube / CDNs. */
 export function isRateLimitError(err: unknown): boolean {
   return (
-    err instanceof Error &&
-    /HTTP Error 429|Too Many Requests|rate[_ ]?limit/i.test(err.message)
+    err instanceof Error && /HTTP Error 429|Too Many Requests|rate[_ ]?limit/i.test(err.message)
   );
 }
 

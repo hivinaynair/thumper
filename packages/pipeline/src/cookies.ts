@@ -1,19 +1,8 @@
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes,
-} from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { dataRoot } from "./paths";
-import {
-  deleteObject,
-  headObject,
-  putBytes,
-  readBytes,
-  userStorageKey,
-} from "./storage";
+import { deleteObject, headObject, putBytes, readBytes, userStorageKey } from "./storage";
 
 const ALGO = "aes-256-gcm";
 
@@ -61,10 +50,7 @@ export async function saveEncryptedCookies(
   });
 }
 
-export async function deleteCookies(
-  userId: string,
-  provider: CookieProvider,
-): Promise<void> {
+export async function deleteCookies(userId: string, provider: CookieProvider): Promise<void> {
   await deleteObject(cookieKey(userId, provider));
 }
 
@@ -73,14 +59,9 @@ export type CookieProviderStatus = {
   updatedAt: string | null;
 };
 
-export type CookieStatusMap = Record<
-  "youtube" | "soundcloud",
-  CookieProviderStatus
->;
+export type CookieStatusMap = Record<"youtube" | "soundcloud", CookieProviderStatus>;
 
-export async function getCookieStatus(
-  userId: string,
-): Promise<CookieStatusMap> {
+export async function getCookieStatus(userId: string): Promise<CookieStatusMap> {
   const providers = ["youtube", "soundcloud"] as const;
   const out = {} as CookieStatusMap;
   for (const provider of providers) {

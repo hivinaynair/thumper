@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { STEM_MODEL_DEFAULT, type StemRole } from "@thumper/shared";
-import { runCommand, ProcessCancelledError, type SpawnOptions } from "./process";
+import { ProcessCancelledError, runCommand, type SpawnOptions } from "./process";
 
 /**
  * Stem separation shells out to `audio-separator`, the same way convert.ts
@@ -47,13 +47,14 @@ export function classifyStemFile(filename: string): StemRole | null {
 export function parseSeparationProgress(chunk: string): number | null {
   let last: number | null = null;
   const re = /(\d+)\/(\d+)\s*\[/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(chunk)) !== null) {
+  let m = re.exec(chunk);
+  while (m !== null) {
     const done = Number(m[1]);
     const total = Number(m[2]);
     if (Number.isFinite(done) && Number.isFinite(total) && total > 0) {
       last = Math.min(1, done / total);
     }
+    m = re.exec(chunk);
   }
   return last;
 }
@@ -77,9 +78,7 @@ export type SeparateStemsParams = {
  * guarantees the stems cannot clip on write, which matters because sources are
  * routinely mastered above 0 dBFS.
  */
-export async function separateStems(
-  params: SeparateStemsParams,
-): Promise<SeparatedStems> {
+export async function separateStems(params: SeparateStemsParams): Promise<SeparatedStems> {
   const {
     inputPath,
     outDir,
@@ -124,9 +123,7 @@ export async function separateStems(
   if (signal?.aborted) throw new ProcessCancelledError();
   if (result.code !== 0) {
     const detail = (result.stderr || result.stdout).slice(-2000).trim();
-    throw new Error(
-      `${binary} failed (${result.code})${detail ? `: ${detail}` : ""}`,
-    );
+    throw new Error(`${binary} failed (${result.code})${detail ? `: ${detail}` : ""}`);
   }
 
   const produced = (await fs.readdir(outDir)).filter(
@@ -142,9 +139,7 @@ export async function separateStems(
   // Fail loudly rather than delivering half a job: a missing stem means the
   // model or its naming changed, and silently shipping one file would look
   // like success.
-  const missing = (["instrumental", "vocals"] as StemRole[]).filter(
-    (r) => !paths[r],
-  );
+  const missing = (["instrumental", "vocals"] as StemRole[]).filter((r) => !paths[r]);
   if (missing.length > 0) {
     throw new Error(
       `Separation produced no ${missing.join(" or ")} stem ` +

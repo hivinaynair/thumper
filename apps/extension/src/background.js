@@ -9,13 +9,7 @@ const WARM_URLS = {
 };
 
 const AUTH_COOKIE_NAMES = {
-  youtube: new Set([
-    "SID",
-    "SSID",
-    "LOGIN_INFO",
-    "__Secure-1PSID",
-    "__Secure-3PSID",
-  ]),
+  youtube: new Set(["SID", "SSID", "LOGIN_INFO", "__Secure-1PSID", "__Secure-3PSID"]),
   soundcloud: new Set(["oauth_token", "oauth_token_refresh"]),
 };
 
@@ -42,10 +36,7 @@ function mergeCookies(...groups) {
   const byId = new Map();
   for (const cookies of groups) {
     for (const cookie of cookies) {
-      byId.set(
-        `${cookie.domain}\t${cookie.path}\t${cookie.name}`,
-        cookie,
-      );
+      byId.set(`${cookie.domain}\t${cookie.path}\t${cookie.name}`, cookie);
     }
   }
   return [...byId.values()];
@@ -60,24 +51,13 @@ async function collectCookies(provider) {
 }
 
 function toNetscape(cookies) {
-  const lines = [
-    "# Netscape HTTP Cookie File",
-    "# Exported by Thumper Cookie Sync",
-  ];
+  const lines = ["# Netscape HTTP Cookie File", "# Exported by Thumper Cookie Sync"];
   for (const c of cookies) {
     const includeSub = c.domain?.startsWith(".") ? "TRUE" : "FALSE";
     const secure = c.secure ? "TRUE" : "FALSE";
     const exp = c.expirationDate ? Math.floor(c.expirationDate) : 0;
     lines.push(
-      [
-        c.domain || "",
-        includeSub,
-        c.path || "/",
-        secure,
-        String(exp),
-        c.name,
-        c.value,
-      ].join("\t"),
+      [c.domain || "", includeSub, c.path || "/", secure, String(exp), c.name, c.value].join("\t"),
     );
   }
   return lines.join("\n");
@@ -173,14 +153,11 @@ async function syncAll(origin) {
     results[provider] = { status: "synced" };
   }
 
-  const synced = SYNC_PROVIDERS.filter(
-    (p) => results[p].status === "synced",
-  );
+  const synced = SYNC_PROVIDERS.filter((p) => results[p].status === "synced");
   if (synced.length === 0) {
     return {
       ok: false,
-      error:
-        "No signed-in sessions found for YouTube or SoundCloud",
+      error: "No signed-in sessions found for YouTube or SoundCloud",
       results,
     };
   }
@@ -224,9 +201,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({
           ...result,
           version: extensionVersion(),
-          message: result.ok
-            ? summarize(result.results)
-            : result.error || "Sync failed",
+          message: result.ok ? summarize(result.results) : result.error || "Sync failed",
         });
       })
       .catch((err) =>

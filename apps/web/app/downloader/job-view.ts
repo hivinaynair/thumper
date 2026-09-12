@@ -71,10 +71,7 @@ export function jobLabel(job: Job): string {
  * A playlist parent finishes as soon as its tracks are queued, so the only
  * honest progress report is the live state of its children.
  */
-export function playlistRollup(
-  job: Job,
-  byId: Map<string, Job>,
-): PlaylistRollup | null {
+export function playlistRollup(job: Job, byId: Map<string, Job>): PlaylistRollup | null {
   if (!job.result?.playlist) return null;
   const children = (job.result.childJobIds ?? [])
     .map((id) => byId.get(id))
@@ -115,18 +112,11 @@ export function groupJobs(jobs: Job[]) {
     }
   }
   const topLevel = jobs.filter((job) => !parentOf.has(job.id));
-  const childrenOf = (id: string) =>
-    jobs.filter((job) => parentOf.get(job.id) === id);
+  const childrenOf = (id: string) => jobs.filter((job) => parentOf.get(job.id) === id);
   return { topLevel, childrenOf, parentOf };
 }
 
-export type VerdictTier =
-  | "original"
-  | "master"
-  | "club"
-  | "marginal"
-  | "unsuitable"
-  | "pending";
+export type VerdictTier = "original" | "master" | "club" | "marginal" | "unsuitable" | "pending";
 
 export type Verdict = {
   tier: VerdictTier;
@@ -155,8 +145,7 @@ export function verdictOf(job: Job): Verdict {
     return {
       tier: "unsuitable",
       lead: "rejected",
-      detail:
-        "Audio stops short of 19 kHz — a lossy stream, whatever the file says it is.",
+      detail: "Audio stops short of 19 kHz — a lossy stream, whatever the file says it is.",
     };
   }
   if (result?.manualDownloadUrl) {

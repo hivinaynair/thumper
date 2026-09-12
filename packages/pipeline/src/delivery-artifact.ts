@@ -104,8 +104,7 @@ export function planDeliveryArtifact(params: {
     };
   }
 
-  const target: AudioTargetFormat =
-    action === "convert-wav" ? "flac" : params.requestedFormat;
+  const target: AudioTargetFormat = action === "convert-wav" ? "flac" : params.requestedFormat;
   const extension = target;
   const filename = filenameWithExtension(params.displayName, extension);
   return {
@@ -115,8 +114,7 @@ export function planDeliveryArtifact(params: {
     filename,
     extension,
     mime: audioMimeForExtension(extension),
-    qualityLabel:
-      action === "convert-wav" ? "Artist original WAV → lossless FLAC" : "",
+    qualityLabel: action === "convert-wav" ? "Artist original WAV → lossless FLAC" : "",
     audioConverted: true,
     target,
     peakLimitLossy: action === "normal-conversion",
@@ -137,10 +135,7 @@ export async function preserveArtifactForLocalDelivery(params: {
 }
 
 export async function executeOriginalArtifact<T>(params: {
-  action: Extract<
-    DeliveryArtifactPlan["action"],
-    "preserve-original" | "convert-wav" | "tag-mp3"
-  >;
+  action: Extract<DeliveryArtifactPlan["action"], "preserve-original" | "convert-wav" | "tag-mp3">;
   preserve: () => Promise<T>;
   convertWav: () => Promise<T>;
   tagMp3: () => Promise<T>;
@@ -159,10 +154,7 @@ function attachCleanupError(primary: unknown, cleanupError: unknown): void {
   }
 }
 
-async function runWithCleanup<T>(
-  run: () => Promise<T>,
-  cleanup: () => Promise<void>,
-): Promise<T> {
+async function runWithCleanup<T>(run: () => Promise<T>, cleanup: () => Promise<void>): Promise<T> {
   let hasPrimaryError = false;
   let primaryError: unknown;
   try {
@@ -181,7 +173,7 @@ async function runWithCleanup<T>(
         // Guarded: this branch is only reachable when `run()` succeeded, so
         // there is no primary error for the throw to swallow. That is exactly
         // what hasPrimaryError is for.
-        // eslint-disable-next-line no-unsafe-finally
+        // biome-ignore lint/correctness/noUnsafeFinally: guarded by hasPrimaryError — only reachable when run() succeeded, so there is no primary error to swallow.
         throw cleanupError;
       }
     }

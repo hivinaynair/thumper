@@ -45,31 +45,19 @@ export async function POST(req: Request) {
   }
 
   const expectedPrefix = `users/${safeUserId(userId)}/`;
-  if (
-    !input.inputStorageKey.startsWith(expectedPrefix) ||
-    input.inputStorageKey.includes("..")
-  ) {
-    return NextResponse.json(
-      { error: "Invalid inputStorageKey" },
-      { status: 400 },
-    );
+  if (!input.inputStorageKey.startsWith(expectedPrefix) || input.inputStorageKey.includes("..")) {
+    return NextResponse.json({ error: "Invalid inputStorageKey" }, { status: 400 });
   }
 
   const meta = await headObject(input.inputStorageKey);
   if (!meta) {
-    return NextResponse.json(
-      { error: "Uploaded WAV not found — upload again" },
-      { status: 404 },
-    );
+    return NextResponse.json({ error: "Uploaded WAV not found — upload again" }, { status: 404 });
   }
 
   if (input.destination === "drive" || input.destination === "both") {
     const hasDrive = await userHasGoogleDriveAccess(userId);
     if (!hasDrive) {
-      return NextResponse.json(
-        { error: GOOGLE_DRIVE_TOKEN_ERROR },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: GOOGLE_DRIVE_TOKEN_ERROR }, { status: 400 });
     }
   }
 
@@ -95,10 +83,7 @@ export async function POST(req: Request) {
     .returning();
 
   if (!job) {
-    return NextResponse.json(
-      { error: "Failed to create job" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Failed to create job" }, { status: 500 });
   }
 
   const backend = (process.env.PROCESS_BACKEND ?? "pgboss").toLowerCase();
@@ -112,16 +97,14 @@ export async function POST(req: Request) {
         .set({
           status: "failed",
           stage: "error",
-          error:
-            err instanceof Error ? err.message : "Failed to wake Modal worker",
+          error: err instanceof Error ? err.message : "Failed to wake Modal worker",
           completedAt: new Date(),
           updatedAt: new Date(),
         })
         .where(eq(jobs.id, job.id));
       return NextResponse.json(
         {
-          error:
-            err instanceof Error ? err.message : "Failed to wake Modal worker",
+          error: err instanceof Error ? err.message : "Failed to wake Modal worker",
         },
         { status: 502 },
       );
@@ -129,8 +112,7 @@ export async function POST(req: Request) {
   } else {
     const boss = await getBoss();
     await boss.createQueue(QUEUE_NAME_DOWNLOAD);
-    const bossId =
-      (await boss.send(QUEUE_NAME_DOWNLOAD, { jobId: job.id })) ?? null;
+    const bossId = (await boss.send(QUEUE_NAME_DOWNLOAD, { jobId: job.id })) ?? null;
     await db
       .update(jobs)
       .set({ pgBossId: bossId, updatedAt: new Date() })
