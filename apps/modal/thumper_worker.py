@@ -52,6 +52,8 @@ worker_image = (
         "python3-venv",
         "curl",
         "unzip",
+        # git: the bgutil PO token provider server is cloned, not pip-installed.
+        "git",
     )
     .run_commands(
         # Deno must be on PATH so yt-dlp can run YouTube EJS challenge solvers,
