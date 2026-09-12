@@ -81,6 +81,10 @@ worker_image = (
             "**/.turbo/**",
             "**/agent-transcripts/**",
             "**/.cursor/**",
+            # Agent worktrees are full checkouts of this repo (~GBs) that can
+            # change mid-build; never ship them into an image.
+            "**/.claude/**",
+            "**/.agents/**",
             "**/.env",
             "**/.env.*",
             "**/.modal.toml",
@@ -142,6 +146,10 @@ stem_image = (
             "**/.turbo/**",
             "**/agent-transcripts/**",
             "**/.cursor/**",
+            # Agent worktrees are full checkouts of this repo (~GBs) that can
+            # change mid-build; never ship them into an image.
+            "**/.claude/**",
+            "**/.agents/**",
             "**/scripts/stem-bench/**",
             "**/.env",
             "**/.env.*",
