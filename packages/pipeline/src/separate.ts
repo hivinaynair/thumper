@@ -71,12 +71,41 @@ export type SeparateStemsParams = {
 };
 
 /**
+ * Linear peak ceiling passed to audio-separator `--normalization`.
+ *
+ * The tool's default is 0.9. That is a *downward* scale whenever a stem
+ * peaks above 0.9 — on a club master already at 0 dBFS that is ~1 dB of
+ * lost level, and more when the model overshoots. 1.0 only attenuates
+ * stems that would clip integer PCM on write.
+ */
+export const STEM_PEAK_CEILING = 1;
+
+export type SeparatorArgsParams = {
+  inputPath: string;
+  outDir: string;
+  model: string;
+  modelDir: string;
+};
+
+export function separatorArgs(params: SeparatorArgsParams): string[] {
+  return [
+    params.inputPath,
+    "--model_filename",
+    params.model,
+    "--model_file_dir",
+    params.modelDir,
+    "--output_dir",
+    params.outDir,
+    "--output_format",
+    "FLAC",
+    "--normalization",
+    String(STEM_PEAK_CEILING),
+  ];
+}
+
+/**
  * Split one file into instrumental + vocals. One inference pass emits both,
  * so there is never a reason to run this twice for the two stems.
- *
- * Note: audio-separator peak-normalises to 0.9 by default. We keep that — it
- * guarantees the stems cannot clip on write, which matters because sources are
- * routinely mastered above 0 dBFS.
  */
 export async function separateStems(params: SeparateStemsParams): Promise<SeparatedStems> {
   const {
@@ -106,17 +135,7 @@ export async function separateStems(params: SeparateStemsParams): Promise<Separa
   const binary = separatorBinary();
   const result = await runCommand(
     binary,
-    [
-      inputPath,
-      "--model_filename",
-      model,
-      "--model_file_dir",
-      modelDir,
-      "--output_dir",
-      outDir,
-      "--output_format",
-      "FLAC",
-    ],
+    separatorArgs({ inputPath, outDir, model, modelDir }),
     options,
   );
 

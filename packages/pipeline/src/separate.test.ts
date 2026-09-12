@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { classifyStemFile, parseSeparationProgress } from "./separate";
+import {
+  classifyStemFile,
+  parseSeparationProgress,
+  STEM_PEAK_CEILING,
+  separatorArgs,
+} from "./separate";
 
 describe("classifyStemFile", () => {
   it("reads the role marker audio-separator writes", () => {
@@ -57,5 +62,37 @@ describe("parseSeparationProgress", () => {
     expect(parseSeparationProgress("")).toBeNull();
     // A download line reports bytes, not chunks — must not read as progress.
     expect(parseSeparationProgress(" 36%|███▌ | 618M/1.72G [04:36<44:05]")).toBeNull();
+  });
+});
+
+describe("separatorArgs", () => {
+  const args = separatorArgs({
+    inputPath: "/tmp/in.wav",
+    outDir: "/tmp/stems",
+    model: "model.ckpt",
+    modelDir: "/models",
+  });
+
+  it("writes FLAC and points at the model + output dir", () => {
+    expect(args[0]).toBe("/tmp/in.wav");
+    expect(
+      args.slice(args.indexOf("--output_format"), args.indexOf("--output_format") + 2),
+    ).toEqual(["--output_format", "FLAC"]);
+    expect(
+      args.slice(args.indexOf("--model_filename"), args.indexOf("--model_filename") + 2),
+    ).toEqual(["--model_filename", "model.ckpt"]);
+    expect(args.slice(args.indexOf("--output_dir"), args.indexOf("--output_dir") + 2)).toEqual([
+      "--output_dir",
+      "/tmp/stems",
+    ]);
+  });
+
+  it("only peak-limits stems that would clip, not the 0.9 default", () => {
+    // audio-separator's default 0.9 pulls a full-scale club master down ~1 dB,
+    // and more when the model overshoots. 1.0 matches integer full scale.
+    const i = args.indexOf("--normalization");
+    expect(i).toBeGreaterThan(-1);
+    expect(Number(args[i + 1])).toBe(STEM_PEAK_CEILING);
+    expect(STEM_PEAK_CEILING).toBe(1);
   });
 });
