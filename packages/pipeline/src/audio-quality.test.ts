@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import {
   AUDIO_FORMAT_SELECTOR,
   AUDIO_FORMAT_SORT,
@@ -7,6 +7,7 @@ import {
   withoutPreview,
   YOUTUBE_AUDIO_FORMAT_SELECTOR,
   youtubeExtractorArgs,
+  youtubePotExtractorArgs,
 } from "./audio-quality";
 
 describe("withoutPreview", () => {
@@ -123,5 +124,32 @@ describe("audioQualityLabel", () => {
 
   it("still works when no cutoff was measured", () => {
     expect(audioQualityLabel("alac", "alac", "in.m4a")).toBe("Lossless (original ALAC)");
+  });
+});
+
+describe("youtubePotExtractorArgs", () => {
+  const ORIGINAL = process.env.BGUTIL_POT_SERVER_HOME;
+  afterEach(() => {
+    if (ORIGINAL === undefined) delete process.env.BGUTIL_POT_SERVER_HOME;
+    else process.env.BGUTIL_POT_SERVER_HOME = ORIGINAL;
+  });
+
+  // Images without the provider built in must not pass a bogus server_home —
+  // yt-dlp would warn on every download and still serve no PO token.
+  it("stays silent when no provider is built into the image", () => {
+    delete process.env.BGUTIL_POT_SERVER_HOME;
+    expect(youtubePotExtractorArgs()).toBeNull();
+  });
+
+  it("points the bgutil script provider at the built server", () => {
+    process.env.BGUTIL_POT_SERVER_HOME = "/opt/bgutil/server";
+    expect(youtubePotExtractorArgs()).toBe(
+      "youtubepot-bgutilscript:server_home=/opt/bgutil/server",
+    );
+  });
+
+  it("treats a blank server home as absent", () => {
+    process.env.BGUTIL_POT_SERVER_HOME = "  ";
+    expect(youtubePotExtractorArgs()).toBeNull();
   });
 });

@@ -65,6 +65,24 @@ export const AUDIO_FORMAT_SORT = "abr,asr,channels,acodec";
  */
 export const DEFAULT_YOUTUBE_PLAYER_CLIENTS = "android_vr,default,mweb,web_music";
 
+/**
+ * Points yt-dlp's bgutil plugin at the PO token server built into the image.
+ *
+ * Premium itags live on the cookie-backed clients (`default`, `mweb`,
+ * `web_music`), and those now need a PO token. Without one they fail and the
+ * download falls through to `android_vr`, which succeeds at itag 251 — a
+ * silent drop from 256 kbps to 160 kbps. The token is what keeps a paying
+ * session on the formats it pays for.
+ *
+ * Null when the image has no provider built in, so local checkouts don't pass
+ * a server_home yt-dlp would warn about on every download.
+ */
+export function youtubePotExtractorArgs(): string | null {
+  const home = process.env.BGUTIL_POT_SERVER_HOME?.trim();
+  if (!home) return null;
+  return `youtubepot-bgutilscript:server_home=${home}`;
+}
+
 export function youtubeExtractorArgs(): string {
   const clients = process.env.YT_PLAYER_CLIENTS?.trim() || DEFAULT_YOUTUBE_PLAYER_CLIENTS;
   return `youtube:player_client=${clients}`;

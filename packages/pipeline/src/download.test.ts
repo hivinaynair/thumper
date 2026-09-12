@@ -6,6 +6,7 @@ import {
 } from "./audio-quality";
 import {
   downloadMediaWithDeps,
+  withExtractorClients,
   isFormatUnavailable,
   isRateLimitError,
   isSoundCloudPreviewError,
@@ -288,5 +289,36 @@ describe("isRateLimitError", () => {
 
   it("ignores other HTTP errors", () => {
     expect(isRateLimitError(new Error("HTTP Error 403: Forbidden"))).toBe(false);
+  });
+});
+
+describe("withExtractorClients", () => {
+  it("retargets the player client on a fallback retry", () => {
+    const args = ["--extractor-args", "youtube:player_client=android_vr", "URL"];
+    expect(withExtractorClients(args, "web_music")).toEqual([
+      "--extractor-args",
+      "youtube:player_client=web_music",
+      "URL",
+    ]);
+  });
+
+  // The PO token is what keeps cookie-backed clients on Premium itags. Losing
+  // it while retrying would downgrade the retry to 160 kbps precisely when the
+  // first attempt already failed.
+  it("keeps the PO token provider arg intact while swapping clients", () => {
+    const args = [
+      "--extractor-args",
+      "youtube:player_client=android_vr",
+      "--extractor-args",
+      "youtubepot-bgutilscript:server_home=/opt/bgutil/server",
+      "URL",
+    ];
+    expect(withExtractorClients(args, "web_music")).toEqual([
+      "--extractor-args",
+      "youtube:player_client=web_music",
+      "--extractor-args",
+      "youtubepot-bgutilscript:server_home=/opt/bgutil/server",
+      "URL",
+    ]);
   });
 });

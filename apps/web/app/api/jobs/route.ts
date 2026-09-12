@@ -1,6 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { jobs } from "@thumper/db";
-import { getCookieStatus } from "@thumper/pipeline/cookies";
+import { cookieOwnerId, getCookieStatus } from "@thumper/pipeline/cookies";
 import {
   CreateJobInputSchema,
   detectSourceKind,
@@ -110,7 +110,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unsupported URL" }, { status: 400 });
   }
 
-  const cookieStatus = await getCookieStatus(userId);
+  const cookieStatus = await getCookieStatus(cookieOwnerId(userId));
   if (sourceKind === "youtube" && !cookieStatus.youtube.present) {
     return NextResponse.json(
       { error: "Sync YouTube cookies before queuing YouTube downloads" },

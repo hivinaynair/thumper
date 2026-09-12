@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import {
+  cookieOwnerId,
   deleteCookies,
   getCookieStatus,
   looksLikeNetscapeCookies,
@@ -13,7 +14,9 @@ const ProviderSchema = z.enum(["youtube", "soundcloud"]);
 export async function GET() {
   const { userId } = await auth();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const cookies = await getCookieStatus(userId);
+  // Status reflects the session downloads actually run on; PUT/DELETE stay
+  // keyed to the caller so a friend cannot clobber the server jar.
+  const cookies = await getCookieStatus(cookieOwnerId(userId));
   return NextResponse.json({ cookies });
 }
 

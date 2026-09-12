@@ -4,18 +4,27 @@ FROM oven/bun:1.3-debian AS base
 USER root
 
 ARG DENO_VERSION=2.6.10
+# Plugin and provider server must be the same version.
+ARG BGUTIL_VERSION=2.0.0
 ENV DENO_INSTALL=/usr/local
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip python3-venv ffmpeg ca-certificates curl unzip \
+    python3 python3-pip python3-venv ffmpeg ca-certificates curl unzip git \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL https://deno.land/install.sh | sh -s "v${DENO_VERSION}" \
     && deno --version \
     && python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir -U \
-        pip "yt-dlp[default]" mutagen
+        pip "yt-dlp[default]" mutagen \
+        "bgutil-ytdlp-pot-provider==${BGUTIL_VERSION}" \
+    && git clone --depth 1 --single-branch --branch "${BGUTIL_VERSION}" \
+        https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil \
+    && cd /opt/bgutil/server \
+    && deno install --allow-scripts=npm:canvas --frozen
 
 ENV PATH="/opt/venv/bin:/usr/local/bin:$PATH"
+# Tells the pipeline the provider is present; unset images skip the arg.
+ENV BGUTIL_POT_SERVER_HOME=/opt/bgutil/server
 WORKDIR /app
 
 FROM base AS deps

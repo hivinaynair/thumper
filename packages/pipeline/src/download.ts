@@ -7,6 +7,7 @@ import {
   withoutPreview,
   YOUTUBE_AUDIO_FORMAT_SELECTOR,
   youtubeExtractorArgs,
+  youtubePotExtractorArgs,
 } from "./audio-quality";
 import { getYtDlpPath } from "./paths";
 import { ProcessCancelledError, runCommandOk, type SpawnOptions } from "./process";
@@ -93,9 +94,17 @@ async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-function withExtractorClients(args: string[], clients: string): string[] {
+export function withExtractorClients(
+  args: string[],
+  clients: string,
+): string[] {
+  // Only the player_client arg is retargeted. Other extractor args — notably
+  // the bgutil PO token provider — must survive the retry, or the fallback
+  // silently loses access to Premium itags.
   return args.map((arg, i) =>
-    args[i - 1] === "--extractor-args" ? `youtube:player_client=${clients}` : arg,
+    args[i - 1] === "--extractor-args" && arg.startsWith("youtube:player_client=")
+      ? `youtube:player_client=${clients}`
+      : arg,
   );
 }
 
@@ -153,6 +162,9 @@ export async function downloadMediaWithDeps(
   } else {
     // Premium itags (141 / 774) are only listed for certain player clients.
     args.push("--extractor-args", youtubeExtractorArgs());
+    // ...and those clients now need a PO token to serve them at all.
+    const pot = youtubePotExtractorArgs();
+    if (pot) args.push("--extractor-args", pot);
   }
   if (params.cookiePath) {
     args.push("--cookies", params.cookiePath);

@@ -35,6 +35,18 @@ export function decryptBytes(payload: Buffer): Buffer {
 
 export type CookieProvider = "youtube" | "soundcloud" | "patreon";
 
+/**
+ * Whose cookie jar a download runs on.
+ *
+ * Extraction identity and delivery identity are separate: downloads share one
+ * server-owned YouTube/SoundCloud session, while Drive uploads keep using each
+ * signed-in user's own Google OAuth token. Friends never sync their own
+ * cookies. Unset (self-hosted, single user), everyone uses their own.
+ */
+export function cookieOwnerId(requestingUserId: string): string {
+  return process.env.SHARED_COOKIE_USER_ID?.trim() || requestingUserId;
+}
+
 function cookieKey(userId: string, provider: CookieProvider): string {
   return userStorageKey(userId, "cookies", `${provider}.cookies.enc`);
 }

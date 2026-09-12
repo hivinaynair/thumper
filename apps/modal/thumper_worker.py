@@ -31,6 +31,8 @@ APP_NAME = "thumper-worker"
 # Same Deno pin as the root Dockerfile — yt-dlp needs an external JS runtime
 # (plus yt-dlp-ejs from the [default] extra) to solve YouTube challenges.
 DENO_VERSION = "2.6.10"
+# bgutil plugin and provider server must be the same version.
+BGUTIL_VERSION = "2.0.0"
 
 # Local checkout for image build; Modal runtime mounts the module under /root/.
 _here = Path(__file__).resolve()
@@ -52,12 +54,19 @@ worker_image = (
         "unzip",
     )
     .run_commands(
-        # Deno must be on PATH so yt-dlp can run YouTube EJS challenge solvers.
+        # Deno must be on PATH so yt-dlp can run YouTube EJS challenge solvers,
+        # and to run the bgutil PO token provider in script mode.
         f'curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s "v{DENO_VERSION}"',
         "deno --version",
         "python3 -m venv /opt/venv",
         # [default] pulls yt-dlp-ejs; plain yt-dlp alone cannot solve YT challenges.
         '/opt/venv/bin/pip install --no-cache-dir -U pip "yt-dlp[default]" mutagen \'fastapi[standard]\'',
+        # PO token provider: cookie-backed clients need one to serve Premium
+        # itags. Plugin and server must be the same version.
+        f'/opt/venv/bin/pip install --no-cache-dir -U "bgutil-ytdlp-pot-provider=={BGUTIL_VERSION}"',
+        f"git clone --depth 1 --single-branch --branch {BGUTIL_VERSION} "
+        "https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil",
+        "cd /opt/bgutil/server && deno install --allow-scripts=npm:canvas --frozen",
     )
     .pip_install("fastapi[standard]")
     .env(
@@ -65,6 +74,7 @@ worker_image = (
             "DENO_INSTALL": "/usr/local",
             "PATH": "/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "YT_DLP_PATH": "/opt/venv/bin/yt-dlp",
+            "BGUTIL_POT_SERVER_HOME": "/opt/bgutil/server",
             "DATA_DIR": "/tmp/thumper-data",
         }
     )
