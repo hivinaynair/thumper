@@ -25,7 +25,7 @@ import {
 } from "./audio-verify";
 import { FILE_TTL_MS } from "./cleanup";
 import { convertAudio, hasAttachedArtwork, tagMp3Copy } from "./convert";
-import { cookieOwnerId, materializeCookieFile } from "./cookies";
+import { materializeCookieFile } from "./cookies";
 import {
   completeDeliveryTransaction,
   type DeliveryArtifactPlan,
@@ -867,7 +867,7 @@ async function trySoundCloudViaYoutubeFirst(params: {
   const mirror = await matchTrackToYoutube(meta, { signal });
   if (!mirror) return "no_mirror";
 
-  const ytCookieTmp = await materializeCookieFile(cookieOwnerId(payload.userId), "youtube");
+  const ytCookieTmp = await materializeCookieFile(payload.userId, "youtube");
   if (!ytCookieTmp) return "no_cookies";
 
   try {
@@ -956,7 +956,7 @@ async function fallbackSoundCloudToYoutube(params: {
     );
   }
 
-  const ytCookieTmp = await materializeCookieFile(cookieOwnerId(payload.userId), "youtube");
+  const ytCookieTmp = await materializeCookieFile(payload.userId, "youtube");
   if (!ytCookieTmp) {
     throw new Error(
       `SoundCloud couldn’t serve “${meta.artists[0] ?? "?"} – ${meta.title}” and YouTube cookies aren’t synced — sync YouTube from a signed-in browser, then retry (Modal’s IP needs them to pass the bot check).`,
@@ -1098,7 +1098,7 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
 
       const mirrorKind = detectSourceKind(mirror.url);
       cookieTmp = await materializeCookieFile(
-        cookieOwnerId(payload.userId),
+        payload.userId,
         mirrorKind === "soundcloud" ? "soundcloud" : "youtube",
       );
 
@@ -1120,7 +1120,7 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
 
     // ——— YouTube / SoundCloud ———
     cookieTmp = await materializeCookieFile(
-      cookieOwnerId(payload.userId),
+      payload.userId,
       kind === "soundcloud" ? "soundcloud" : "youtube",
     );
     await ensureNotCancelled(signal, db, payload.jobId, payload.parentJobId);
