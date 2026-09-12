@@ -9,12 +9,12 @@ import {
 import {
   type DownloadJobPayload,
   detectSourceKind,
-  oauthScopesIncludeDrive,
   type RetagJobPayload,
   type StemJobPayload,
 } from "@thumper/shared";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
+import { makeGoogleTokenFetcher, makeUpdateJob } from "./job-store";
 import {
   enqueuePlaylistChildren,
   fanoutIdsFromCompletedParent,
@@ -41,38 +41,8 @@ export async function processJobById(jobId: string): Promise<void> {
   const db = createDb(databaseUrl);
   const clerk = createClerkClient({ secretKey: clerkSecret });
 
-  async function getGoogleAccessToken(userId: string): Promise<string | null> {
-    try {
-      const res = await clerk.users.getUserOauthAccessToken(userId, "google");
-      const entry = res.data[0];
-      if (!entry?.token) return null;
-      const scopes = entry.scopes ?? [];
-      if (scopes.length > 0 && !oauthScopesIncludeDrive(scopes)) return null;
-      return entry.token;
-    } catch (err) {
-      log.warn({ err, userId }, "Failed to fetch Google OAuth token");
-      return null;
-    }
-  }
-
-  async function updateJob(
-    id: string,
-    patch: Parameters<Parameters<typeof runDownloadJob>[0]["update"]>[0],
-  ) {
-    const values: Record<string, unknown> = { updatedAt: new Date() };
-    if (patch.status) values.status = patch.status;
-    if (patch.stage) values.stage = patch.stage;
-    if (patch.progress !== undefined) values.progress = patch.progress;
-    if (patch.title !== undefined) values.title = patch.title;
-    if (patch.artist !== undefined) values.artist = patch.artist;
-    if (patch.matchedUrl !== undefined) values.matchedUrl = patch.matchedUrl;
-    if (patch.error !== undefined) values.error = patch.error;
-    if (patch.result !== undefined) values.result = patch.result;
-    if (patch.status === "completed" || patch.status === "failed" || patch.status === "cancelled") {
-      values.completedAt = new Date();
-    }
-    await db.update(jobs).set(values).where(eq(jobs.id, id));
-  }
+  const updateJob = makeUpdateJob(db);
+  const getGoogleAccessToken = makeGoogleTokenFetcher(clerk, log);
 
   async function playlistContextForJob(
     childId: string,

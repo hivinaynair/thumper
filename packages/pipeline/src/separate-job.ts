@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Db } from "@thumper/db";
-import { files, jobs } from "@thumper/db";
+import { files } from "@thumper/db";
 import {
   GOOGLE_DRIVE_TOKEN_ERROR,
   STEM_MODEL_DEFAULT,
@@ -16,6 +16,7 @@ import { eq } from "drizzle-orm";
 import { FILE_TTL_MS } from "./cleanup";
 import { completeDeliveryTransaction } from "./delivery-artifact";
 import { deleteDriveFile, uploadToDrive } from "./drive";
+import { ensureNotCancelled } from "./job-cancel";
 import { assertPathInside, userRoot } from "./paths";
 import { ProcessCancelledError } from "./process";
 import type { ProgressUpdater } from "./run-job";
@@ -76,18 +77,6 @@ export async function cleanupStemPaths(params: {
     errors.push(err);
   }
   if (errors.length > 0) throw errors[0];
-}
-
-async function ensureNotCancelled(signal: AbortSignal, db: Db, jobId: string) {
-  if (signal.aborted) throw new ProcessCancelledError();
-  const [row] = await db
-    .select({ status: jobs.status })
-    .from(jobs)
-    .where(eq(jobs.id, jobId))
-    .limit(1);
-  if (!row || row.status === "cancelling" || row.status === "cancelled") {
-    throw new ProcessCancelledError();
-  }
 }
 
 /** Name stems off the hints when we have them, else the uploaded filename. */
@@ -222,63 +211,75 @@ async function runSeparateJobCore(
         const token = wantsDrive ? await deps.getGoogleAccessToken?.(payload.userId) : null;
         if (wantsDrive && !token) throw new Error(GOOGLE_DRIVE_TOKEN_ERROR);
 
-        const delivered: NonNullable<Parameters<ProgressUpdater>[0]["result"]>["stemFiles"] = [];
+        type StemFile = NonNullable<
+          NonNullable<Parameters<ProgressUpdater>[0]["result"]>["stemFiles"]
+        >[number];
 
-        for (const { role, outPath, filename } of staged) {
-          const stat = await fs.stat(outPath);
-          let relativePath = path.relative(userRoot(payload.userId), outPath);
+        // Each stem is an independent ~40MB upload (object store, then Drive);
+        // running them together halves the delivery stage on a GPU container
+        // billed by the second. `allSettled` rather than a fast-fail map so
+        // every cleanup is registered before an error unwinds the transaction.
+        const outcomes = await Promise.allSettled(
+          staged.map(async ({ role, outPath, filename }): Promise<StemFile | null> => {
+            const stat = await fs.stat(outPath);
+            let relativePath = path.relative(userRoot(payload.userId), outPath);
 
-          if (!blobMode) {
-            registerCleanup(() => fs.rm(outPath, { force: true }));
-          }
-
-          if (blobMode && !skipObjectStore) {
-            const key = userStorageKey(payload.userId, "downloads", randomUUID(), filename);
-            await putLocalFile(key, outPath, { contentType: "audio/flac" });
-            registerCleanup(() => deleteObjectStrict(key));
-            relativePath = key;
-          }
-
-          const [fileRow] = skipObjectStore
-            ? []
-            : await db
-                .insert(files)
-                .values({
-                  userId: payload.userId,
-                  jobId: payload.jobId,
-                  relativePath,
-                  filename,
-                  mime: "audio/flac",
-                  sizeBytes: Number(stat.size),
-                  expiresAt: new Date(Date.now() + FILE_TTL_MS),
-                })
-                .returning();
-          if (fileRow) {
-            registerCleanup(async () => {
-              await db.delete(files).where(eq(files.id, fileRow.id));
-            });
-          }
-
-          let driveFileId: string | undefined;
-          let driveUrl: string | undefined;
-          if (wantsDrive && token) {
-            const uploaded = await uploadToDrive({
-              accessToken: token,
-              filePath: outPath,
-              filename,
-              mimeType: "audio/flac",
-              folderId: payload.driveFolderId,
-            });
-            driveFileId = uploaded.fileId;
-            driveUrl = uploaded.webViewLink;
-            registerCleanup(() => deleteDriveFile({ accessToken: token, fileId: uploaded.fileId }));
-            if (fileRow) {
-              await db.update(files).set({ driveFileId, driveUrl }).where(eq(files.id, fileRow.id));
+            if (!blobMode) {
+              registerCleanup(() => fs.rm(outPath, { force: true }));
             }
-          }
 
-          if (fileRow) {
-            delivered.push({
+            if (blobMode && !skipObjectStore) {
+              const key = userStorageKey(payload.userId, "downloads", randomUUID(), filename);
+              await putLocalFile(key, outPath, { contentType: "audio/flac" });
+              registerCleanup(() => deleteObjectStrict(key));
+              relativePath = key;
+            }
+
+            const [fileRow] = skipObjectStore
+              ? []
+              : await db
+                  .insert(files)
+                  .values({
+                    userId: payload.userId,
+                    jobId: payload.jobId,
+                    relativePath,
+                    filename,
+                    mime: "audio/flac",
+                    sizeBytes: Number(stat.size),
+                    expiresAt: new Date(Date.now() + FILE_TTL_MS),
+                  })
+                  .returning();
+            if (fileRow) {
+              registerCleanup(async () => {
+                await db.delete(files).where(eq(files.id, fileRow.id));
+              });
+            }
+
+            let driveFileId: string | undefined;
+            let driveUrl: string | undefined;
+            if (wantsDrive && token) {
+              const uploaded = await uploadToDrive({
+                accessToken: token,
+                filePath: outPath,
+                filename,
+                mimeType: "audio/flac",
+                folderId: payload.driveFolderId,
+              });
+              driveFileId = uploaded.fileId;
+              driveUrl = uploaded.webViewLink;
+              registerCleanup(() =>
+                deleteDriveFile({ accessToken: token, fileId: uploaded.fileId }),
+              );
+              if (fileRow) {
+                await db
+                  .update(files)
+                  .set({ driveFileId, driveUrl })
+                  .where(eq(files.id, fileRow.id));
+              }
+            }
+
+            if (!fileRow) return null;
+            return {
               fileId: fileRow.id,
               role,
               filename,
@@ -286,9 +287,16 @@ async function runSeparateJobCore(
               sizeBytes: Number(stat.size),
               ...(driveFileId ? { driveFileId } : {}),
               ...(driveUrl ? { driveUrl } : {}),
-            });
-          }
-        }
+            };
+          }),
+        );
+
+        const rejected = outcomes.find((o) => o.status === "rejected");
+        if (rejected?.status === "rejected") throw rejected.reason;
+
+        const delivered = outcomes.flatMap((o) =>
+          o.status === "fulfilled" && o.value ? [o.value] : [],
+        );
 
         return delivered;
       },

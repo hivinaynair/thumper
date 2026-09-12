@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { safeUserId } from "@thumper/shared";
 
 function getVenvExePath(exeName: string, envVar?: string): string {
   if (envVar && process.env[envVar]) return process.env[envVar]!;
@@ -22,8 +23,7 @@ export function dataRoot(): string {
 }
 
 export function userRoot(userId: string): string {
-  const safe = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  return path.join(dataRoot(), "users", safe);
+  return path.join(dataRoot(), "users", safeUserId(userId));
 }
 
 export function assertPathInside(root: string, candidate: string): string {

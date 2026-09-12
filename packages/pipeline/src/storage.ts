@@ -1,5 +1,10 @@
+import { createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
+import { safeUserId } from "@thumper/shared";
 import { del, get, head, put } from "@vercel/blob";
 import { assertPathInside, dataRoot, userRoot } from "./paths";
 
@@ -7,9 +12,7 @@ export function hasBlobStorage(): boolean {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim());
 }
 
-export function safeUserId(userId: string): string {
-  return userId.replace(/[^a-zA-Z0-9_-]/g, "_");
-}
+export { safeUserId };
 
 /** Object key / relative path under the user prefix. */
 export function userStorageKey(userId: string, ...parts: string[]): string {
@@ -167,9 +170,14 @@ export async function materializeObject(key: string, destPath: string): Promise<
   await fs.mkdir(path.dirname(destPath), { recursive: true });
 
   if (hasBlobStorage()) {
-    const data = await readBytes(key);
-    if (!data) throw new Error(`Missing stored object: ${key}`);
-    await fs.writeFile(destPath, data);
+    const result = await get(key, { access: "private", token: blobToken() });
+    if (result?.statusCode !== 200) throw new Error(`Missing stored object: ${key}`);
+    // Streamed, not buffered: retag/stems inputs run to 500MB and this is the
+    // hot path on a container that also has to hold ffmpeg's working set.
+    await pipeline(
+      Readable.fromWeb(result.stream as unknown as NodeReadableStream),
+      createWriteStream(destPath),
+    );
     return;
   }
 

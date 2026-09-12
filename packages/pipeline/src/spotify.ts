@@ -159,10 +159,3 @@ export function buildSoundCloudSearchQuery(track: SpotifyTrackMeta): string {
   const artist = track.artists[0] ?? "";
   return `scsearch5:${artist} ${track.title}`.trim();
 }
-
-export function durationMatchFilter(durationMs?: number): string | undefined {
-  if (!durationMs || durationMs <= 0) return undefined;
-  const seconds = Math.round(durationMs / 1000);
-  const margin = Math.max(30, Math.round(seconds * 0.3));
-  return `duration>=${Math.max(1, seconds - margin)} & duration<=${seconds + margin}`;
-}

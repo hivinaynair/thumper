@@ -8,7 +8,7 @@ import {
   isSupportedSource,
   QUEUE_NAME_DOWNLOAD,
 } from "@thumper/shared";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getBoss } from "../../../lib/boss";
 import { getDb } from "../../../lib/db";
@@ -143,8 +143,8 @@ export async function POST(req: Request) {
     }
   }
 
-  const recent = await db.select({ id: jobs.id }).from(jobs).where(eq(jobs.userId, userId));
-  if (recent.length > 500) {
+  const [totals] = await db.select({ total: count() }).from(jobs).where(eq(jobs.userId, userId));
+  if ((totals?.total ?? 0) > 500) {
     return NextResponse.json({ error: "Job limit reached" }, { status: 429 });
   }
 

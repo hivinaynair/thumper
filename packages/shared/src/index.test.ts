@@ -3,7 +3,6 @@ import {
   detectSourceKind,
   isRetagInput,
   isSupportedSource,
-  looksLikePlaylistUrl,
   RetagJobPayloadSchema,
   retagInputExtension,
   sanitizeFilename,
@@ -24,13 +23,6 @@ describe("isSupportedSource", () => {
     expect(isSupportedSource("https://soundcloud.com/a/b")).toBe(true);
     expect(isSupportedSource("https://open.spotify.com/track/1")).toBe(true);
     expect(isSupportedSource("https://patreon.com/x")).toBe(false);
-  });
-});
-
-describe("looksLikePlaylistUrl", () => {
-  it("detects playlists including spotify", () => {
-    expect(looksLikePlaylistUrl("https://open.spotify.com/playlist/abc")).toBe(true);
-    expect(looksLikePlaylistUrl("https://www.youtube.com/playlist?list=PLxx")).toBe(true);
   });
 });
 

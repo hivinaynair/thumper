@@ -1,7 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { jobs } from "@thumper/db";
 import { getCookieStatus } from "@thumper/pipeline/cookies";
-import { QUEUE_NAME_DOWNLOAD } from "@thumper/shared";
+import { mapWithConcurrency, QUEUE_NAME_DOWNLOAD } from "@thumper/shared";
 import { and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getBoss } from "../../../../../lib/boss";
@@ -69,17 +69,18 @@ export async function POST(_req: Request, ctx: Ctx) {
     .where(and(eq(jobs.userId, userId), inArray(jobs.id, targetIds)));
 
   const backend = (process.env.PROCESS_BACKEND ?? "pgboss").toLowerCase();
-  const woken: string[] = [];
-  const failures: string[] = [];
+  const retryTargets = catalog.filter((job) => targetIds.includes(job.id));
 
-  for (const row of catalog.filter((job) => targetIds.includes(job.id))) {
+  // One queue handle for the whole retry rather than one per child.
+  const boss = backend === "modal" ? null : await getBoss();
+  if (boss) await boss.createQueue(QUEUE_NAME_DOWNLOAD);
+
+  // Waking is a round trip each; a playlist retry would otherwise serialise
+  // dozens of them into one serverless request.
+  const outcomes = await mapWithConcurrency(retryTargets, 8, async (row) => {
     const ctxForChild = playlistContextForChild(row.id, catalog);
     try {
-      if (backend === "modal") {
-        await wakeModalJob(row.id);
-      } else {
-        const boss = await getBoss();
-        await boss.createQueue(QUEUE_NAME_DOWNLOAD);
+      if (boss) {
         const payload = downloadPayloadFromJob({
           id: row.id,
           userId: row.userId,
@@ -102,10 +103,11 @@ export async function POST(_req: Request, ctx: Ctx) {
           .update(jobs)
           .set({ pgBossId: bossId ?? null, updatedAt: new Date() })
           .where(eq(jobs.id, row.id));
+      } else {
+        await wakeModalJob(row.id);
       }
-      woken.push(row.id);
+      return true;
     } catch (err) {
-      failures.push(row.id);
       await db
         .update(jobs)
         .set({
@@ -116,24 +118,22 @@ export async function POST(_req: Request, ctx: Ctx) {
           updatedAt: new Date(),
         })
         .where(eq(jobs.id, row.id));
+      return false;
     }
-  }
+  });
 
-  if (woken.length === 0) {
+  const woken = outcomes.filter(Boolean).length;
+  const failures = outcomes.length - woken;
+
+  if (woken === 0) {
     return NextResponse.json(
       {
         error:
-          failures.length > 0
-            ? "Failed to wake worker for retry"
-            : "Nothing to retry with new cookies",
+          failures > 0 ? "Failed to wake worker for retry" : "Nothing to retry with new cookies",
       },
       { status: 502 },
     );
   }
 
-  return NextResponse.json({
-    ok: true,
-    retried: woken.length,
-    failedToWake: failures.length,
-  });
+  return NextResponse.json({ ok: true, retried: woken, failedToWake: failures });
 }

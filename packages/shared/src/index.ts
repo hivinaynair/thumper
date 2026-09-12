@@ -26,34 +26,8 @@ export function oauthScopesIncludeDrive(scopes: readonly string[]): boolean {
   );
 }
 
-export const SourceKindSchema = z.enum(["youtube", "soundcloud", "spotify", "patreon"]);
-export type SourceKind = z.infer<typeof SourceKindSchema>;
-
-/** Accepted inputs. Spotify is catalog-only — audio is mirrored from YT/SC. */
-export const SupportedSourceKindSchema = z.enum(["youtube", "soundcloud", "spotify"]);
-export type SupportedSourceKind = z.infer<typeof SupportedSourceKindSchema>;
-
-export const JobStatusSchema = z.enum([
-  "queued",
-  "running",
-  "cancelling",
-  "cancelled",
-  "completed",
-  "failed",
-]);
-export type JobStatus = z.infer<typeof JobStatusSchema>;
-
-export const JobStageSchema = z.enum([
-  "queued",
-  "resolving",
-  "downloading",
-  "converting",
-  "delivering",
-  "cleanup",
-  "done",
-  "error",
-]);
-export type JobStage = z.infer<typeof JobStageSchema>;
+/** Spotify is catalog-only — audio is mirrored from YouTube/SoundCloud. */
+export type SourceKind = "youtube" | "soundcloud" | "spotify" | "patreon";
 
 export const CreateJobInputSchema = z.object({
   url: z.string().url(),
@@ -68,7 +42,6 @@ export const CreateJobInputSchema = z.object({
    */
   clubReadyOnly: z.boolean().optional().default(false),
 });
-export type CreateJobInput = z.infer<typeof CreateJobInputSchema>;
 
 export const QUEUE_NAME_DOWNLOAD = "thumper.download" as const;
 export const MAX_PLAYLIST_TRACKS = 100;
@@ -146,7 +119,6 @@ export const CreateRetagJobInputSchema = z.object({
   artistHint: z.string().optional(),
   destination: DeliveryDestinationSchema.default("browser"),
 });
-export type CreateRetagJobInput = z.infer<typeof CreateRetagJobInputSchema>;
 
 export const RetagJobPayloadSchema = z.object({
   jobId: z.string().uuid(),
@@ -181,7 +153,6 @@ export const CreateStemJobInputSchema = z.object({
   titleHint: z.string().optional(),
   artistHint: z.string().optional(),
 });
-export type CreateStemJobInput = z.infer<typeof CreateStemJobInputSchema>;
 
 export const StemJobPayloadSchema = z.object({
   jobId: z.string().uuid(),
@@ -238,23 +209,21 @@ export function isSupportedSource(url: string): boolean {
   return kind === "youtube" || kind === "soundcloud" || kind === "spotify";
 }
 
-export function looksLikePlaylistUrl(url: string): boolean {
-  try {
-    const u = new URL(url);
-    const host = u.hostname.replace(/^www\./, "").toLowerCase();
-    const path = u.pathname.toLowerCase();
-    if (host.includes("youtube.com") || host === "youtu.be") {
-      if (path.includes("/playlist")) return true;
-      if (u.searchParams.has("list")) return true;
-    }
-    if (host.includes("soundcloud.com") && path.includes("/sets/")) return true;
-    if (host.includes("spotify.com")) {
-      if (path.includes("/playlist/") || path.includes("/album/")) return true;
-    }
-    return false;
-  } catch {
-    return false;
-  }
+/**
+ * Storage-key-safe form of a Clerk user id.
+ *
+ * Shared with the browser on purpose: the client builds its own Blob upload
+ * pathname and the server validates that pathname against the `users/<id>/`
+ * prefix, so the two must derive the segment identically or every direct
+ * upload is rejected.
+ */
+export function safeUserId(userId: string): string {
+  return userId.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+/** Upload filename reduced to characters that are safe in an object key. */
+export function safeUploadName(name: string): string {
+  return name.replace(/[^\w.\- ()]+/g, "_");
 }
 
 export function sanitizeFilename(name: string, maxLen = 120): string {
@@ -264,7 +233,6 @@ export function sanitizeFilename(name: string, maxLen = 120): string {
       .replace(/[\u201C\u201D\u201E]/g, '"')
       // The C0 range is stripped on purpose: those bytes are illegal in
       // filenames on every target OS.
-      // eslint-disable-next-line no-control-regex
       .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "")
       .replace(/\s+/g, " ")
       .trim()
@@ -295,4 +263,32 @@ export function trackDisplayName(
     return t;
   }
   return `${a} - ${t}`;
+}
+
+/**
+ * Run `fn` over `items` with at most `limit` in flight, preserving input order.
+ *
+ * Use where each item costs a network round trip or a subprocess spawn and the
+ * items are independent — a plain `for await` serialises them, `Promise.all`
+ * stampedes the far end. Rejects on the first failure, like `Promise.all`; a
+ * caller that wants per-item isolation should catch inside `fn`.
+ */
+export async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (true) {
+      const index = next++;
+      if (index >= items.length) return;
+      results[index] = await fn(items[index] as T, index);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
 }

@@ -63,14 +63,19 @@ export type CookieStatusMap = Record<"youtube" | "soundcloud", CookieProviderSta
 
 export async function getCookieStatus(userId: string): Promise<CookieStatusMap> {
   const providers = ["youtube", "soundcloud"] as const;
+  // Two independent object-store HEADs — the page polls this, so don't pay for
+  // them one after the other.
+  const metas = await Promise.all(
+    providers.map((provider) => headObject(cookieKey(userId, provider))),
+  );
   const out = {} as CookieStatusMap;
-  for (const provider of providers) {
-    const meta = await headObject(cookieKey(userId, provider));
+  providers.forEach((provider, i) => {
+    const meta = metas[i];
     out[provider] = {
       present: Boolean(meta && meta.size > 0),
       updatedAt: meta?.updatedAt?.toISOString() ?? null,
     };
-  }
+  });
   return out;
 }
 

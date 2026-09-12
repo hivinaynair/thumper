@@ -2,7 +2,6 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { isRetagInput, RETAG_INPUT_LABEL, type StemRole } from "@thumper/shared";
-import { upload } from "@vercel/blob/client";
 import { Download, Loader2, RotateCcw, Upload } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -15,6 +14,7 @@ import {
 } from "@/components/ui/select";
 import { StatusDot } from "../components/status-dot";
 import "../ui-theme.css";
+import { readJson, uploadAudio } from "@/lib/upload-audio";
 
 type StemFile = {
   fileId: string;
@@ -58,21 +58,6 @@ function formatSize(bytes: number): string {
   return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
 }
 
-async function readJson(res: Response): Promise<Record<string, unknown>> {
-  const text = await res.text();
-  try {
-    return JSON.parse(text) as Record<string, unknown>;
-  } catch {
-    const snippet = text.slice(0, 120).trim() || res.statusText;
-    if (/request entity too large/i.test(snippet) || res.status === 413) {
-      throw new Error(
-        "File too large for the server route — use Blob upload (production) or a smaller file.",
-      );
-    }
-    throw new Error(snippet || `Request failed (${res.status})`);
-  }
-}
-
 export default function StemsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { userId } = useAuth();
@@ -93,35 +78,8 @@ export default function StemsPage() {
   }, []);
 
   const uploadOne = useCallback(
-    async (file: File): Promise<string> => {
-      const modeRes = await fetch("/api/stems/upload");
-      const modeData = await readJson(modeRes);
-      if (!modeRes.ok) throw new Error(String(modeData.error || "Upload config failed"));
-
-      if (modeData.mode === "blob") {
-        if (!userId) throw new Error("Sign in required");
-        const safeUser = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const safeName = file.name.replace(/[^\w.\- ()]+/g, "_");
-        const pathname = `users/${safeUser}/uploads/${crypto.randomUUID()}/${safeName}`;
-        const blob = await upload(pathname, file, {
-          access: "private",
-          handleUploadUrl: "/api/stems/upload",
-          multipart: true,
-          contentType: file.type || "audio/wav",
-        });
-        return blob.pathname;
-      }
-
-      const form = new FormData();
-      form.set("file", file);
-      const upRes = await fetch("/api/stems/upload", {
-        method: "POST",
-        body: form,
-      });
-      const up = await readJson(upRes);
-      if (!upRes.ok) throw new Error(String(up.error || "Upload failed"));
-      return String(up.inputStorageKey);
-    },
+    async (file: File): Promise<string> =>
+      (await uploadAudio(file, "/api/stems/upload", userId)).key,
     [userId],
   );
 

@@ -86,8 +86,3 @@ export async function soundcloudExtractorArgs(signal?: AbortSignal): Promise<str
   const id = await resolveSoundCloudClientId(signal);
   return `soundcloud:client_id=${id}`;
 }
-
-/** Test helper — clear memoized id. */
-export function resetSoundCloudClientIdCache(): void {
-  cachedClientId = null;
-}

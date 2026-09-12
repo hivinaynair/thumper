@@ -350,6 +350,7 @@ export default function DownloaderPage() {
   const [destination, setDestination] = useState("browser");
   const [clubReadyOnly, setClubReadyOnly] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const hasActiveJobsRef = useRef(false);
   const [cookies, setCookies] = useState<CookieStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -392,9 +393,35 @@ export default function DownloaderPage() {
   useEffect(() => {
     void refreshJobs();
     void refreshCookies();
-    const jobsTimer = setInterval(() => void refreshJobs(), 1500);
-    const cookiesTimer = setInterval(() => void refreshCookies(), 3000);
+
+    // Both endpoints are comparatively heavy — /api/jobs returns the whole
+    // queue, /api/cookies does object-store HEADs — and neither can change
+    // while the tab is hidden and idle. Poll fast only while work is running.
+    let idleTicks = 0;
+    const jobsTimer = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      if (hasActiveJobsRef.current) {
+        idleTicks = 0;
+        void refreshJobs();
+        return;
+      }
+      idleTicks += 1;
+      if (idleTicks >= 8) {
+        idleTicks = 0;
+        void refreshJobs();
+      }
+    }, 1500);
+    const cookiesTimer = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void refreshCookies();
+    }, 3000);
     const onFocus = () => void refreshCookies();
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      void refreshJobs();
+      void refreshCookies();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     const onMessage = (event: MessageEvent) => {
       if (event.source !== window) return;
       const data = event.data as {
@@ -419,10 +446,17 @@ export default function DownloaderPage() {
       clearInterval(jobsTimer);
       clearInterval(cookiesTimer);
       clearInterval(pingTimer);
+      document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("message", onMessage);
     };
   }, [refreshJobs, refreshCookies]);
+
+  useEffect(() => {
+    hasActiveJobsRef.current = jobs.some(
+      (job) => job.status === "queued" || job.status === "running" || job.status === "cancelling",
+    );
+  }, [jobs]);
 
   const rollups = useMemo(() => {
     const byId = new Map(jobs.map((job) => [job.id, job]));
@@ -699,7 +733,6 @@ export default function DownloaderPage() {
               <Button asChild variant="secondary" size="sm">
                 {/* A plain <a> to a streaming API route, not a page: the browser
                     writes it straight to disk instead of buffering in the tab. */}
-                {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
                 <a href="/api/files/zip">Download all ({downloadableCount})</a>
               </Button>
             ) : null}

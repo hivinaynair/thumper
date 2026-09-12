@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Db } from "@thumper/db";
-import { files, jobs } from "@thumper/db";
+import { files } from "@thumper/db";
 import {
   type AudioFormat,
   type DeliveryDestination,
@@ -14,7 +14,7 @@ import {
   sanitizeFilename,
   trackDisplayName,
 } from "@thumper/shared";
-import { eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { findFallbackArtworkUrl } from "./artwork-fallback";
 import {
   type DjVerdict,
@@ -43,6 +43,7 @@ import {
   SoundCloudPreviewError,
 } from "./download";
 import { deleteDriveFile, ensurePlaylistFolder, uploadToDrive } from "./drive";
+import { ensureNotCancelled } from "./job-cancel";
 import {
   matchSpotifyTrackToMirror,
   matchTrackToYoutube,
@@ -158,29 +159,6 @@ export type RunJobDeps = {
     context?: EnqueueChildContext,
   ) => Promise<string[]>;
 };
-
-async function ensureNotCancelled(
-  signal: AbortSignal,
-  db: Db,
-  jobId: string,
-  parentJobId?: string,
-) {
-  if (signal.aborted) throw new ProcessCancelledError();
-  const ids = parentJobId ? [jobId, parentJobId] : [jobId];
-  const rows = await db
-    .select({ id: jobs.id, status: jobs.status })
-    .from(jobs)
-    .where(inArray(jobs.id, ids));
-  // Cancelling the playlist parent must stop every child mid-download.
-  if (rows.some((row) => row.status === "cancelling" || row.status === "cancelled")) {
-    throw new ProcessCancelledError();
-  }
-  // Parent deleted (e.g. Clear finished) while Modal is still expanding —
-  // treat as cancel so we stop spawning orphan tracks.
-  if (parentJobId && !rows.some((row) => row.id === parentJobId)) {
-    throw new ProcessCancelledError();
-  }
-}
 
 /**
  * Verification is advisory — never fail a job because analysis broke. A null

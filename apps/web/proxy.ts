@@ -7,7 +7,6 @@ const isProtectedRoute = createRouteMatcher([
   "/api/jobs(.*)",
   "/api/files(.*)",
   "/api/cookies(.*)",
-  "/api/metadata(.*)",
   "/api/retag(.*)",
   "/api/stems(.*)",
 ]);
@@ -20,7 +19,7 @@ export default clerkMiddleware(async (auth, req) => {
 
 export const config = {
   matcher: [
-    // Skip Next internals, static assets, and stale Serwist SW probes
-    "/((?!_next/static|_next/image|favicon.ico|serwist/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|js)$).*)",
+    // Skip Next internals and static assets
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|js)$).*)",
   ],
 };

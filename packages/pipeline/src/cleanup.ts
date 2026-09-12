@@ -1,6 +1,7 @@
 import type { Db } from "@thumper/db";
 import { files } from "@thumper/db";
-import { and, eq, isNotNull, lt } from "drizzle-orm";
+import { mapWithConcurrency } from "@thumper/shared";
+import { and, inArray, isNotNull, lt } from "drizzle-orm";
 import { deleteObject } from "./storage";
 
 /**
@@ -30,19 +31,21 @@ export async function sweepExpiredFiles(
     .from(files)
     .where(and(isNotNull(files.expiresAt), lt(files.expiresAt, now)));
 
-  let deleted = 0;
-  let failed = 0;
-
-  for (const row of expired) {
+  // Each delete is a round trip to the object store, so overlap them; the
+  // rows whose object went are then dropped in one statement rather than N.
+  const outcomes = await mapWithConcurrency(expired, 8, async (row) => {
     try {
       await deleteObject(row.relativePath);
+      return row.id;
     } catch {
-      failed += 1;
-      continue;
+      return null;
     }
-    await db.delete(files).where(eq(files.id, row.id));
-    deleted += 1;
+  });
+
+  const deletedIds = outcomes.filter((id): id is string => id !== null);
+  if (deletedIds.length > 0) {
+    await db.delete(files).where(inArray(files.id, deletedIds));
   }
 
-  return { deleted, failed };
+  return { deleted: deletedIds.length, failed: expired.length - deletedIds.length };
 }

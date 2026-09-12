@@ -1,33 +1,16 @@
-export * from "./artist-original";
-export * from "./artwork-fallback";
-export * from "./audio-quality";
-export * from "./cleanup";
-export * from "./convert";
-export * from "./cookies";
-export {
-  type DownloadMediaResult,
-  downloadMedia,
-  dumpJson,
-  isFormatUnavailable,
-  isRateLimitError,
-  isSoundCloudPreviewError,
-  isSoundCloudUnavailableError,
-  isYoutubeBotError,
-  SoundCloudPreviewError,
-} from "./download";
-export * from "./drive";
-export * from "./match";
-export * from "./metadata";
-export * from "./paths";
-export * from "./playlist";
-export * from "./process";
-export * from "./retag-job";
-export * from "./retag-search";
-export * from "./run-job";
-export * from "./separate";
-export * from "./separate-job";
-export * from "./similarity";
-export * from "./soundcloud-client";
-export * from "./soundcloud-purchase";
-export * from "./spotify";
-export * from "./storage";
+/**
+ * The package's public surface: only what `apps/` consumes by bare specifier.
+ *
+ * Everything else is internal. Modules that apps need directly are imported by
+ * subpath (`@thumper/pipeline/storage`, `/cookies`, `/retag-search`), so a
+ * symbol reaching this file should be a deliberate choice, not a re-export of
+ * the whole tree.
+ */
+export { sweepExpiredFiles } from "./cleanup";
+export { ensurePlaylistFolder } from "./drive";
+export type { PlaylistEntry } from "./playlist";
+export { ProcessCancelledError } from "./process";
+export { runRetagJob } from "./retag-job";
+export { searchSoundCloudTracks } from "./retag-search";
+export { type ProgressUpdater, runDownloadJob } from "./run-job";
+export { runSeparateJob } from "./separate-job";

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Db } from "@thumper/db";
-import { files, jobs } from "@thumper/db";
+import { files } from "@thumper/db";
 import {
   GOOGLE_DRIVE_TOKEN_ERROR,
   type RetagJobPayload,
@@ -19,6 +19,7 @@ import {
   withRetagPathCleanup,
 } from "./delivery-artifact";
 import { deleteDriveFile, uploadToDrive } from "./drive";
+import { ensureNotCancelled } from "./job-cancel";
 import { downloadArtworkFile, resolveTrackTags } from "./metadata";
 import { assertPathInside, userRoot } from "./paths";
 import { ProcessCancelledError } from "./process";
@@ -62,18 +63,6 @@ export async function materializeRetagInput(params: {
   materialize?: typeof materializeObject;
 }): Promise<void> {
   await (params.materialize ?? materializeObject)(params.inputStorageKey, params.inputPath);
-}
-
-async function ensureNotCancelled(signal: AbortSignal, db: Db, jobId: string) {
-  if (signal.aborted) throw new ProcessCancelledError();
-  const [row] = await db
-    .select({ status: jobs.status })
-    .from(jobs)
-    .where(eq(jobs.id, jobId))
-    .limit(1);
-  if (!row || row.status === "cancelling" || row.status === "cancelled") {
-    throw new ProcessCancelledError();
-  }
 }
 
 /**

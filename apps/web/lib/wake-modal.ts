@@ -5,29 +5,12 @@
  * MODAL_JOB_URL is the Modal fastapi endpoint URL from `modal deploy`.
  * Body: { jobId, secret? }
  */
-export async function wakeModalJob(jobId: string): Promise<void> {
-  const backend = (process.env.PROCESS_BACKEND ?? "pgboss").toLowerCase();
-  if (backend !== "modal") return;
 
-  const url = process.env.MODAL_JOB_URL?.trim();
-  if (!url) {
-    throw new Error("PROCESS_BACKEND=modal requires MODAL_JOB_URL");
-  }
+/** Modal fastapi endpoints deployed by `apps/modal/thumper_worker.py`. */
+type ModalFn = "wake" | "wake-stems" | "search";
 
-  const secret = process.env.MODAL_WEBHOOK_SECRET?.trim();
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jobId,
-      ...(secret ? { secret } : {}),
-    }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Modal wake failed (${res.status}): ${text.slice(0, 500)}`);
-  }
+function isModalBackend(): boolean {
+  return (process.env.PROCESS_BACKEND ?? "pgboss").toLowerCase() === "modal";
 }
 
 /**
@@ -48,38 +31,58 @@ export function deriveModalSiblingUrl(jobUrl: string, fromFn: string, toFn: stri
 }
 
 /**
+ * Resolve the endpoint for `fn`, preferring the explicit `envVar` override and
+ * otherwise deriving it from MODAL_JOB_URL.
+ */
+function modalUrl(fn: ModalFn, envVar: string): string {
+  const explicit = process.env[envVar]?.trim();
+  if (explicit) return explicit;
+
+  const jobUrl = process.env.MODAL_JOB_URL?.trim();
+  if (!jobUrl) {
+    throw new Error(`PROCESS_BACKEND=modal requires ${envVar}`);
+  }
+
+  const derived = deriveModalSiblingUrl(jobUrl, "wake", fn);
+  if (!derived) {
+    throw new Error(`Set ${envVar} — could not derive it from MODAL_JOB_URL`);
+  }
+  return derived;
+}
+
+/** POST to a Modal endpoint, attaching the shared secret and raising on a non-2xx. */
+async function postToModal(
+  url: string,
+  body: Record<string, unknown>,
+  label: string,
+): Promise<Response> {
+  const secret = process.env.MODAL_WEBHOOK_SECRET?.trim();
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...body, ...(secret ? { secret } : {}) }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`${label} failed (${res.status}): ${text.slice(0, 500)}`);
+  }
+  return res;
+}
+
+export async function wakeModalJob(jobId: string): Promise<void> {
+  if (!isModalBackend()) return;
+  await postToModal(modalUrl("wake", "MODAL_JOB_URL"), { jobId }, "Modal wake");
+}
+
+/**
  * Wake the GPU stem-separation worker. Separate endpoint from `wake` because
  * it runs a different Modal function on a different (GPU) image.
  * Uses MODAL_STEMS_URL when set; otherwise derives it from MODAL_JOB_URL.
  */
 export async function wakeModalStemJob(jobId: string): Promise<void> {
-  const backend = (process.env.PROCESS_BACKEND ?? "pgboss").toLowerCase();
-  if (backend !== "modal") return;
-
-  let url = process.env.MODAL_STEMS_URL?.trim();
-  if (!url) {
-    const jobUrl = process.env.MODAL_JOB_URL?.trim();
-    if (!jobUrl) {
-      throw new Error("PROCESS_BACKEND=modal requires MODAL_STEMS_URL or MODAL_JOB_URL");
-    }
-    const derived = deriveModalSiblingUrl(jobUrl, "wake", "wake-stems");
-    if (!derived) {
-      throw new Error("Set MODAL_STEMS_URL — could not derive it from MODAL_JOB_URL");
-    }
-    url = derived;
-  }
-
-  const secret = process.env.MODAL_WEBHOOK_SECRET?.trim();
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jobId, ...(secret ? { secret } : {}) }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Modal stem wake failed (${res.status}): ${text.slice(0, 500)}`);
-  }
+  if (!isModalBackend()) return;
+  await postToModal(modalUrl("wake-stems", "MODAL_STEMS_URL"), { jobId }, "Modal stem wake");
 }
 
 export type ModalSearchCandidate = {
@@ -92,39 +95,11 @@ export type ModalSearchCandidate = {
 
 /**
  * Synchronous SoundCloud search on Modal (yt-dlp is not on Vercel).
- * Uses MODAL_SEARCH_URL when set; otherwise derives it from MODAL_JOB_URL
- * by replacing the trailing `/wake` with `/search`.
+ * Uses MODAL_SEARCH_URL when set; otherwise derives it from MODAL_JOB_URL.
  */
 export async function wakeModalSearch(query: string): Promise<ModalSearchCandidate[]> {
-  const secret = process.env.MODAL_WEBHOOK_SECRET?.trim();
-  let url = process.env.MODAL_SEARCH_URL?.trim();
-  if (!url) {
-    const jobUrl = process.env.MODAL_JOB_URL?.trim();
-    if (!jobUrl) {
-      throw new Error("PROCESS_BACKEND=modal requires MODAL_SEARCH_URL or MODAL_JOB_URL");
-    }
-    url = jobUrl.replace(/\/wake\/?$/, "/search");
-    if (url === jobUrl) {
-      throw new Error("Set MODAL_SEARCH_URL — could not derive it from MODAL_JOB_URL");
-    }
-  }
+  const res = await postToModal(modalUrl("search", "MODAL_SEARCH_URL"), { query }, "Modal search");
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      query,
-      ...(secret ? { secret } : {}),
-    }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Modal search failed (${res.status}): ${text.slice(0, 500)}`);
-  }
-
-  const data = (await res.json()) as {
-    candidates?: ModalSearchCandidate[];
-  };
+  const data = (await res.json()) as { candidates?: ModalSearchCandidate[] };
   return Array.isArray(data.candidates) ? data.candidates : [];
 }

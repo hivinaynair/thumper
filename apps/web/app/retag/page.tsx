@@ -2,7 +2,6 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { isRetagInput, RETAG_INPUT_LABEL, trackDisplayName } from "@thumper/shared";
-import { upload } from "@vercel/blob/client";
 import { Loader2, RotateCcw, Upload } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +18,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { StatusDot } from "../components/status-dot";
 import "../ui-theme.css";
+import { readJson, uploadAudio } from "@/lib/upload-audio";
 
 type Candidate = {
   url: string;
@@ -67,21 +67,6 @@ function newId(): string {
   return crypto.randomUUID();
 }
 
-async function readJson(res: Response): Promise<Record<string, unknown>> {
-  const text = await res.text();
-  try {
-    return JSON.parse(text) as Record<string, unknown>;
-  } catch {
-    const snippet = text.slice(0, 120).trim() || res.statusText;
-    if (/request entity too large/i.test(snippet) || res.status === 413) {
-      throw new Error(
-        "File too large for the server route — use Blob upload (production) or a smaller file.",
-      );
-    }
-    throw new Error(snippet || `Request failed (${res.status})`);
-  }
-}
-
 const STEPS = [
   ["upload", "Upload"],
   ["confirm", "Confirm"],
@@ -121,44 +106,7 @@ export default function RetagPage() {
   }, []);
 
   const uploadOne = useCallback(
-    async (file: File): Promise<{ key: string; filename: string; searchQuery: string }> => {
-      const modeRes = await fetch("/api/retag/upload");
-      const modeData = await readJson(modeRes);
-      if (!modeRes.ok) throw new Error(String(modeData.error || "Upload config failed"));
-      const mode = modeData.mode as string;
-
-      if (mode === "blob") {
-        if (!userId) throw new Error("Sign in required");
-        const safeUser = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const safeName = file.name.replace(/[^\w.\- ()]+/g, "_");
-        const pathname = `users/${safeUser}/uploads/${crypto.randomUUID()}/${safeName}`;
-        const blob = await upload(pathname, file, {
-          access: "private",
-          handleUploadUrl: "/api/retag/upload",
-          multipart: true,
-          contentType: file.type || "audio/wav",
-        });
-        return {
-          key: blob.pathname,
-          filename: file.name,
-          searchQuery: file.name,
-        };
-      }
-
-      const form = new FormData();
-      form.set("file", file);
-      const upRes = await fetch("/api/retag/upload", {
-        method: "POST",
-        body: form,
-      });
-      const up = await readJson(upRes);
-      if (!upRes.ok) throw new Error(String(up.error || "Upload failed"));
-      return {
-        key: String(up.inputStorageKey),
-        filename: String(up.filename),
-        searchQuery: String(up.searchQuery || file.name),
-      };
-    },
+    (file: File) => uploadAudio(file, "/api/retag/upload", userId),
     [userId],
   );
 
@@ -500,7 +448,6 @@ export default function RetagPage() {
                     {t.selected || t.candidates.length > 0 ? (
                       <div className="mt-3 flex items-center gap-3">
                         {t.selected?.artworkUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
                           <img
                             src={t.selected.artworkUrl}
                             alt=""
@@ -545,7 +492,6 @@ export default function RetagPage() {
                               }`}
                             >
                               {c.artworkUrl ? (
-                                // eslint-disable-next-line @next/next/no-img-element
                                 <img
                                   src={c.artworkUrl}
                                   alt=""

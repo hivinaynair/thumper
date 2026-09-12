@@ -90,6 +90,3 @@ export async function searchSoundCloudTracks(
 
   return hits;
 }
-
-/** @deprecated Use {@link queryFromAudioFilename} — retag is no longer WAV-only. */
-export const queryFromWavFilename = queryFromAudioFilename;

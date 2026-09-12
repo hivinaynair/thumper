@@ -5,13 +5,13 @@ import {
   type DownloadJobPayload,
   DownloadJobPayloadSchema,
   detectSourceKind,
-  oauthScopesIncludeDrive,
   QUEUE_NAME_DOWNLOAD,
 } from "@thumper/shared";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { PgBoss } from "pg-boss";
 import pino from "pino";
 import { z } from "zod";
+import { makeGoogleTokenFetcher, makeUpdateJob } from "./job-store";
 import { childJobResult } from "./playlist-fanout";
 
 const envSchema = z.object({
@@ -33,46 +33,8 @@ const clerk = createClerkClient({ secretKey: env.CLERK_SECRET_KEY });
 
 const abortControllers = new Map<string, AbortController>();
 
-async function getGoogleAccessToken(userId: string): Promise<string | null> {
-  try {
-    const res = await clerk.users.getUserOauthAccessToken(userId, "google");
-    const entry = res.data[0];
-    if (!entry?.token) {
-      log.warn({ userId }, "No Google OAuth token for user");
-      return null;
-    }
-    const scopes = entry.scopes ?? [];
-    if (scopes.length > 0 && !oauthScopesIncludeDrive(scopes)) {
-      log.warn({ userId, scopes }, "Google token missing drive.file scope");
-      return null;
-    }
-    return entry.token;
-  } catch (err) {
-    log.warn({ err, userId }, "Failed to fetch Google OAuth token");
-    return null;
-  }
-}
-
-async function updateJob(
-  jobId: string,
-  patch: Parameters<Parameters<typeof runDownloadJob>[0]["update"]>[0],
-) {
-  const values: Record<string, unknown> = {
-    updatedAt: new Date(),
-  };
-  if (patch.status) values.status = patch.status;
-  if (patch.stage) values.stage = patch.stage;
-  if (patch.progress !== undefined) values.progress = patch.progress;
-  if (patch.title !== undefined) values.title = patch.title;
-  if (patch.artist !== undefined) values.artist = patch.artist;
-  if (patch.matchedUrl !== undefined) values.matchedUrl = patch.matchedUrl;
-  if (patch.error !== undefined) values.error = patch.error;
-  if (patch.result !== undefined) values.result = patch.result;
-  if (patch.status === "completed" || patch.status === "failed" || patch.status === "cancelled") {
-    values.completedAt = new Date();
-  }
-  await db.update(jobs).set(values).where(eq(jobs.id, jobId));
-}
+const updateJob = makeUpdateJob(db);
+const getGoogleAccessToken = makeGoogleTokenFetcher(clerk, log);
 
 async function main() {
   const boss = new PgBoss(env.DATABASE_URL);
@@ -81,11 +43,15 @@ async function main() {
   await boss.createQueue(QUEUE_NAME_DOWNLOAD);
 
   setInterval(async () => {
+    // Only this worker's in-flight jobs are abortable, so an idle worker has
+    // nothing to look up and a busy one need only read the rows it holds.
+    const running = [...abortControllers.keys()];
+    if (running.length === 0) return;
     try {
       const cancelling = await db
         .select({ id: jobs.id })
         .from(jobs)
-        .where(eq(jobs.status, "cancelling"));
+        .where(and(eq(jobs.status, "cancelling"), inArray(jobs.id, running)));
       for (const row of cancelling) {
         abortControllers.get(row.id)?.abort();
       }

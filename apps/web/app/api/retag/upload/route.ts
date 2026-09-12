@@ -7,6 +7,7 @@ import {
   RETAG_INPUT_CONTENT_TYPES,
   RETAG_INPUT_LABEL,
   retagInputExtension,
+  safeUploadName,
 } from "@thumper/shared";
 import { type HandleUploadBody, handleUpload } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
@@ -15,10 +16,6 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const MAX_BYTES = 500 * 1024 * 1024; // 500 MB
-
-function sanitizeName(name: string): string {
-  return name.replace(/[^\w.\- ()]+/g, "_");
-}
 
 /** Tell the client whether to use direct Blob upload or local multipart. */
 export async function GET() {
@@ -118,7 +115,7 @@ export async function POST(req: Request) {
   }
 
   const buf = Buffer.from(await file.arrayBuffer());
-  const key = userStorageKey(userId, "uploads", randomUUID(), sanitizeName(name));
+  const key = userStorageKey(userId, "uploads", randomUUID(), safeUploadName(name));
   // Keep the browser's type when it gave a real one; the extension carries the
   // format downstream either way.
   await putBytes(key, buf, {

@@ -3,7 +3,6 @@ import { dark } from "@clerk/themes";
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans, Syne } from "next/font/google";
 import Link from "next/link";
-import { ClearStaleServiceWorkers } from "./components/clear-stale-service-workers";
 import "./globals.css";
 
 const display = Syne({
@@ -90,7 +89,6 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <ClerkProvider appearance={clerkAppearance}>
       <html lang="en">
         <body className={`${display.variable} ${sans.variable} ${mono.variable}`}>
-          <ClearStaleServiceWorkers />
           <div className="shell">
             <header className="topbar">
               <Link href="/" className="brand">
