@@ -23,6 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { clubReadyAllowed } from "../../lib/club-ready-gate";
 import { isCookieStale, shouldRefreshCookiesBeforeQueue } from "../../lib/cookie-freshness";
 import { cookieNeedsRefresh, jobsToRetry, retryButtonLabel } from "../../lib/cookie-retry";
 import {
@@ -428,6 +429,7 @@ export default function DownloaderPage() {
   }, [jobs]);
   const gate = useMemo(() => cookiesReadyForUrl(url, cookies), [url, cookies]);
   const canQueue = !busy && gate.ready && url.trim().length > 0;
+  const canClubReady = clubReadyAllowed(cookies?.youtube.premium);
   const finishedCount = jobs.filter(
     (job) => job.status === "completed" || job.status === "failed" || job.status === "cancelled",
   ).length;
@@ -469,7 +471,7 @@ export default function DownloaderPage() {
           url: url.trim(),
           audioFormat: "flac",
           destination,
-          clubReadyOnly,
+          clubReadyOnly: clubReadyOnly && clubReadyAllowed(cookies?.youtube.premium),
         }),
       });
       const data = await res.json();
@@ -666,9 +668,12 @@ export default function DownloaderPage() {
             </p>
             <div className="downloader-quality">
               {/* biome-ignore lint/a11y/noLabelWithoutControl: wraps the shadcn Checkbox, which biome cannot resolve to an input element. */}
-              <label className="flex cursor-pointer gap-2.5">
+              <label
+                className={`flex gap-2.5 ${canClubReady ? "cursor-pointer" : "cursor-not-allowed"}`}
+              >
                 <Checkbox
-                  checked={clubReadyOnly}
+                  checked={canClubReady && clubReadyOnly}
+                  disabled={!canClubReady}
                   onCheckedChange={(v) => {
                     setClubReadyOnly(v === true);
                     window.localStorage.setItem(CLUB_READY_KEY, String(v === true));
@@ -676,9 +681,10 @@ export default function DownloaderPage() {
                   className="mt-0.5"
                 />
                 <span className="text-xs leading-relaxed text-muted-foreground">
-                  <span className="text-foreground">Club-ready only</span> — skips tracks with a
-                  frequency cutoff below 19 kHz. Passing this check doesn’t mean the audio is
-                  lossless.
+                  <span className="text-foreground">Club-ready only</span> —{" "}
+                  {canClubReady
+                    ? "skips tracks with a frequency cutoff below 19 kHz. Passing this check doesn’t mean the audio is lossless."
+                    : "needs a synced YouTube Premium session. YouTube or YouTube Music without Premium can still download."}
                 </span>
               </label>
             </div>
@@ -755,7 +761,9 @@ export default function DownloaderPage() {
                           ? "Not connected"
                           : stale
                             ? "Refresh needed"
-                            : "Ready"}
+                            : key === "youtube" && status?.premium
+                              ? "Premium"
+                              : "Ready"}
                     </span>
                     {present && age ? <span className="text-[10px] opacity-70">{age}</span> : null}
                   </Badge>

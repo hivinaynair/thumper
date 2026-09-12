@@ -11,6 +11,7 @@ import {
 import { and, count, desc, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getBoss } from "../../../lib/boss";
+import { clubReadyOnlyRejected } from "../../../lib/club-ready-gate";
 import { getDb } from "../../../lib/db";
 import { userHasGoogleDriveAccess } from "../../../lib/google-drive";
 import { wakeModalJob } from "../../../lib/wake-modal";
@@ -150,6 +151,10 @@ export async function POST(req: Request) {
 
   // Not SoundCloud-specific — a YouTube-only job can flunk the bar just as easily.
   const clubReadyOnly = Boolean(input.clubReadyOnly);
+  const clubReadyError = clubReadyOnlyRejected(clubReadyOnly, cookieStatus.youtube.premium);
+  if (clubReadyError) {
+    return NextResponse.json({ error: clubReadyError }, { status: 400 });
+  }
 
   const jobResult = clubReadyOnly ? { clubReadyOnly: true } : {};
 

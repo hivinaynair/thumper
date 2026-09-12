@@ -47,6 +47,7 @@ export type Job = {
 export type CookieProviderStatus = {
   present: boolean;
   updatedAt: string | null;
+  premium?: boolean | null;
 };
 
 export type CookieStatus = {

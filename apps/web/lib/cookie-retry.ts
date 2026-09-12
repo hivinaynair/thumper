@@ -1,6 +1,6 @@
 export type CookieStatusMap = Record<
   "youtube" | "soundcloud",
-  { present: boolean; updatedAt: string | null }
+  { present: boolean; updatedAt: string | null; premium?: boolean | null }
 >;
 
 export type RetryableJob = {

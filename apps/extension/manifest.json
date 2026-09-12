@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Thumper Cookie Sync",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Refresh YouTube and SoundCloud cookies onto your private Thumper instance.",
-  "permissions": ["cookies", "storage", "tabs"],
+  "permissions": ["cookies", "storage", "tabs", "scripting"],
   "host_permissions": [
     "https://*.youtube.com/*",
     "https://*.google.com/*",

@@ -1,3 +1,5 @@
+import { youtubePremiumFromInitialData } from "./youtube-premium.js";
+
 const PROVIDERS = {
   youtube: [".youtube.com", ".google.com"],
   soundcloud: [".soundcloud.com"],
@@ -69,20 +71,50 @@ function looksLoggedIn(provider, cookies) {
   return cookies.some((c) => names.has(c.name));
 }
 
+async function probeYoutubePremium(tabId) {
+  if (!chrome.scripting?.executeScript) return null;
+  try {
+    const [injected] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: () => {
+        const data = globalThis.ytInitialData;
+        if (!data || typeof data !== "object") return { ready: false };
+        return { ready: true, topbar: data.topbar ?? null };
+      },
+    });
+    if (!injected?.result?.ready) return null;
+    return youtubePremiumFromInitialData({ topbar: injected.result.topbar });
+  } catch {
+    return null;
+  }
+}
+
+async function probeYoutubePremiumWithRetry(tabId) {
+  for (let i = 0; i < 6; i++) {
+    const found = await probeYoutubePremium(tabId);
+    if (found !== null) return found;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+  return null;
+}
+
 /**
  * Hit the site in a background tab so Chrome refreshes rotated session
  * cookies before we export. Google especially invalidates older exports
- * once you've browsed YouTube again.
+ * once you've browsed YouTube again. The same tab is where we read
+ * ytInitialData for the YouTube Premium logo.
  */
 async function warmProvider(provider) {
   const url = WARM_URLS[provider];
-  if (!url || !chrome.tabs?.create) return;
+  if (!url || !chrome.tabs?.create) return { premium: null };
 
   let tabId;
+  let premium = null;
   try {
     const tab = await chrome.tabs.create({ url, active: false });
     tabId = tab.id;
-    if (tabId == null) return;
+    if (tabId == null) return { premium: null };
 
     await new Promise((resolve) => {
       const done = () => {
@@ -95,6 +127,9 @@ async function warmProvider(provider) {
       chrome.tabs.onUpdated.addListener(onUpdated);
       setTimeout(done, 8_000);
     });
+    if (provider === "youtube") {
+      premium = await probeYoutubePremiumWithRetry(tabId);
+    }
   } catch {
     /* best-effort — export whatever is in the jar */
   } finally {
@@ -102,26 +137,32 @@ async function warmProvider(provider) {
       await chrome.tabs.remove(tabId).catch(() => undefined);
     }
   }
+  return { premium };
 }
 
 async function exportProvider(provider, { warm = true } = {}) {
   const domains = PROVIDERS[provider];
   if (!domains) throw new Error("Unknown provider");
-  if (warm) await warmProvider(provider);
+  const warmed = warm ? await warmProvider(provider) : { premium: null };
   const cookies = await collectCookies(provider);
   return {
     cookies: toNetscape(cookies),
     count: cookies.length,
     loggedIn: looksLoggedIn(provider, cookies),
+    premium: provider === "youtube" ? warmed.premium : null,
   };
 }
 
-async function uploadCookies(origin, provider, netscapeText) {
+async function uploadCookies(origin, provider, netscapeText, premium) {
   const res = await fetch(`${origin}/api/cookies`, {
     method: "PUT",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider, cookies: netscapeText }),
+    body: JSON.stringify({
+      provider,
+      cookies: netscapeText,
+      ...(typeof premium === "boolean" ? { premium } : {}),
+    }),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -149,8 +190,13 @@ async function syncAll(origin) {
       };
       continue;
     }
-    await uploadCookies(origin, provider, exported.cookies);
-    results[provider] = { status: "synced" };
+    await uploadCookies(origin, provider, exported.cookies, exported.premium);
+    results[provider] = {
+      status: "synced",
+      ...(provider === "youtube" && typeof exported.premium === "boolean"
+        ? { premium: exported.premium }
+        : {}),
+    };
   }
 
   const synced = SYNC_PROVIDERS.filter((p) => results[p].status === "synced");
@@ -167,7 +213,9 @@ async function syncAll(origin) {
 
 function summarize(results) {
   const parts = [];
-  if (results.youtube.status === "synced") parts.push("YouTube refreshed");
+  if (results.youtube.status === "synced") {
+    parts.push(results.youtube.premium ? "YouTube Premium refreshed" : "YouTube refreshed");
+  }
   if (results.youtube.status === "skipped") parts.push("YouTube skipped");
   if (results.soundcloud.status === "synced") parts.push("SoundCloud refreshed");
   if (results.soundcloud.status === "skipped") parts.push("SoundCloud skipped");

@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { youtubePremiumFromMetaJson } from "@thumper/shared";
 import { dataRoot } from "./paths";
 import { deleteObject, headObject, putBytes, readBytes, userStorageKey } from "./storage";
 
@@ -39,41 +40,61 @@ function cookieKey(userId: string, provider: CookieProvider): string {
   return userStorageKey(userId, "cookies", `${provider}.cookies.enc`);
 }
 
+function cookieMetaKey(userId: string, provider: CookieProvider): string {
+  return userStorageKey(userId, "cookies", `${provider}.meta.json`);
+}
+
 export async function saveEncryptedCookies(
   userId: string,
   provider: CookieProvider,
   netscapeText: string,
+  options?: { premium?: boolean | null },
 ): Promise<void> {
   const encrypted = encryptBytes(Buffer.from(netscapeText, "utf8"));
   await putBytes(cookieKey(userId, provider), encrypted, {
     contentType: "application/octet-stream",
   });
+  if (provider === "youtube" && typeof options?.premium === "boolean") {
+    await putBytes(
+      cookieMetaKey(userId, provider),
+      Buffer.from(JSON.stringify({ premium: options.premium }), "utf8"),
+      { contentType: "application/json" },
+    );
+  }
 }
 
 export async function deleteCookies(userId: string, provider: CookieProvider): Promise<void> {
-  await deleteObject(cookieKey(userId, provider));
+  await Promise.all([
+    deleteObject(cookieKey(userId, provider)),
+    deleteObject(cookieMetaKey(userId, provider)),
+  ]);
 }
 
 export type CookieProviderStatus = {
   present: boolean;
   updatedAt: string | null;
+  /** Full YouTube Premium. Always null for SoundCloud or an unprobed session. */
+  premium: boolean | null;
 };
 
 export type CookieStatusMap = Record<"youtube" | "soundcloud", CookieProviderStatus>;
 
 export async function getCookieStatus(userId: string): Promise<CookieStatusMap> {
   const providers = ["youtube", "soundcloud"] as const;
-  // Two independent object-store HEADs — the page polls this, so don't pay for
-  // them one after the other.
-  const metas = await Promise.all(
-    providers.map((provider) => headObject(cookieKey(userId, provider))),
-  );
+  // Cookie HEADs plus the YouTube Premium sidecar — the page polls this, so
+  // don't pay for them one after the other.
+  const [metas, youtubeMeta] = await Promise.all([
+    Promise.all(providers.map((provider) => headObject(cookieKey(userId, provider)))),
+    readBytes(cookieMetaKey(userId, "youtube")),
+  ]);
+  const youtubePremium = youtubePremiumFromMetaJson(youtubeMeta?.toString("utf8") ?? null);
   const out = {} as CookieStatusMap;
   providers.forEach((provider, i) => {
     const meta = metas[i];
     out[provider] = {
       present: Boolean(meta && meta.size > 0),
       updatedAt: meta?.updatedAt?.toISOString() ?? null,
+      premium: provider === "youtube" ? youtubePremium : null,
     };
   });
   return out;

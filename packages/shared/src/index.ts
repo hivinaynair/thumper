@@ -273,6 +273,11 @@ export function trackDisplayName(
  * stampedes the far end. Rejects on the first failure, like `Promise.all`; a
  * caller that wants per-item isolation should catch inside `fn`.
  */
+export {
+  youtubePremiumFromInitialData,
+  youtubePremiumFromMetaJson,
+} from "./youtube-premium";
+
 export async function mapWithConcurrency<T, R>(
   items: readonly T[],
   limit: number,

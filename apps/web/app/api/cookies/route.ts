@@ -28,7 +28,8 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: "Expected Netscape-format cookies" }, { status: 400 });
   }
 
-  await saveEncryptedCookies(userId, provider, text);
+  const premium = typeof body.premium === "boolean" ? body.premium : undefined;
+  await saveEncryptedCookies(userId, provider, text, { premium });
   return NextResponse.json({ ok: true });
 }
 

@@ -11,6 +11,7 @@ const out = join(root, "dist");
 const FILES = [
   ["manifest.json", join(root, "manifest.json")],
   ["background.js", join(root, "src", "background.js")],
+  ["youtube-premium.js", join(root, "src", "youtube-premium.js")],
   ["content.js", join(root, "src", "content.js")],
   ["popup.html", join(root, "src", "popup.html")],
   ["popup.js", join(root, "src", "popup.js")],
