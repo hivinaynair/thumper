@@ -423,25 +423,16 @@ async function processTrack(params: {
       outDir,
       catalogUrl: params.catalogUrl ?? params.trackUrl,
     });
-    if (ytResult === "downloaded") return;
-
-    // The mirror is gone, so the only thing left worth taking is the artist's
-    // own upload: `format_id=download` is the file they published, and it beats
-    // any mirror. A stream is not worth taking — it tops out below the mirror we
-    // just failed to get, so falling back to one would quietly downgrade the
-    // track. Probe for the original and fall through only if it exists.
-    const hasFreeDownload = await probeSoundCloudFreeDownload(
-      params.trackUrl,
-      cookieTmp,
+    const step = await soundCloudStepAfterMirror({
+      ytResult,
+      trackUrl: params.trackUrl,
+      cookiePath: cookieTmp,
       signal,
-    );
-    if (!hasFreeDownload) {
-      throw new Error(
-        "No confident YouTube mirror for this SoundCloud track, and the artist has not enabled its SoundCloud download — the stream left is lower quality than a mirror.",
-      );
-    }
-    // The mirror has had its turn. Without this the SoundCloud failure paths
-    // below would go back for a second attempt at the same dead end.
+    });
+    if (step === "done") return;
+    // Falling through to the artist's own upload. The mirror has had its turn —
+    // without this the SoundCloud failure paths below would go back for a second
+    // attempt at the same dead end.
     youtubeAlreadyTried = true;
   }
 
@@ -843,8 +834,50 @@ async function resolveSoundCloudMeta(params: {
   });
 }
 
-type YoutubePreferResult =
+export type YoutubePreferResult =
   "downloaded" | "no_mirror" | "no_cookies" | "youtube_failed";
+
+/** What is left for a SoundCloud track once the YouTube-first attempt is over. */
+export type SoundCloudStepAfterMirror = "done" | "soundcloud-original";
+
+/**
+ * Decide what a SoundCloud track falls back to when its YouTube mirror did not
+ * deliver — no match, no YouTube cookies, or a mirror that failed to download.
+ *
+ * The artist's own upload (`format_id=download`) is the only thing worth taking
+ * at that point: it is the file they published and it beats any mirror. A
+ * stream is not, because it tops out below the mirror that just missed, so
+ * taking one would quietly downgrade the track. With no original, nothing
+ * usable is left and the job fails.
+ *
+ * `probeFreeDownload` is a test seam; production passes nothing.
+ */
+export async function soundCloudStepAfterMirror(params: {
+  ytResult: YoutubePreferResult;
+  trackUrl: string;
+  cookiePath: string | null;
+  signal?: AbortSignal;
+  probeFreeDownload?: (
+    url: string,
+    cookiePath?: string | null,
+    signal?: AbortSignal,
+  ) => Promise<boolean>;
+}): Promise<SoundCloudStepAfterMirror> {
+  if (params.ytResult === "downloaded") return "done";
+
+  const probe = params.probeFreeDownload ?? probeSoundCloudFreeDownload;
+  const hasFreeDownload = await probe(
+    params.trackUrl,
+    params.cookiePath,
+    params.signal,
+  );
+  if (!hasFreeDownload) {
+    throw new Error(
+      "No confident YouTube mirror for this SoundCloud track, and the artist has not enabled its SoundCloud download — the stream left is lower quality than a mirror.",
+    );
+  }
+  return "soundcloud-original";
+}
 
 /**
  * Prefer YouTube (Premium Opus) when SoundCloud has no free-download master
