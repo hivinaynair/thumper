@@ -11,6 +11,9 @@ const FOLDER_MIME = "application/vnd.google-apps.folder";
  */
 export function sanitizeDriveFolderName(name: string): string {
   const cleaned = name
+    // NUL is stripped on purpose: Drive rejects it in names and it can
+    // truncate the path downstream.
+    // eslint-disable-next-line no-control-regex
     .replace(/[/\x00]/g, " ")
     .replace(/\s+/g, " ")
     .trim()

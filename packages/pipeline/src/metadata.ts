@@ -47,7 +47,7 @@ const ARTIST_SEPARATOR =
  */
 export function stripFreeDownloadLabel(text: string): string {
   return text
-    .replace(/\s*[\(\[]\s*free\s*(?:dl|d\/l|download)\s*[\)\]]/gi, "")
+    .replace(/\s*[([]\s*free\s*(?:dl|d\/l|download)\s*[)\]]/gi, "")
     .replace(/\s*[-–—]\s*free\s*(?:dl|d\/l|download)\s*$/i, "")
     .replace(/\s+free\s*(?:dl|d\/l|download)\s*$/i, "")
     .replace(/\s+/g, " ")

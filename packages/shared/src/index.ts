@@ -238,6 +238,9 @@ export function sanitizeFilename(name: string, maxLen = 120): string {
     name
       .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
       .replace(/[\u201C\u201D\u201E]/g, '"')
+      // The C0 range is stripped on purpose: those bytes are illegal in
+      // filenames on every target OS.
+      // eslint-disable-next-line no-control-regex
       .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "")
       .replace(/\s+/g, " ")
       .trim()

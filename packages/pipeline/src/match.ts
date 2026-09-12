@@ -25,7 +25,7 @@ export function parseCreditTitle(
   let right = match[2].trim();
   // Drop trailing "(Official Video)" / "[Free Download]" noise from the song.
   right = right
-    .replace(/\s*[\[(][^)\]]*(official|video|audio|lyric|visualiser|visualizer|free\s*download)[^)\]]*[)\]]\s*$/i, "")
+    .replace(/\s*[[(][^)\]]*(official|video|audio|lyric|visualiser|visualizer|free\s*download)[^)\]]*[)\]]\s*$/i, "")
     .trim();
   if (!left || !right) return null;
   // Avoid treating "Song Title - Live at Brixton" as artist/title.
@@ -150,7 +150,6 @@ function calcArtistMatch(track: SpotifyTrackMeta, candidate: MirrorCandidate): n
 
   const channel = ratio(main, candidate.uploader);
   let inTitle = 0;
-  const titleSlug = slugify(candidate.title).replace(/-/g, "");
   let hits = 0;
   for (const artist of track.artists) {
     if (containsSlug(candidate.title, artist) || containsSlug(candidate.uploader, artist)) {

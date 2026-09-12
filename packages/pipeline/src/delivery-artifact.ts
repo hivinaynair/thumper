@@ -178,6 +178,10 @@ async function runWithCleanup<T>(
       if (hasPrimaryError) {
         attachCleanupError(primaryError, cleanupError);
       } else {
+        // Guarded: this branch is only reachable when `run()` succeeded, so
+        // there is no primary error for the throw to swallow. That is exactly
+        // what hasPrimaryError is for.
+        // eslint-disable-next-line no-unsafe-finally
         throw cleanupError;
       }
     }

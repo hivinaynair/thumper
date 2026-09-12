@@ -15,7 +15,9 @@
     "MODAL_JOB_URL",
     "MODAL_SEARCH_URL",
     "MODAL_WEBHOOK_SECRET",
-    "BLOB_READ_WRITE_TOKEN"
+    "BLOB_READ_WRITE_TOKEN",
+    "YT_PLAYER_CLIENTS",
+    "SOUNDCLOUD_CLIENT_ID"
   ],
   "globalDependencies": [".env"],
   "tasks": {

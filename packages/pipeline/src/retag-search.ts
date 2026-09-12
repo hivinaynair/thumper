@@ -23,7 +23,7 @@ export function queryFromAudioFilename(filename: string): string {
     .trim();
   // Drop common SoundCloud free-download / format suffixes that poison search.
   return stripFreeDownloadLabel(base)
-    .replace(/\s*[\(\[]?(hq|wav|aiff|flac|mp3|m4a)[\)\]]?\s*$/i, "")
+    .replace(/\s*[([]?(hq|wav|aiff|flac|mp3|m4a)[)\]]?\s*$/i, "")
     .replace(/\s+/g, " ")
     .trim();
 }

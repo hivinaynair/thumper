@@ -34,7 +34,6 @@ import {
   verdictOf,
   type CookieStatus,
   type Job,
-  type PlaylistRollup,
   type VerdictTier,
 } from "./job-view";
 import { StatusDot } from "../components/status-dot";

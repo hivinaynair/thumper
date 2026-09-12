@@ -24,6 +24,8 @@ export const nextJsConfig = [
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Served verbatim and not ours to style (e.g. the generated Serwist SW).
+    "public/**",
   ]),
   {
     ...pluginReact.configs.flat.recommended,
@@ -52,6 +54,15 @@ export const nextJsConfig = [
       ...pluginReactHooks.configs.recommended.rules,
       // React scope no longer necessary with new JSX transform.
       "react/react-in-jsx-scope": "off",
+    },
+  },
+  {
+    // Route handlers are server-only and can never contain a component, but
+    // rules-of-hooks matches on the `use` prefix alone — so a plain helper like
+    // `useBlobStorage()` reads as a misplaced hook. Must stay last to win.
+    files: ["**/app/api/**"],
+    rules: {
+      "react-hooks/rules-of-hooks": "off",
     },
   },
 ];

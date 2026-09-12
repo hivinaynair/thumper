@@ -26,7 +26,6 @@ import { FILE_TTL_MS } from "./cleanup";
 import { convertAudio, hasAttachedArtwork, tagMp3Copy } from "./convert";
 import { materializeCookieFile } from "./cookies";
 import {
-  audioMimeForExtension,
   executeOriginalArtifact,
   extensionFromPath,
   planDeliveryArtifact,
@@ -1165,9 +1164,9 @@ export async function runDownloadJob(deps: RunJobDeps): Promise<void> {
     );
     await ensureNotCancelled(signal, db, payload.jobId, payload.parentJobId);
 
-    let trackUrl = payload.url;
-    let titleHint = payload.titleHint;
-    let artistHint = payload.artistHint;
+    const trackUrl = payload.url;
+    const titleHint = payload.titleHint;
+    const artistHint = payload.artistHint;
 
     // Single tracks skip yt-dlp expand so purchase_url resolution is not
     // blocked by SoundCloud client_id scrape failures in the worker.

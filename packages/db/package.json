@@ -19,9 +19,11 @@
     "postgres": "^3.4.7"
   },
   "devDependencies": {
+    "@thumper/eslint-config": "workspace:*",
     "@thumper/typescript-config": "workspace:*",
     "@types/node": "^22.15.3",
     "drizzle-kit": "^0.31.10",
+    "eslint": "^9.39.1",
     "typescript": "^5.9.2"
   }
 }
