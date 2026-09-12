@@ -12,6 +12,8 @@ export {
   isSoundCloudPreviewError,
   isSoundCloudUnavailableError,
   isYoutubeBotError,
+  probeSoundCloudFreeDownload,
+  soundcloudHasFreeDownload,
   SoundCloudPreviewError,
   type DownloadMediaResult,
 } from "./download";

@@ -39,6 +39,7 @@ import {
   dumpJson,
   isSoundCloudPreviewError,
   isSoundCloudUnavailableError,
+  probeSoundCloudFreeDownload,
   SoundCloudPreviewError,
 } from "./download";
 import { deleteDriveFile, ensurePlaylistFolder, uploadToDrive } from "./drive";
@@ -423,12 +424,25 @@ async function processTrack(params: {
       catalogUrl: params.catalogUrl ?? params.trackUrl,
     });
     if (ytResult === "downloaded") return;
-    // Deliberately no SoundCloud-stream fallback: a stream would be worse than
-    // what we just failed to get, so the job fails instead of quietly
-    // delivering the lower-quality copy.
-    throw new Error(
-      "No confident YouTube mirror for this SoundCloud track, and its stream is lower quality than a mirror.",
+
+    // The mirror is gone, so the only thing left worth taking is the artist's
+    // own upload: `format_id=download` is the file they published, and it beats
+    // any mirror. A stream is not worth taking — it tops out below the mirror we
+    // just failed to get, so falling back to one would quietly downgrade the
+    // track. Probe for the original and fall through only if it exists.
+    const hasFreeDownload = await probeSoundCloudFreeDownload(
+      params.trackUrl,
+      cookieTmp,
+      signal,
     );
+    if (!hasFreeDownload) {
+      throw new Error(
+        "No confident YouTube mirror for this SoundCloud track, and the artist has not enabled its SoundCloud download — the stream left is lower quality than a mirror.",
+      );
+    }
+    // The mirror has had its turn. Without this the SoundCloud failure paths
+    // below would go back for a second attempt at the same dead end.
+    youtubeAlreadyTried = true;
   }
 
   await update({
@@ -478,15 +492,19 @@ async function processTrack(params: {
   // Verify the *downloaded source*, before conversion. Once it has been
   // rewrapped as ALAC/FLAC every container-level check says "lossless", so this
   // is the last moment the truth is visible.
-  const sourceLabel =
-    params.qualitySourceLabel ??
-    (soundcloud ? "SoundCloud’s stream" : "The YouTube audio");
   // Only the artist's own upload can be a master. `format_id=download` is the
   // SoundCloud free download; everything else here is a stream or a mirror.
   const isArtistOriginal =
     soundcloud &&
     typeof downloaded.formatId === "string" &&
     downloaded.formatId.toLowerCase() === "download";
+  const sourceLabel =
+    params.qualitySourceLabel ??
+    (!soundcloud
+      ? "The YouTube audio"
+      : isArtistOriginal
+        ? "The artist’s SoundCloud download"
+        : "SoundCloud’s stream");
   const verdict = await safeVerifyForDj(
     downloaded.filePath,
     signal,
