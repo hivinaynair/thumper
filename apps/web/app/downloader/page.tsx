@@ -208,12 +208,10 @@ const COOKIE_PROVIDERS = [
   ["soundcloud", "SoundCloud"],
 ] as const;
 
-
-const PROVIDER_SITES: Record<CookieProviderKey, { label: string; url: string }> =
-  {
-    youtube: { label: "YouTube", url: "https://www.youtube.com" },
-    soundcloud: { label: "SoundCloud", url: "https://soundcloud.com" },
-  };
+const PROVIDER_SITES: Record<CookieProviderKey, { label: string; url: string }> = {
+  youtube: { label: "YouTube", url: "https://www.youtube.com" },
+  soundcloud: { label: "SoundCloud", url: "https://soundcloud.com" },
+};
 
 /**
  * One instruction at a time.
@@ -238,9 +236,7 @@ function CookieSetupPanel({
   // Same vocabulary as the session dots: amber for "works, but attend to it",
   // red for "nothing will download until you act".
   const blocking = state.step === "install" || state.step === "sync";
-  const accent = blocking
-    ? "var(--ui-tier-unsuitable)"
-    : "var(--ui-tier-marginal)";
+  const accent = blocking ? "var(--ui-tier-unsuitable)" : "var(--ui-tier-marginal)";
 
   const installSteps = (
     <ol className="mt-1.5 list-decimal space-y-0.5 pl-4">
@@ -249,18 +245,14 @@ function CookieSetupPanel({
         Open <code>chrome://extensions</code>, enable Developer mode
       </li>
       <li>
-        Load unpacked → pick the unzipped folder (or Reload if already
-        installed), then reload this page
+        Load unpacked → pick the unzipped folder (or Reload if already installed), then reload this
+        page
       </li>
     </ol>
   );
 
   const downloadLink = (
-    <a
-      href="/thumper-extension.zip"
-      download
-      className="text-primary underline underline-offset-2"
-    >
+    <a href="/thumper-extension.zip" download className="text-primary underline underline-offset-2">
       download v{COOKIE_SYNC_EXTENSION_VERSION}
     </a>
   );
@@ -276,8 +268,8 @@ function CookieSetupPanel({
             Install the Thumper extension to start downloading
           </p>
           <p className="mt-1">
-            It copies your signed-in YouTube and SoundCloud sessions to Thumper
-            so downloads can use them — {downloadLink}
+            It copies your signed-in YouTube and SoundCloud sessions to Thumper so downloads can use
+            them — {downloadLink}
           </p>
           {installSteps}
         </>
@@ -285,13 +277,11 @@ function CookieSetupPanel({
 
       {state.step === "update" ? (
         <>
-          <p className="font-medium text-foreground">
-            Extension v{state.installed} is out of date
-          </p>
+          <p className="font-medium text-foreground">Extension v{state.installed} is out of date</p>
           <p className="mt-1">
-            v{COOKIE_SYNC_EXTENSION_VERSION} changed which sessions get synced.
-            Until you update, syncing may look like it worked but leave Thumper
-            without usable cookies — {downloadLink}
+            v{COOKIE_SYNC_EXTENSION_VERSION} changed which sessions get synced. Until you update,
+            syncing may look like it worked but leave Thumper without usable cookies —{" "}
+            {downloadLink}
           </p>
           {installSteps}
         </>
@@ -300,9 +290,8 @@ function CookieSetupPanel({
       {state.step === "signin" ? (
         <>
           <p className="font-medium text-foreground">
-            Sign in to{" "}
-            {state.providers.map((k) => PROVIDER_SITES[k].label).join(" and ")}{" "}
-            in this browser
+            Sign in to {state.providers.map((k) => PROVIDER_SITES[k].label).join(" and ")} in this
+            browser
           </p>
           <p className="mt-1">
             The last sync skipped{" "}
@@ -326,9 +315,8 @@ function CookieSetupPanel({
 
       {state.step === "sync" ? (
         <p>
-          <span className="font-medium text-foreground">Almost there.</span>{" "}
-          Extension installed — sync your sessions to Thumper and you can start
-          queueing links.
+          <span className="font-medium text-foreground">Almost there.</span> Extension installed —
+          sync your sessions to Thumper and you can start queueing links.
         </p>
       ) : null}
 
@@ -373,9 +361,7 @@ export default function DownloaderPage() {
   // providers the API now rejects, which reads as "cookies broken" unless the
   // page says outright that the extension is stale.
   const [extensionVersion, setExtensionVersion] = useState<string | null>(null);
-  const [skippedProviders, setSkippedProviders] = useState<CookieProviderKey[]>(
-    [],
-  );
+  const [skippedProviders, setSkippedProviders] = useState<CookieProviderKey[]>([]);
   const extensionReady = extensionVersion !== null;
   const extensionReadyRef = useRef(false);
 

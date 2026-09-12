@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { cookieSetupState, type CookieSetupInput } from "./cookie-setup";
+import { type CookieSetupInput, cookieSetupState } from "./cookie-setup";
 
 const base: CookieSetupInput = {
   extensionVersion: "0.7.0",
@@ -55,9 +55,10 @@ describe("cookieSetupState", () => {
   });
 
   it("prioritises a concrete job failure over a stale-looking clock", () => {
-    expect(
-      cookieSetupState({ ...base, failedNeedRefresh: true, youtubeStale: true }),
-    ).toEqual({ step: "refresh", reason: "failed" });
+    expect(cookieSetupState({ ...base, failedNeedRefresh: true, youtubeStale: true })).toEqual({
+      step: "refresh",
+      reason: "failed",
+    });
   });
 
   it("nudges a refresh when the YouTube session has aged out", () => {

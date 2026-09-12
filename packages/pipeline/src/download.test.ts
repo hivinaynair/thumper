@@ -6,13 +6,13 @@ import {
 } from "./audio-quality";
 import {
   downloadMediaWithDeps,
-  withExtractorClients,
   isFormatUnavailable,
   isRateLimitError,
   isSoundCloudPreviewError,
   isSoundCloudUnavailableError,
   isYoutubeBotError,
   SoundCloudPreviewError,
+  withExtractorClients,
 } from "./download";
 import * as pipeline from "./index";
 

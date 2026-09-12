@@ -94,10 +94,7 @@ async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-export function withExtractorClients(
-  args: string[],
-  clients: string,
-): string[] {
+export function withExtractorClients(args: string[], clients: string): string[] {
   // Only the player_client arg is retargeted. Other extractor args — notably
   // the bgutil PO token provider — must survive the retry, or the fallback
   // silently loses access to Premium itags.
