@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { isCookieStale, shouldRefreshCookiesBeforeQueue } from "../../lib/cookie-freshness";
 import { cookieNeedsRefresh, jobsToRetry, retryButtonLabel } from "../../lib/cookie-retry";
 import {
   type CookieProviderKey,
@@ -48,9 +49,6 @@ type SyncResult = {
   };
 };
 
-/** Mark cookies stale after this — Google rotates sessions often. */
-const COOKIE_STALE_MS = 12 * 60 * 60 * 1000;
-
 function formatSyncedAt(iso: string | null): string {
   if (!iso) return "";
   try {
@@ -73,12 +71,6 @@ function formatSyncedAge(iso: string | null): string {
   const hours = Math.floor(mins / 60);
   if (hours < 48) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
-}
-
-function isCookieStale(iso: string | null): boolean {
-  if (!iso) return false;
-  const ms = Date.now() - new Date(iso).getTime();
-  return Number.isFinite(ms) && ms >= COOKIE_STALE_MS;
 }
 
 function cookiesReadyForUrl(
@@ -108,7 +100,8 @@ function cookiesReadyForUrl(
   ) {
     return {
       ready: true,
-      reason: "Your YouTube session may have expired. Refresh it before your next download.",
+      reason:
+        "Your YouTube session may have expired. We’ll refresh it when you add this to the queue.",
     };
   }
   return { ready: true, reason: null };
@@ -210,7 +203,11 @@ function CookieSetupPanel({ state }: { state: CookieSetupState }) {
     <ol className="mt-1.5 list-decimal space-y-0.5 pl-4">
       <li>Unzip the download</li>
       <li>
-        Open <code>chrome://extensions</code>, enable Developer mode
+        Open{" "}
+        <a href="chrome://extensions" className="text-primary underline underline-offset-2">
+          <code>chrome://extensions</code>
+        </a>
+        , enable Developer mode
       </li>
       <li>
         Load unpacked → pick the unzipped folder (or Reload if already installed), then reload this
@@ -292,7 +289,7 @@ function CookieSetupPanel({ state }: { state: CookieSetupState }) {
         <p>
           {state.reason === "failed"
             ? "A job failed on stale or blocked cookies. Refresh, then retry the failed tracks."
-            : "YouTube session looks older than 12h. Refresh before the next download."}
+            : "YouTube session looks older than 12h. Add a track and we’ll refresh it before the download starts."}
         </p>
       ) : null}
     </div>
@@ -435,6 +432,27 @@ export default function DownloaderPage() {
     setBusy(true);
     setMessage(null);
     try {
+      const needsRefresh = shouldRefreshCookiesBeforeQueue({
+        youtubePresent: Boolean(cookies?.youtube.present),
+        youtubeUpdatedAt: cookies?.youtube.updatedAt ?? null,
+        extensionReady,
+      });
+      if (needsRefresh) {
+        setSyncing(true);
+        setMessageTone("ok");
+        setMessage("Refreshing cookies…");
+        const result = await requestExtensionSync();
+        if (result.version) setExtensionVersion(result.version);
+        setSkippedProviders(skippedFromSync(result));
+        if (!result.ok) {
+          setMessageTone("error");
+          setMessage(result.error || result.message || "Cookie refresh failed");
+          return;
+        }
+        await refreshCookies();
+        setMessage(null);
+        setSyncing(false);
+      }
       const res = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -455,6 +473,7 @@ export default function DownloaderPage() {
       setMessageTone("error");
       setMessage(err instanceof Error ? err.message : "Failed");
     } finally {
+      setSyncing(false);
       setBusy(false);
     }
   }
@@ -615,7 +634,7 @@ export default function DownloaderPage() {
               <Button type="submit" disabled={!canQueue} className="downloader-submit">
                 {busy ? (
                   <>
-                    <Loader2 className="animate-spin" /> Queuing
+                    <Loader2 className="animate-spin" /> {syncing ? "Refreshing…" : "Queuing"}
                   </>
                 ) : (
                   <>
