@@ -1,0 +1,1 @@
+ALTER TYPE "public"."job_stage" ADD VALUE 'separating' BEFORE 'delivering';

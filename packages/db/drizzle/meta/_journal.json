@@ -50,6 +50,13 @@
       "when": 1786167929177,
       "tag": "0006_sharp_king_bedlam",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789226237239,
+      "tag": "0007_open_captain_midlands",
+      "breakpoints": true
     }
   ]
 }

@@ -4,12 +4,14 @@ import {
   ensurePlaylistFolder,
   runDownloadJob,
   runRetagJob,
+  runSeparateJob,
 } from "@thumper/pipeline";
 import {
   detectSourceKind,
   oauthScopesIncludeDrive,
   type DownloadJobPayload,
   type RetagJobPayload,
+  type StemJobPayload,
 } from "@thumper/shared";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import pino from "pino";
@@ -113,10 +115,17 @@ export async function processJobById(jobId: string): Promise<void> {
   if (!row) throw new Error(`Job not found: ${jobId}`);
 
   const retagMeta = row.result as
-    | { retag?: boolean; inputStorageKey?: string; clubReadyOnly?: boolean }
+    | {
+        retag?: boolean;
+        stems?: boolean;
+        inputStorageKey?: string;
+        clubReadyOnly?: boolean;
+        driveFolderId?: string;
+      }
     | null
     | undefined;
   const isRetag = Boolean(retagMeta?.retag && retagMeta.inputStorageKey);
+  const isStems = Boolean(retagMeta?.stems && retagMeta.inputStorageKey);
 
   // Abort this container when the row leaves queued/running — Cancel, a
   // finished job, or Clear deleting the row. Playlist children run in their
@@ -153,6 +162,34 @@ export async function processJobById(jobId: string): Promise<void> {
         updatedAt: new Date(),
       })
       .where(inArray(jobs.id, unique));
+  }
+
+  if (isStems) {
+    const stemPayload: StemJobPayload = {
+      jobId: row.id,
+      userId: row.userId,
+      inputStorageKey: retagMeta!.inputStorageKey!,
+      destination: row.destination,
+      titleHint: row.title ?? undefined,
+      artistHint: row.artist ?? undefined,
+      ...(retagMeta?.driveFolderId
+        ? { driveFolderId: retagMeta.driveFolderId }
+        : {}),
+    };
+    try {
+      log.info({ jobId }, "Stem separation job started");
+      await runSeparateJob({
+        db,
+        payload: stemPayload,
+        signal: ac.signal,
+        update: (patch) => updateJob(jobId, patch),
+        getGoogleAccessToken,
+      });
+    } finally {
+      clearInterval(cancelPoll);
+      log.info({ jobId }, "Stem separation job finished");
+    }
+    return;
   }
 
   if (isRetag) {

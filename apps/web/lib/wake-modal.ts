@@ -30,6 +30,47 @@ export async function wakeModalJob(jobId: string): Promise<void> {
   }
 }
 
+/**
+ * Wake the GPU stem-separation worker. Separate endpoint from `wake` because
+ * it runs a different Modal function on a different (GPU) image.
+ * Uses MODAL_STEMS_URL when set; otherwise derives it from MODAL_JOB_URL by
+ * replacing the trailing `/wake` with `/wake-stems`.
+ */
+export async function wakeModalStemJob(jobId: string): Promise<void> {
+  const backend = (process.env.PROCESS_BACKEND ?? "pgboss").toLowerCase();
+  if (backend !== "modal") return;
+
+  let url = process.env.MODAL_STEMS_URL?.trim();
+  if (!url) {
+    const jobUrl = process.env.MODAL_JOB_URL?.trim();
+    if (!jobUrl) {
+      throw new Error(
+        "PROCESS_BACKEND=modal requires MODAL_STEMS_URL or MODAL_JOB_URL",
+      );
+    }
+    url = jobUrl.replace(/\/wake\/?$/, "/wake-stems");
+    if (url === jobUrl) {
+      throw new Error(
+        "Set MODAL_STEMS_URL — could not derive it from MODAL_JOB_URL",
+      );
+    }
+  }
+
+  const secret = process.env.MODAL_WEBHOOK_SECRET?.trim();
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jobId, ...(secret ? { secret } : {}) }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(
+      `Modal stem wake failed (${res.status}): ${text.slice(0, 500)}`,
+    );
+  }
+}
+
 export type ModalSearchCandidate = {
   url: string;
   title: string;

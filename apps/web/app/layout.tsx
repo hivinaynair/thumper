@@ -104,6 +104,7 @@ export default function RootLayout({
 								<Show when="signed-in">
 									<Link href="/downloader">Downloader</Link>
 									<Link href="/retag">Retag</Link>
+									<Link href="/stems">Stems</Link>
 									<UserButton
 										userProfileProps={{
 											additionalOAuthScopes: {

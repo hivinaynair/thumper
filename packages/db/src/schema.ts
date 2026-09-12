@@ -22,6 +22,7 @@ export const jobStageEnum = pgEnum("job_stage", [
   "resolving",
   "downloading",
   "converting",
+  "separating",
   "delivering",
   "cleanup",
   "done",
@@ -86,6 +87,22 @@ export const jobs = pgTable("jobs", {
     /** Retag (WAV→FLAC) jobs store the uploaded input key here. */
     retag?: boolean;
     inputStorageKey?: string;
+    /**
+     * Stem-separation jobs. Unlike every other job these emit *two* outputs,
+     * so there is no single `fileId` — each stem is its own `files` row and is
+     * listed in `stemFiles`.
+     */
+    stems?: boolean;
+    stemModel?: string;
+    stemFiles?: Array<{
+      fileId: string;
+      role: "instrumental" | "vocals";
+      filename: string;
+      mime: string;
+      sizeBytes: number;
+      driveFileId?: string;
+      driveUrl?: string;
+    }>;
     /** Buy/stream purchase_url — user must download manually. */
     manualDownloadUrl?: string;
     manualDownloadTitle?: string | null;

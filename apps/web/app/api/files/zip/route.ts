@@ -2,7 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { files } from "@thumper/db";
 import { resolveDownloadTarget } from "@thumper/pipeline/storage";
 import { ZipArchive } from "archiver";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
@@ -16,17 +16,27 @@ export const maxDuration = 300;
 /**
  * Zip every finished file in the queue. `files` rows cascade-delete with their
  * job, so "everything this user owns" is exactly "everything still in the list".
+ *
+ * `?jobId=` narrows to one job — used by stem separation, which is the only
+ * job shape that produces more than one file (instrumental + vocals).
+ * The userId predicate is kept alongside it so a guessed jobId leaks nothing.
  */
-export async function GET() {
+export async function GET(req: Request) {
   const { userId } = await auth();
   if (!userId)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const jobId = new URL(req.url).searchParams.get("jobId")?.trim();
 
   const db = getDb();
   const rows = await db
     .select()
     .from(files)
-    .where(eq(files.userId, userId))
+    .where(
+      jobId
+        ? and(eq(files.userId, userId), eq(files.jobId, jobId))
+        : eq(files.userId, userId),
+    )
     .orderBy(asc(files.createdAt));
 
   if (rows.length === 0) {

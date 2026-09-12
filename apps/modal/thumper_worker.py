@@ -97,9 +97,59 @@ endpoint_image = (
     .add_local_python_source("subprocess_retry")
 )
 
+# Stem separation needs torch + a GPU; the download worker needs chromium,
+# Deno and yt-dlp. Keeping them in separate images means a ~2.5 GB torch stack
+# never lands in the cold-start path of every download job, and vice versa.
+stem_image = (
+    modal.Image.from_registry("oven/bun:1.3-debian", add_python="3.12")
+    .apt_install("ffmpeg", "ca-certificates", "python3", "python3-venv", "curl")
+    .run_commands(
+        "python3 -m venv /opt/venv",
+        # audioread is a real dependency of audio-separator's spec_utils that
+        # its own extras do not pull in — without it the CLI dies on import.
+        "/opt/venv/bin/pip install --no-cache-dir -U pip "
+        "torch 'audio-separator[gpu]' audioread 'fastapi[standard]'",
+        "/opt/venv/bin/audio-separator --env_info || true",
+    )
+    .env(
+        {
+            "PATH": "/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "STEM_SEPARATOR_PATH": "/opt/venv/bin/audio-separator",
+            "STEM_MODEL_DIR": "/models",
+            "DATA_DIR": "/tmp/thumper-data",
+        }
+    )
+    .add_local_dir(
+        str(REPO_ROOT),
+        remote_path="/app",
+        copy=True,
+        ignore=[
+            "**/node_modules/**",
+            "**/.next/**",
+            "**/data/**",
+            "**/.git/**",
+            "**/dist/**",
+            "**/.turbo/**",
+            "**/agent-transcripts/**",
+            "**/.cursor/**",
+            "**/scripts/stem-bench/**",
+            "**/.env",
+            "**/.env.*",
+            "**/.modal.toml",
+        ],
+    )
+    .run_commands("cd /app && bun install --frozen-lockfile")
+    .add_local_python_source("subprocess_retry")
+)
+
 app = modal.App(APP_NAME)
 
 secrets = modal.Secret.from_name("thumper-secrets")
+
+# Model checkpoints live in a Volume, not the image: the chosen checkpoint is
+# ~1.7 GB, it is shared across containers, and it survives image rebuilds so
+# swapping models does not mean rebuilding.
+stem_models = modal.Volume.from_name("thumper-stem-models", create_if_missing=True)
 
 
 def _run_process_job(job_id: str) -> str:
@@ -132,6 +182,61 @@ def process_job(job_id: str) -> str:
 
     spawn_fanout_children(job_id, process_job.spawn)
     return output
+
+
+@app.function(
+    image=stem_image,
+    secrets=[secrets],
+    gpu="L4",
+    volumes={"/models": stem_models},
+    timeout=60 * 30,
+    cpu=2.0,
+    memory=8192,
+    max_containers=2,
+)
+def process_stem_job(job_id: str) -> str:
+    """Run one stem-separation job on a GPU.
+
+    Same bun entrypoint as `process_job` — process-one.ts dispatches on the
+    job's `result.stems` flag — so the pipeline code is identical to local.
+    Only the image differs: torch, audio-separator and an L4.
+    """
+    os.umask(0o077)
+    env = os.environ.copy()
+    env.setdefault("DATA_DIR", "/tmp/thumper-data")
+    env.setdefault("STEM_SEPARATOR_PATH", "/opt/venv/bin/audio-separator")
+    env.setdefault("STEM_MODEL_DIR", "/models")
+
+    try:
+        return run_process_job_command(job_id, env)
+    finally:
+        # The first job downloads the checkpoint into the Volume; commit so
+        # every later container starts with it already present.
+        try:
+            stem_models.commit()
+        except Exception:  # noqa: BLE001 - never fail a finished job on this
+            pass
+
+
+@app.function(image=endpoint_image, secrets=[secrets], timeout=30)
+@modal.fastapi_endpoint(method="POST")
+def wake_stems(item: dict):
+    """HTTP entry for stem-separation jobs (GPU), used by Vercel."""
+    from fastapi import HTTPException
+
+    expected = os.environ.get("MODAL_WEBHOOK_SECRET", "").strip()
+    if not expected:
+        raise HTTPException(status_code=503, detail="webhook secret is not configured")
+    provided = str(item.get("secret") or "").strip()
+    if not stdlib_secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+    job_id = str(item.get("jobId") or "").strip()
+    if not job_id:
+        raise HTTPException(status_code=422, detail="jobId required")
+
+    call = process_stem_job.spawn(job_id)
+    return {"ok": True, "jobId": job_id, "callId": call.object_id}
 
 
 @app.function(

@@ -173,6 +173,44 @@ export const RetagJobPayloadSchema = z.object({
 });
 export type RetagJobPayload = z.infer<typeof RetagJobPayloadSchema>;
 
+/**
+ * Stem separation. Chosen by listening test over four models on real bass
+ * music, not by leaderboard SDR — the SDR favourite (bs_roformer_ep_317) was
+ * the one that left a vocal chop in the drop, and was 5.6x slower.
+ * See scripts/stem-bench/.
+ */
+export const STEM_MODEL_DEFAULT =
+  "melband_roformer_instvox_duality_v2.ckpt" as const;
+
+export const StemRoleSchema = z.enum(["instrumental", "vocals"]);
+export type StemRole = z.infer<typeof StemRoleSchema>;
+
+/** Separation accepts the same uploads as retag — see RETAG_INPUT_*. */
+export const CreateStemJobInputSchema = z.object({
+  inputStorageKey: z.string().min(1),
+  destination: DeliveryDestinationSchema.default("browser"),
+  titleHint: z.string().optional(),
+  artistHint: z.string().optional(),
+});
+export type CreateStemJobInput = z.infer<typeof CreateStemJobInputSchema>;
+
+export const StemJobPayloadSchema = z.object({
+  jobId: z.string().uuid(),
+  userId: z.string().min(1),
+  /** Storage key for the uploaded audio (Blob or DATA_DIR). */
+  inputStorageKey: z.string().min(1),
+  destination: DeliveryDestinationSchema.default("browser"),
+  driveFolderId: z.string().optional(),
+  titleHint: z.string().optional(),
+  artistHint: z.string().optional(),
+});
+export type StemJobPayload = z.infer<typeof StemJobPayloadSchema>;
+
+/** Display label for a stem role, e.g. for filenames and buttons. */
+export function stemRoleLabel(role: StemRole): string {
+  return role === "instrumental" ? "Instrumental" : "Vocals";
+}
+
 export function detectSourceKind(url: string): SourceKind | null {
   try {
     const host = new URL(url).hostname.replace(/^www\./, "").toLowerCase();

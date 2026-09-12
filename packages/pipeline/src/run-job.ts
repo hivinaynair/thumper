@@ -77,6 +77,7 @@ export type ProgressUpdater = (patch: {
     | "resolving"
     | "downloading"
     | "converting"
+    | "separating"
     | "delivering"
     | "cleanup"
     | "done"
@@ -123,6 +124,21 @@ export type ProgressUpdater = (patch: {
     /** True when this job retagged an uploaded audio file → FLAC. */
     retag?: boolean;
     inputStorageKey?: string;
+    /**
+     * Stem separation emits *two* files, so it carries `stemFiles` instead of
+     * the single `fileId` every other job shape uses.
+     */
+    stems?: boolean;
+    stemModel?: string;
+    stemFiles?: Array<{
+      fileId: string;
+      role: "instrumental" | "vocals";
+      filename: string;
+      mime: string;
+      sizeBytes: number;
+      driveFileId?: string;
+      driveUrl?: string;
+    }>;
     manualDownloadUrl?: string;
     manualDownloadTitle?: string | null;
     clubReadyOnly?: boolean;

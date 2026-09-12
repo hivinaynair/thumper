@@ -25,6 +25,8 @@ export * from "./retag-job";
 export * from "./artwork-fallback";
 export * from "./retag-search";
 export * from "./run-job";
+export * from "./separate";
+export * from "./separate-job";
 export * from "./similarity";
 export * from "./soundcloud-client";
 export * from "./soundcloud-purchase";
