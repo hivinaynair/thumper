@@ -17,6 +17,11 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { cookieNeedsRefresh, jobsToRetry, retryButtonLabel } from "../../lib/cookie-retry";
+import {
+  type CookieProviderKey,
+  type CookieSetupState,
+  cookieSetupState,
+} from "../../lib/cookie-setup";
 import { StatusDot } from "../components/status-dot";
 import { COOKIE_SYNC_EXTENSION_VERSION } from "./cookie-sync";
 import {
@@ -189,10 +194,168 @@ const TIER_RULE: Record<VerdictTier, string> = {
   pending: "border-border",
 };
 
+/** Providers the extension refused to export because nobody is signed in. */
+function skippedFromSync(result: SyncResult): CookieProviderKey[] {
+  const out: CookieProviderKey[] = [];
+  for (const key of ["youtube", "soundcloud"] as const) {
+    if (result.results?.[key]?.status === "skipped") out.push(key);
+  }
+  return out;
+}
+
 const COOKIE_PROVIDERS = [
   ["youtube", "YouTube"],
   ["soundcloud", "SoundCloud"],
 ] as const;
+
+
+const PROVIDER_SITES: Record<CookieProviderKey, { label: string; url: string }> =
+  {
+    youtube: { label: "YouTube", url: "https://www.youtube.com" },
+    soundcloud: { label: "SoundCloud", url: "https://soundcloud.com" },
+  };
+
+/**
+ * One instruction at a time.
+ *
+ * Everything a download needs from the browser — the extension, a signed-in
+ * tab, a fresh sync — fails in a way that looks identical from the queue: jobs
+ * just stop working. This panel names the single next action instead, and sits
+ * beside the Sync button rather than down in the job list where the old
+ * install steps lived.
+ */
+function CookieSetupPanel({
+  state,
+  syncing,
+  onSync,
+}: {
+  state: CookieSetupState;
+  syncing: boolean;
+  onSync: () => Promise<void>;
+}) {
+  if (state.step === "ready") return null;
+
+  // Same vocabulary as the session dots: amber for "works, but attend to it",
+  // red for "nothing will download until you act".
+  const blocking = state.step === "install" || state.step === "sync";
+  const accent = blocking
+    ? "var(--ui-tier-unsuitable)"
+    : "var(--ui-tier-marginal)";
+
+  const installSteps = (
+    <ol className="mt-1.5 list-decimal space-y-0.5 pl-4">
+      <li>Unzip the download</li>
+      <li>
+        Open <code>chrome://extensions</code>, enable Developer mode
+      </li>
+      <li>
+        Load unpacked → pick the unzipped folder (or Reload if already
+        installed), then reload this page
+      </li>
+    </ol>
+  );
+
+  const downloadLink = (
+    <a
+      href="/thumper-extension.zip"
+      download
+      className="text-primary underline underline-offset-2"
+    >
+      download v{COOKIE_SYNC_EXTENSION_VERSION}
+    </a>
+  );
+
+  return (
+    <div
+      className="mt-3 rounded-md border border-border border-l-2 bg-muted px-3 py-2.5 text-xs text-muted-foreground"
+      style={{ borderLeftColor: accent }}
+    >
+      {state.step === "install" ? (
+        <>
+          <p className="font-medium text-foreground">
+            Install the Thumper extension to start downloading
+          </p>
+          <p className="mt-1">
+            It copies your signed-in YouTube and SoundCloud sessions to Thumper
+            so downloads can use them — {downloadLink}
+          </p>
+          {installSteps}
+        </>
+      ) : null}
+
+      {state.step === "update" ? (
+        <>
+          <p className="font-medium text-foreground">
+            Extension v{state.installed} is out of date
+          </p>
+          <p className="mt-1">
+            v{COOKIE_SYNC_EXTENSION_VERSION} changed which sessions get synced.
+            Until you update, syncing may look like it worked but leave Thumper
+            without usable cookies — {downloadLink}
+          </p>
+          {installSteps}
+        </>
+      ) : null}
+
+      {state.step === "signin" ? (
+        <>
+          <p className="font-medium text-foreground">
+            Sign in to{" "}
+            {state.providers.map((k) => PROVIDER_SITES[k].label).join(" and ")}{" "}
+            in this browser
+          </p>
+          <p className="mt-1">
+            The last sync skipped{" "}
+            {state.providers.map((k, i) => (
+              <span key={k}>
+                {i > 0 ? ", " : ""}
+                <a
+                  href={PROVIDER_SITES[k].url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-primary underline underline-offset-2"
+                >
+                  {PROVIDER_SITES[k].label}
+                </a>
+              </span>
+            ))}{" "}
+            because no session was found. Sign in there, then sync again.
+          </p>
+        </>
+      ) : null}
+
+      {state.step === "sync" ? (
+        <p>
+          <span className="font-medium text-foreground">Almost there.</span>{" "}
+          Extension installed — sync your sessions to Thumper and you can start
+          queueing links.
+        </p>
+      ) : null}
+
+      {state.step === "refresh" ? (
+        <p>
+          {state.reason === "failed"
+            ? "A job failed on stale or blocked cookies. Refresh, then retry the failed tracks."
+            : "YouTube session looks older than 12h. Refresh before the next download."}
+        </p>
+      ) : null}
+
+      {state.step !== "install" && state.step !== "update" ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          className="mt-2 h-7 text-xs"
+          disabled={syncing}
+          onClick={() => void onSync()}
+        >
+          <RefreshCw className={syncing ? "animate-spin" : ""} />
+          {state.step === "sync" ? "Sync sessions" : "Refresh sessions"}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
 
 export default function DownloaderPage() {
   const [url, setUrl] = useState("");
@@ -206,7 +369,14 @@ export default function DownloaderPage() {
   const [clearing, setClearing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [messageTone, setMessageTone] = useState<"ok" | "error">("ok");
-  const [extensionReady, setExtensionReady] = useState(false);
+  // The version, not just presence: an extension left on an older build syncs
+  // providers the API now rejects, which reads as "cookies broken" unless the
+  // page says outright that the extension is stale.
+  const [extensionVersion, setExtensionVersion] = useState<string | null>(null);
+  const [skippedProviders, setSkippedProviders] = useState<CookieProviderKey[]>(
+    [],
+  );
+  const extensionReady = extensionVersion !== null;
   const extensionReadyRef = useRef(false);
 
   useEffect(() => {
@@ -247,7 +417,7 @@ export default function DownloaderPage() {
         version?: string;
       };
       if (data?.source === "thumper-extension" && data.type === "extension-ready") {
-        setExtensionReady(true);
+        setExtensionVersion(typeof data.version === "string" ? data.version : "unknown");
       }
     };
     window.addEventListener("focus", onFocus);
@@ -338,13 +508,16 @@ export default function DownloaderPage() {
     setMessage(null);
     try {
       const result = await requestExtensionSync();
+      if (result.version) setExtensionVersion(result.version);
       if (!result.ok) {
         setMessageTone("error");
         setMessage(result.error || result.message || "Cookie refresh failed");
+        setSkippedProviders(skippedFromSync(result));
         return;
       }
       setMessageTone("ok");
       setMessage(result.message || "Cookies refreshed");
+      setSkippedProviders(skippedFromSync(result));
       await refreshCookies();
     } finally {
       setSyncing(false);
@@ -391,6 +564,14 @@ export default function DownloaderPage() {
 
   // "Checking cookie sync…" is a load state, not a failure; painting it in the
   // error tone makes a healthy page read as broken on arrival.
+  const setupState = cookieSetupState({
+    extensionVersion,
+    expectedVersion: COOKIE_SYNC_EXTENSION_VERSION,
+    cookies,
+    skipped: skippedProviders,
+    youtubeStale,
+    failedNeedRefresh,
+  });
   const checkingCookies = !cookies;
   const notice = message ?? (checkingCookies ? null : gate.reason);
   const noticeIsError = message ? messageTone === "error" : !gate.ready;
@@ -550,38 +731,7 @@ export default function DownloaderPage() {
           </span>
         </div>
 
-        {!extensionReady ? (
-          <div className="mt-3 rounded-md border border-border bg-muted px-3 py-2.5 text-xs text-muted-foreground">
-            <p>
-              Extension not detected —{" "}
-              <a
-                href="/thumper-extension.zip"
-                download
-                className="text-primary underline underline-offset-2"
-              >
-                download v{COOKIE_SYNC_EXTENSION_VERSION}
-              </a>
-            </p>
-            <ol className="mt-1.5 list-decimal space-y-0.5 pl-4">
-              <li>Unzip the download</li>
-              <li>
-                Open <code>chrome://extensions</code>, enable Developer mode
-              </li>
-              <li>
-                Load unpacked → pick the unzipped folder (or Reload if already installed), then
-                reload this page
-              </li>
-            </ol>
-          </div>
-        ) : failedNeedRefresh ? (
-          <p className="mt-3 rounded-md border border-border bg-muted px-3 py-2.5 text-xs text-muted-foreground">
-            A job failed on stale or blocked cookies — Refresh, then retry the failed tracks.
-          </p>
-        ) : youtubeStale ? (
-          <p className="mt-3 rounded-md border border-border bg-muted px-3 py-2.5 text-xs text-muted-foreground">
-            YouTube session looks older than 12h. Refresh before the next download.
-          </p>
-        ) : null}
+        <CookieSetupPanel state={setupState} syncing={syncing} onSync={syncCookies} />
 
         <Separator className="my-6" />
 
