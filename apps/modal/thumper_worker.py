@@ -102,7 +102,17 @@ endpoint_image = (
 # never lands in the cold-start path of every download job, and vice versa.
 stem_image = (
     modal.Image.from_registry("oven/bun:1.3-debian", add_python="3.12")
-    .apt_install("ffmpeg", "ca-certificates", "python3", "python3-venv", "curl")
+    # build-essential + clang: audio-separator pulls demucs -> diffq, which
+    # ships a C extension and has no cp312 wheel, so it compiles from source.
+    .apt_install(
+        "ffmpeg",
+        "ca-certificates",
+        "python3",
+        "python3-venv",
+        "curl",
+        "build-essential",
+        "clang",
+    )
     .run_commands(
         "python3 -m venv /opt/venv",
         # audioread is a real dependency of audio-separator's spec_utils that

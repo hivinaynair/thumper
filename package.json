@@ -16,7 +16,7 @@
     "db:migrate": "bun run --filter @thumper/db migrate",
     "format-and-lint": "biome check .",
     "format-and-lint:fix": "biome check . --write",
-    "prepare": "lefthook install"
+    "prepare": "lefthook install || true"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",
