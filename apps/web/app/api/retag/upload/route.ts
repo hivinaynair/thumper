@@ -1,15 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { auth } from "@clerk/nextjs/server";
 import { queryFromAudioFilename } from "@thumper/pipeline/retag-search";
-import { hasBlobStorage, putBytes, safeUserId, userStorageKey } from "@thumper/pipeline/storage";
+import {
+  abortBrowserUpload,
+  assertOwnedUploadKey,
+  completeBrowserUpload,
+  createBrowserUpload,
+  hasObjectStorage,
+  putBytes,
+  userStorageKey,
+} from "@thumper/pipeline/storage";
 import {
   isRetagInput,
-  RETAG_INPUT_CONTENT_TYPES,
   RETAG_INPUT_LABEL,
   retagInputExtension,
   safeUploadName,
 } from "@thumper/shared";
-import { type HandleUploadBody, handleUpload } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -17,22 +23,22 @@ export const maxDuration = 300;
 
 const MAX_BYTES = 500 * 1024 * 1024; // 500 MB
 
-/** Tell the client whether to use direct Blob upload or local multipart. */
+/** Tell the client whether to use direct R2 upload or local multipart. */
 export async function GET() {
   const { userId } = await auth();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   return NextResponse.json({
-    mode: hasBlobStorage() ? "blob" : "local",
+    mode: hasObjectStorage() ? "object" : "local",
     maxBytes: MAX_BYTES,
   });
 }
 
 /**
  * Two modes:
- * - JSON body → Vercel Blob `handleUpload` (client uploads large WAVs directly)
- * - multipart → local/server putBytes (dev without Blob, or small files)
+ * - JSON body → R2 presign handshake (client PUTs large WAVs directly)
+ * - multipart → local/server putBytes (dev without R2, or small files)
  */
 export async function POST(req: Request) {
   const { userId } = await auth();
@@ -42,48 +48,26 @@ export async function POST(req: Request) {
 
   const contentType = req.headers.get("content-type") ?? "";
 
-  // Client token handshake for @vercel/blob/client upload()
   if (contentType.includes("application/json")) {
-    if (!hasBlobStorage()) {
-      return NextResponse.json({ error: "Blob storage is not configured" }, { status: 503 });
+    if (!hasObjectStorage()) {
+      return NextResponse.json({ error: "Object storage is not configured" }, { status: 503 });
     }
 
-    let body: HandleUploadBody;
+    let body: Record<string, unknown>;
     try {
-      body = (await req.json()) as HandleUploadBody;
+      body = (await req.json()) as Record<string, unknown>;
     } catch {
       return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
     }
 
     try {
-      const json = await handleUpload({
-        body,
-        request: req,
-        onBeforeGenerateToken: async (pathname) => {
-          const expected = `users/${safeUserId(userId)}/uploads/`;
-          if (!pathname.startsWith(expected) || pathname.includes("..")) {
-            throw new Error("Invalid upload path");
-          }
-          if (!retagInputExtension(pathname)) {
-            throw new Error(`Only ${RETAG_INPUT_LABEL} files are supported`);
-          }
-          return {
-            allowedContentTypes: [...RETAG_INPUT_CONTENT_TYPES],
-            maximumSizeInBytes: MAX_BYTES,
-            addRandomSuffix: false,
-            allowOverwrite: true,
-            tokenPayload: JSON.stringify({ userId }),
-          };
-        },
-      });
-      return NextResponse.json(json);
+      return NextResponse.json(await handleObjectUpload(userId, body));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return NextResponse.json({ error: message }, { status: 400 });
     }
   }
 
-  // Local / small multipart upload through the API
   let form: FormData;
   try {
     form = await req.formData();
@@ -128,4 +112,66 @@ export async function POST(req: Request) {
     sizeBytes: buf.byteLength,
     searchQuery: queryFromAudioFilename(name),
   });
+}
+
+async function handleObjectUpload(userId: string, body: Record<string, unknown>) {
+  const action = body.action;
+  if (action === "create") {
+    const filename = String(body.filename ?? "upload.wav");
+    const size = Number(body.size);
+    const type = String(body.contentType ?? "");
+    if (!isRetagInput(filename, type)) {
+      throw new Error(`Only ${RETAG_INPUT_LABEL} files are supported`);
+    }
+    if (!retagInputExtension(filename) && !type) {
+      throw new Error(`Only ${RETAG_INPUT_LABEL} files are supported`);
+    }
+    if (!Number.isFinite(size) || size <= 0) throw new Error("Empty file");
+    if (size > MAX_BYTES) throw new Error("File too large (max 500 MB)");
+
+    const key = userStorageKey(userId, "uploads", randomUUID(), safeUploadName(filename));
+    const session = await createBrowserUpload({
+      key,
+      contentType: type || "application/octet-stream",
+      sizeBytes: size,
+    });
+    return {
+      ...session,
+      filename,
+      searchQuery: queryFromAudioFilename(filename),
+    };
+  }
+
+  if (action === "complete") {
+    const key = String(body.key ?? "");
+    const uploadId = String(body.uploadId ?? "");
+    assertOwnedUploadKey(userId, key);
+    const parts = Array.isArray(body.parts)
+      ? body.parts.map((part) => {
+          const row = part as { partNumber?: unknown; etag?: unknown };
+          return { partNumber: Number(row.partNumber), etag: String(row.etag ?? "") };
+        })
+      : [];
+    if (!uploadId || parts.some((part) => !part.partNumber || !part.etag)) {
+      throw new Error("Incomplete multipart payload");
+    }
+    await completeBrowserUpload({ key, uploadId, parts });
+    const filename = key.split("/").pop() || key;
+    return {
+      inputStorageKey: key,
+      filename,
+      searchQuery: queryFromAudioFilename(filename),
+    };
+  }
+
+  if (action === "abort") {
+    const key = String(body.key ?? "");
+    const uploadId = String(body.uploadId ?? "");
+    assertOwnedUploadKey(userId, key);
+    if (!uploadId) throw new Error("uploadId required");
+    await abortBrowserUpload({ key, uploadId });
+    return { ok: true };
+  }
+
+  throw new Error("Unknown upload action");
 }

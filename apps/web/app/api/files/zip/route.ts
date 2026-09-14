@@ -51,7 +51,7 @@ export async function GET(req: Request) {
         const target = await resolveDownloadTarget(userId, row.relativePath);
         if (!target) continue;
         const name = names[index]!;
-        if (target.kind === "blob") {
+        if (target.kind === "object") {
           archive.append(Readable.fromWeb(target.stream as NodeWebReadableStream), { name });
         } else {
           archive.append(createReadStream(target.absolutePath), { name });

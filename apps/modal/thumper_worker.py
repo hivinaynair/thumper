@@ -8,7 +8,7 @@ Secret (create once):
     DATABASE_URL=... \\
     COOKIE_ENCRYPTION_KEY=... \\
     CLERK_SECRET_KEY=... \\
-    BLOB_READ_WRITE_TOKEN=... \\
+    R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=... \\
     MODAL_WEBHOOK_SECRET=...
 """
 

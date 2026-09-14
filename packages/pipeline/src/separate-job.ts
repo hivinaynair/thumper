@@ -23,7 +23,7 @@ import type { ProgressUpdater } from "./run-job";
 import { separateStems } from "./separate";
 import {
   deleteObjectStrict,
-  hasBlobStorage,
+  hasObjectStorage,
   materializeObject,
   putLocalFile,
   userStorageKey,
@@ -202,8 +202,8 @@ async function runSeparateJobCore(
       staged.push({ role, outPath, filename });
     }
 
-    const blobMode = hasBlobStorage();
-    const skipObjectStore = blobMode && destination === "drive";
+    const objectMode = hasObjectStorage();
+    const skipObjectStore = objectMode && destination === "drive";
     const wantsDrive = destination === "drive" || destination === "both";
 
     await completeDeliveryTransaction({
@@ -224,11 +224,11 @@ async function runSeparateJobCore(
             const stat = await fs.stat(outPath);
             let relativePath = path.relative(userRoot(payload.userId), outPath);
 
-            if (!blobMode) {
+            if (!objectMode) {
               registerCleanup(() => fs.rm(outPath, { force: true }));
             }
 
-            if (blobMode && !skipObjectStore) {
+            if (objectMode && !skipObjectStore) {
               const key = userStorageKey(payload.userId, "downloads", randomUUID(), filename);
               await putLocalFile(key, outPath, { contentType: "audio/flac" });
               registerCleanup(() => deleteObjectStrict(key));
@@ -303,7 +303,7 @@ async function runSeparateJobCore(
       beforeComplete: async () => {
         // In local mode the downloads dir *is* the object store, so the stems
         // must survive cleanup.
-        cleanupState.retainOutputs = !blobMode;
+        cleanupState.retainOutputs = !objectMode;
         await cleanupStemPaths({
           workDir,
           state: cleanupState,

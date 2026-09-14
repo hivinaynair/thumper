@@ -66,7 +66,7 @@ import {
   resolveSoundCloudPurchase,
 } from "./soundcloud-purchase";
 import { fetchSpotifyCatalog, type SpotifyTrackMeta } from "./spotify";
-import { deleteObjectStrict, hasBlobStorage, putLocalFile, userStorageKey } from "./storage";
+import { deleteObjectStrict, hasObjectStorage, putLocalFile, userStorageKey } from "./storage";
 
 export type ProgressUpdater = (patch: {
   status?: "running" | "cancelling" | "cancelled" | "completed" | "failed";
@@ -232,9 +232,9 @@ async function deliverArtifact(params: {
     create: async (registerCleanup) => {
       const { deps, artifact, outDir } = params;
       const { db, payload } = deps;
-      const blobMode = hasBlobStorage();
-      const skipObjectStore = blobMode && payload.destination === "drive";
-      const copiedLocalOriginal = !blobMode && artifact.action === "preserve-original";
+      const objectMode = hasObjectStorage();
+      const skipObjectStore = objectMode && payload.destination === "drive";
+      const copiedLocalOriginal = !objectMode && artifact.action === "preserve-original";
       const deliveryPath = copiedLocalOriginal
         ? await preserveArtifactForLocalDelivery({
             sourcePath: artifact.path,
@@ -248,7 +248,7 @@ async function deliverArtifact(params: {
       const stat = await fs.stat(deliveryPath);
       let relativePath = path.relative(userRoot(payload.userId), deliveryPath);
 
-      if (blobMode && !skipObjectStore) {
+      if (objectMode && !skipObjectStore) {
         const key = userStorageKey(payload.userId, "downloads", randomUUID(), artifact.filename);
         await putLocalFile(key, deliveryPath, { contentType: artifact.mime });
         registerCleanup(() => deleteObjectStrict(key));
@@ -298,7 +298,7 @@ async function deliverArtifact(params: {
 
       // Converted outputs are temporary in object-storage mode. Preserved
       // sources remain until runDownloadJob's outer work-directory cleanup.
-      if (blobMode && artifact.audioConverted) {
+      if (objectMode && artifact.audioConverted) {
         await fs.unlink(deliveryPath).catch(() => undefined);
       }
 

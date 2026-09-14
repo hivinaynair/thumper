@@ -8,7 +8,7 @@ Private friends-and-family DJ audio harvest tool. Turborepo monorepo (**Bun only
 - `apps/extension` — Chrome MV3 cookie sync (Load unpacked from `apps/extension/dist`)
 - `packages/shared` — zod DTOs / URL helpers
 - `packages/db` — Drizzle schema (jobs = UI source of truth)
-- `packages/pipeline` — download / convert / cookies / Drive / Blob storage
+- `packages/pipeline` — download / convert / cookies / Drive / R2 storage
 
 Requires [Bun](https://bun.sh) ≥ 1.3.
 
@@ -35,14 +35,14 @@ bun run dev
 - Worker: started via `bun run dev` (turbo filter) — uses `PROCESS_BACKEND=pgboss` (default)
 - Extension: `bun run --filter extension build` → Chrome → Load unpacked → `apps/extension/dist`
 
-Local mode stores cookies/media under `DATA_DIR`. Leave `BLOB_READ_WRITE_TOKEN` unset.
+Local mode stores cookies/media under `DATA_DIR`. Leave `R2_*` unset.
 
 Env: one root `.env`, loaded by bun on root scripts and forwarded to each package by
 turbo's `globalEnv`. Run tasks from the repo root (`bun run dev`, `bun run dev:web`) —
 `cd apps/web && bun run dev` won't see it. New vars must be added to `globalEnv` in
 [`turbo.json`](turbo.json) or turbo's strict env mode filters them out.
 
-## Production (Vercel + Modal + Neon + Blob)
+## Production (Vercel + Modal + Neon + R2)
 
 Idle-cheap hybrid:
 
@@ -51,10 +51,23 @@ Idle-cheap hybrid:
 | Web + domains | **Vercel** (`apps/web`) |
 | Postgres | **Neon** |
 | Downloads | **Modal** (`apps/modal`) |
-| Cookies + finished audio | **Vercel Blob** |
+| Cookies + finished audio | **Cloudflare R2** (private bucket) |
 
 1. Create a Neon database; run `bun run db:migrate` with `DATABASE_URL` set.
-2. In the Vercel project (Root Directory = `apps/web`), create a **Blob** store (sets `BLOB_READ_WRITE_TOKEN`).
+2. Create a private R2 bucket and an API token with Object Read & Write. Set CORS so the web origin can `PUT`/`GET`/`HEAD` and so `ETag` is exposed (multipart uploads). Example:
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://YOUR_DOMAIN", "http://localhost:3004"],
+    "AllowedMethods": ["GET", "PUT", "HEAD"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag", "Content-Length", "Content-Type", "Content-Disposition"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
 3. Deploy Modal (see [`apps/modal/README.md`](apps/modal/README.md)); copy the wake URL.
 4. Vercel env:
 
@@ -64,7 +77,10 @@ COOKIE_ENCRYPTION_KEY=
 CLERK_SECRET_KEY=
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
 NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
-BLOB_READ_WRITE_TOKEN=     # from Vercel Blob store
+R2_ACCOUNT_ID=             # Cloudflare account id
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_BUCKET=
 PROCESS_BACKEND=modal
 MODAL_JOB_URL=             # Modal wake endpoint
 MODAL_WEBHOOK_SECRET=      # same value as in Modal secret
@@ -72,11 +88,11 @@ MODAL_WEBHOOK_SECRET=      # same value as in Modal secret
 
 5. Clerk: production instance URLs + Google `drive.file` scope as above.
 
-If Modal becomes painful later, swap the worker to **Fly Machines start/stop** and keep Vercel/Neon/Blob — only `PROCESS_BACKEND` / wake URL change.
+If Modal becomes painful later, swap the worker to **Fly Machines start/stop** and keep Vercel/Neon/R2 — only `PROCESS_BACKEND` / wake URL change.
 
 ## Production (Droplet / Compose) — optional
 
-All-in-one on a VM (~4GB / 2 vCPU). Shared `DATA_DIR` volume; no Blob/Modal required.
+All-in-one on a VM (~4GB / 2 vCPU). Shared `DATA_DIR` volume; no R2/Modal required.
 
 ```bash
 cp .env.example .env
@@ -90,7 +106,7 @@ Point DNS at the droplet and set your domain in `docker/caddy/Caddyfile`.
 - Package manager is Bun — no pnpm/npm/yarn
 - Sources: **YouTube + SoundCloud** (direct) and **Spotify** (catalog only — mirrored via scored YouTube/SoundCloud match, never Spotify audio)
 - Playlists supported (max 100 tracks); Spotify mirrors require match score ≥ 78
-- Media: local `DATA_DIR` or Vercel Blob — never under `public/`
+- Media: local `DATA_DIR` or private R2 — never under `public/`
 - Cookies encrypted at rest (`COOKIE_ENCRYPTION_KEY`)
 - SoundCloud preview streams fail closed
 - Cancel kills the active yt-dlp/ffmpeg process group (local/pg-boss worker)

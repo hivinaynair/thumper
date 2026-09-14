@@ -26,7 +26,7 @@ import { ProcessCancelledError } from "./process";
 import type { ProgressUpdater } from "./run-job";
 import {
   deleteObjectStrict,
-  hasBlobStorage,
+  hasObjectStorage,
   materializeObject,
   putLocalFile,
   userStorageKey,
@@ -195,18 +195,18 @@ async function runRetagJobCore(
     await update({ stage: "delivering", progress: 80 });
     await ensureNotCancelled(signal, db, payload.jobId);
 
-    const blobMode = hasBlobStorage();
-    const skipObjectStore = blobMode && destination === "drive";
+    const objectMode = hasObjectStorage();
+    const skipObjectStore = objectMode && destination === "drive";
     await completeDeliveryTransaction({
       create: async (registerCleanup) => {
         const stat = await fs.stat(outPath);
         let relativePath = path.relative(userRoot(payload.userId), outPath);
 
-        if (!blobMode) {
+        if (!objectMode) {
           registerCleanup(() => fs.rm(outPath, { force: true }));
         }
 
-        if (blobMode && !skipObjectStore) {
+        if (objectMode && !skipObjectStore) {
           const key = userStorageKey(payload.userId, "downloads", randomUUID(), filename);
           await putLocalFile(key, outPath, { contentType: "audio/flac" });
           registerCleanup(() => deleteObjectStrict(key));
@@ -262,7 +262,7 @@ async function runRetagJobCore(
         };
       },
       beforeComplete: async () => {
-        cleanupState.retainOutput = !blobMode;
+        cleanupState.retainOutput = !objectMode;
         await cleanupRetagPaths({
           workDir,
           state: cleanupState,

@@ -123,7 +123,7 @@ export const CreateRetagJobInputSchema = z.object({
 export const RetagJobPayloadSchema = z.object({
   jobId: z.string().uuid(),
   userId: z.string().min(1),
-  /** Storage key for the uploaded WAV (Blob or DATA_DIR). */
+  /** Storage key for the uploaded WAV (R2 or DATA_DIR). */
   inputStorageKey: z.string().min(1),
   /** SoundCloud or Spotify URL used for tags + artwork. */
   metadataUrl: z.string().url(),
@@ -157,7 +157,7 @@ export const CreateStemJobInputSchema = z.object({
 export const StemJobPayloadSchema = z.object({
   jobId: z.string().uuid(),
   userId: z.string().min(1),
-  /** Storage key for the uploaded audio (Blob or DATA_DIR). */
+  /** Storage key for the uploaded audio (R2 or DATA_DIR). */
   inputStorageKey: z.string().min(1),
   destination: DeliveryDestinationSchema.default("browser"),
   driveFolderId: z.string().optional(),
@@ -210,12 +210,9 @@ export function isSupportedSource(url: string): boolean {
 }
 
 /**
- * Storage-key-safe form of a Clerk user id.
- *
- * Shared with the browser on purpose: the client builds its own Blob upload
- * pathname and the server validates that pathname against the `users/<id>/`
- * prefix, so the two must derive the segment identically or every direct
- * upload is rejected.
+ * Storage-key-safe form of a Clerk user id. Server-generated object keys
+ * (`users/<id>/uploads|downloads|cookies/…`) all go through this so a slash
+ * in a Clerk id cannot escape the prefix.
  */
 export function safeUserId(userId: string): string {
   return userId.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -277,6 +274,24 @@ export {
   youtubePremiumFromInitialData,
   youtubePremiumFromMetaJson,
 } from "./youtube-premium";
+
+/** 10 MiB parts — S3 allows a last part under 5 MiB; a single PUT covers smaller files. */
+export const UPLOAD_PART_SIZE = 10 * 1024 * 1024;
+
+export function planUploadParts(sizeBytes: number): {
+  strategy: "put" | "multipart";
+  partCount: number;
+  partSize: number;
+} {
+  if (sizeBytes <= UPLOAD_PART_SIZE) {
+    return { strategy: "put", partCount: 1, partSize: sizeBytes };
+  }
+  return {
+    strategy: "multipart",
+    partCount: Math.ceil(sizeBytes / UPLOAD_PART_SIZE),
+    partSize: UPLOAD_PART_SIZE,
+  };
+}
 
 export async function mapWithConcurrency<T, R>(
   items: readonly T[],

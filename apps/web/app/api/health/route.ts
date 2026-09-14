@@ -7,7 +7,12 @@ export async function GET() {
     ok: true,
     service: "thumper-web",
     processBackend: process.env.PROCESS_BACKEND ?? "pgboss",
-    blob: Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim()),
+    objectStorage: Boolean(
+      process.env.R2_ACCOUNT_ID?.trim() &&
+        process.env.R2_ACCESS_KEY_ID?.trim() &&
+        process.env.R2_SECRET_ACCESS_KEY?.trim() &&
+        process.env.R2_BUCKET?.trim(),
+    ),
   };
 
   try {

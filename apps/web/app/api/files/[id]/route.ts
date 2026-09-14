@@ -2,7 +2,12 @@ import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import { auth } from "@clerk/nextjs/server";
 import { files } from "@thumper/db";
-import { resolveDownloadTarget } from "@thumper/pipeline/storage";
+import {
+  hasObjectStorage,
+  presignDownloadUrl,
+  resolveDownloadTarget,
+  storageKeyForUser,
+} from "@thumper/pipeline/storage";
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "../../../../lib/db";
@@ -24,20 +29,19 @@ export async function GET(_req: Request, ctx: Ctx) {
 
   if (!file) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const target = await resolveDownloadTarget(userId, file.relativePath);
-  if (!target) {
-    return NextResponse.json({ error: "File missing" }, { status: 404 });
+  // Downloader, retag, and stems all use this URL (`<a href>` and stem-player
+  // fetch). Presign so the browser pulls bytes from R2, not through Vercel.
+  if (hasObjectStorage()) {
+    const url = await presignDownloadUrl(storageKeyForUser(userId, file.relativePath), {
+      contentDisposition: contentDispositionAttachment(file.filename),
+      contentType: file.mime ?? "application/octet-stream",
+    });
+    return NextResponse.redirect(url, 307);
   }
 
-  if (target.kind === "blob") {
-    return new NextResponse(target.stream, {
-      headers: {
-        "Content-Type": target.contentType || file.mime || "application/octet-stream",
-        "Content-Length": String(target.size),
-        "Content-Disposition": contentDispositionAttachment(file.filename),
-        "Cache-Control": "private, no-store",
-      },
-    });
+  const target = await resolveDownloadTarget(userId, file.relativePath);
+  if (target?.kind !== "file") {
+    return NextResponse.json({ error: "File missing" }, { status: 404 });
   }
 
   try {

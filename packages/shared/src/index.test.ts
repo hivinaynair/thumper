@@ -3,10 +3,12 @@ import {
   detectSourceKind,
   isRetagInput,
   isSupportedSource,
+  planUploadParts,
   RetagJobPayloadSchema,
   retagInputExtension,
   sanitizeFilename,
   trackDisplayName,
+  UPLOAD_PART_SIZE,
 } from "./index";
 
 describe("detectSourceKind", () => {
@@ -71,6 +73,25 @@ describe("retag input acceptance", () => {
   it("rejects non-audio, including a bare octet-stream with no extension", () => {
     expect(isRetagInput("notes.txt", "text/plain")).toBe(false);
     expect(isRetagInput("mystery", "application/octet-stream")).toBe(false);
+  });
+});
+
+describe("planUploadParts", () => {
+  it("uses a single PUT at or under the part size", () => {
+    expect(planUploadParts(1)).toEqual({ strategy: "put", partCount: 1, partSize: 1 });
+    expect(planUploadParts(UPLOAD_PART_SIZE)).toEqual({
+      strategy: "put",
+      partCount: 1,
+      partSize: UPLOAD_PART_SIZE,
+    });
+  });
+
+  it("splits a 500 MB WAV into 50 parts of 10 MiB", () => {
+    expect(planUploadParts(500 * 1024 * 1024)).toEqual({
+      strategy: "multipart",
+      partCount: 50,
+      partSize: UPLOAD_PART_SIZE,
+    });
   });
 });
 
