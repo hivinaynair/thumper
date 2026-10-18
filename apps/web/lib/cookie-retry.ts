@@ -45,28 +45,54 @@ export function jobsToRetry(target: RetryableJob, allJobs: RetryableJob[]): Retr
   return failed([target]);
 }
 
-export function missingCookiesForRetry(
+const PROVIDER_LABELS: Record<"youtube" | "soundcloud", string> = {
+  youtube: "YouTube",
+  soundcloud: "SoundCloud",
+};
+
+export type CookieSplit = {
+  ready: RetryableJob[];
+  blocked: RetryableJob[];
+  /** Why the blocked ones were held back; null when none were. */
+  reason: string | null;
+};
+
+/**
+ * Split a retry batch by whether each job's failure needs a cookie the user
+ * has not synced. Refusing the whole batch — which is what this replaced —
+ * means one stale YouTube session blocks the rate-limited tracks beside it,
+ * which would have gone through fine.
+ */
+export function splitByCookieReadiness(
   targets: RetryableJob[],
   cookies: CookieStatusMap | null,
-): string | null {
-  if (!cookies) return "Sync cookies before retrying";
-  const needed = new Set<"youtube" | "soundcloud">();
+): CookieSplit {
+  const ready: RetryableJob[] = [];
+  const blocked: RetryableJob[] = [];
+  const missing = new Set<"youtube" | "soundcloud">();
+
   for (const target of targets) {
-    if (!target.error) continue;
-    for (const provider of cookieProvidersNeeded(target.error)) {
-      needed.add(provider);
+    const needed = cookieNeedsRefresh(target.error)
+      ? cookieProvidersNeeded(target.error ?? "")
+      : [];
+    const unmet = needed.filter((provider) => !cookies?.[provider]?.present);
+    if (unmet.length === 0) {
+      ready.push(target);
+      continue;
     }
+    blocked.push(target);
+    for (const provider of unmet) missing.add(provider);
   }
-  const labels: Record<string, string> = {
-    youtube: "YouTube",
-    soundcloud: "SoundCloud",
+
+  const names = [...missing].map((provider) => PROVIDER_LABELS[provider]);
+  return {
+    ready,
+    blocked,
+    reason:
+      names.length === 0
+        ? null
+        : `Sync ${names.join(" and ")} cookies to retry ${blocked.length} more`,
   };
-  for (const provider of needed) {
-    if (!cookies[provider]?.present) {
-      return `Sync ${labels[provider]} cookies before retrying`;
-    }
-  }
-  return null;
 }
 
 export function retryButtonLabel(count: number): string {

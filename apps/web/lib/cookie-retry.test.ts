@@ -5,9 +5,9 @@ import {
   cookieNeedsRefresh,
   cookieProvidersNeeded,
   jobsToRetry,
-  missingCookiesForRetry,
   type RetryableJob,
   retryButtonLabel,
+  splitByCookieReadiness,
 } from "./cookie-retry";
 
 const BOT_CHECK =
@@ -101,25 +101,52 @@ describe("jobsToRetry", () => {
   });
 });
 
-describe("missingCookiesForRetry", () => {
-  it("requires YouTube cookies for bot-check retries", () => {
+describe("splitByCookieReadiness", () => {
+  const present = {
+    youtube: { present: true, updatedAt: "2026-10-18T10:00:00.000Z" },
+    soundcloud: { present: true, updatedAt: null },
+  };
+  const noYoutube = {
+    youtube: { present: false, updatedAt: null },
+    soundcloud: { present: true, updatedAt: null },
+  };
+
+  it("lets everything through when the needed cookies are synced", () => {
     const failed = job({ id: "track-1", error: BOT_CHECK });
-    expect(
-      missingCookiesForRetry([failed], {
-        youtube: { present: false, updatedAt: null },
-        soundcloud: { present: true, updatedAt: null },
-      }),
-    ).toBe("Sync YouTube cookies before retrying");
+    const split = splitByCookieReadiness([failed], present);
+    expect(split.ready.map((row) => row.id)).toEqual(["track-1"]);
+    expect(split.blocked).toEqual([]);
+    expect(split.reason).toBeNull();
   });
 
-  it("is ready when the needed cookies are present", () => {
-    const failed = job({ id: "track-1", error: BOT_CHECK });
-    expect(
-      missingCookiesForRetry([failed], {
-        youtube: { present: true, updatedAt: "2026-08-28T10:00:00.000Z" },
-        soundcloud: { present: true, updatedAt: null },
-      }),
-    ).toBeNull();
+  it("holds back only the tracks that actually need the missing cookies", () => {
+    const botCheck = job({ id: "bot", error: BOT_CHECK });
+    const throttled = job({ id: "slow", error: "HTTP Error 429: Too Many Requests" });
+    const split = splitByCookieReadiness([botCheck, throttled], noYoutube);
+    expect(split.ready.map((row) => row.id)).toEqual(["slow"]);
+    expect(split.blocked.map((row) => row.id)).toEqual(["bot"]);
+    expect(split.reason).toBe("Sync YouTube cookies to retry 1 more");
+  });
+
+  it("retries non-cookie failures even with no cookie status at all", () => {
+    const throttled = job({ id: "slow", error: "HTTP Error 429: Too Many Requests" });
+    const split = splitByCookieReadiness([throttled], null);
+    expect(split.ready.map((row) => row.id)).toEqual(["slow"]);
+    expect(split.reason).toBeNull();
+  });
+
+  it("names both providers when a batch needs both", () => {
+    const yt = job({ id: "yt", error: BOT_CHECK });
+    const sc = job({
+      id: "sc",
+      error: "SoundCloud session is no longer usable — refresh SoundCloud cookies and retry.",
+    });
+    const split = splitByCookieReadiness([yt, sc], {
+      youtube: { present: false, updatedAt: null },
+      soundcloud: { present: false, updatedAt: null },
+    });
+    expect(split.ready).toEqual([]);
+    expect(split.reason).toBe("Sync YouTube and SoundCloud cookies to retry 2 more");
   });
 });
 
@@ -157,7 +184,7 @@ describe("downloader wiring", () => {
       "utf8",
     );
     expect(route).toContain("jobsToRetry");
-    expect(route).toContain("missingCookiesForRetry");
+    expect(route).toContain("splitByCookieReadiness");
     expect(route).toContain("requeueFields");
     expect(route).toContain("wakeModalJob");
     expect(route).toContain("downloadPayloadFromJob");

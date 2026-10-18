@@ -5,7 +5,7 @@ import { mapWithConcurrency, QUEUE_NAME_DOWNLOAD } from "@thumper/shared";
 import { and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getBoss } from "../../../../../lib/boss";
-import { jobsToRetry, missingCookiesForRetry } from "../../../../../lib/cookie-retry";
+import { jobsToRetry, splitByCookieReadiness } from "../../../../../lib/cookie-retry";
 import { getDb } from "../../../../../lib/db";
 import {
   downloadPayloadFromJob,
@@ -56,16 +56,15 @@ export async function POST(_req: Request, ctx: Ctx) {
   }
 
   const cookies = await getCookieStatus(userId);
-  const missing = missingCookiesForRetry(targets, cookies);
-  if (missing) {
-    return NextResponse.json({ error: missing }, { status: 400 });
+  const { ready, blocked, reason } = splitByCookieReadiness(targets, cookies);
+  if (ready.length === 0) {
+    return NextResponse.json({ error: reason ?? "Nothing to retry" }, { status: 400 });
   }
 
-  const targetIds = targets.map((row) => row.id);
-  const now = new Date();
+  const targetIds = ready.map((row) => row.id);
   await db
     .update(jobs)
-    .set({ ...requeueFields(), updatedAt: now })
+    .set({ ...requeueFields(), updatedAt: new Date() })
     .where(and(eq(jobs.userId, userId), inArray(jobs.id, targetIds)));
 
   const backend = (process.env.PROCESS_BACKEND ?? "pgboss").toLowerCase();
@@ -135,5 +134,11 @@ export async function POST(_req: Request, ctx: Ctx) {
     );
   }
 
-  return NextResponse.json({ ok: true, retried: woken, failedToWake: failures });
+  return NextResponse.json({
+    ok: true,
+    retried: woken,
+    failedToWake: failures,
+    skipped: blocked.length,
+    skippedReason: blocked.length > 0 ? reason : null,
+  });
 }
