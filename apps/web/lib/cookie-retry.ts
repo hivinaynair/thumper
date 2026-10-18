@@ -37,11 +37,12 @@ export function jobsToRetry(target: RetryableJob, allJobs: RetryableJob[]): Retr
     .map((id) => byId.get(id))
     .filter((row): row is RetryableJob => Boolean(row));
 
-  const cookieFailed = (rows: RetryableJob[]) =>
-    rows.filter((row) => row.status === "failed" && cookieNeedsRefresh(row.error));
+  // Every failure is retryable now: some causes will fail again the same way,
+  // but which ones are worth re-running is the user's call, not a regex's.
+  const failed = (rows: RetryableJob[]) => rows.filter((row) => row.status === "failed");
 
-  if (children.length > 0) return cookieFailed(children);
-  return cookieFailed([target]);
+  if (children.length > 0) return failed(children);
+  return failed([target]);
 }
 
 export function missingCookiesForRetry(
@@ -69,6 +70,6 @@ export function missingCookiesForRetry(
 }
 
 export function retryButtonLabel(count: number): string {
-  if (count <= 1) return "Retry with new cookies";
-  return `Retry ${count} with new cookies`;
+  if (count <= 1) return "Retry";
+  return `Retry ${count} failed`;
 }

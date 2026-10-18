@@ -38,7 +38,7 @@ describe("jobsToRetry", () => {
     expect(jobsToRetry(failed, [failed]).map((row) => row.id)).toEqual(["track-1"]);
   });
 
-  it("retries only cookie-failed children of a still-running playlist", () => {
+  it("retries every failed child of a still-running playlist", () => {
     const parent = job({
       id: "uk-140",
       status: "running",
@@ -62,6 +62,7 @@ describe("jobsToRetry", () => {
     expect(jobsToRetry(parent, [parent, ...children]).map((row) => row.id)).toEqual([
       "fail-a",
       "fail-b",
+      "quality",
     ]);
   });
 
@@ -83,6 +84,11 @@ describe("jobsToRetry", () => {
       error: BOT_CHECK,
     });
     expect(jobsToRetry(cancelled, [cancelled])).toEqual([]);
+  });
+
+  it("retries a child posted on its own id, with no parent in the catalog", () => {
+    const child = job({ id: "fail-a", error: "ffmpeg exited with code 1" });
+    expect(jobsToRetry(child, [child]).map((row) => row.id)).toEqual(["fail-a"]);
   });
 
   it("retries a playlist parent that failed before any children existed", () => {
@@ -126,9 +132,9 @@ describe("cookieProvidersNeeded", () => {
 });
 
 describe("retryButtonLabel", () => {
-  it("names the cookie retry for one track or several", () => {
-    expect(retryButtonLabel(1)).toBe("Retry with new cookies");
-    expect(retryButtonLabel(4)).toBe("Retry 4 with new cookies");
+  it("names a single retry plainly and a batch by its size", () => {
+    expect(retryButtonLabel(1)).toBe("Retry");
+    expect(retryButtonLabel(11)).toBe("Retry 11 failed");
   });
 });
 
