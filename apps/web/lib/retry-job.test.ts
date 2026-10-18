@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { downloadPayloadFromJob, playlistContextForChild, requeueFields } from "./retry-job";
+import {
+  clearedFailureResult,
+  downloadPayloadFromJob,
+  playlistContextForChild,
+  requeueFields,
+} from "./retry-job";
 
 describe("requeueFields", () => {
   it("clears failure so the worker can pick the job up again", () => {
@@ -89,5 +94,32 @@ describe("playlistContextForChild", () => {
       parentJobId: "uk-140",
       driveFolderId: "child-folder",
     });
+  });
+});
+
+describe("clearedFailureResult", () => {
+  it("drops what the failure wrote and keeps what the retry needs", () => {
+    expect(
+      clearedFailureResult({
+        parentJobId: "uk-140",
+        driveFolderId: "folder-uk-140",
+        clubReadyOnly: true,
+        qualityRejected: true,
+        djTier: "marginal",
+        djHeadline: "Rolls off at 16 kHz",
+        cutoffHz: 16000,
+        manualDownloadUrl: "https://shop.example/track",
+        manualDownloadTitle: "Buy on Bandcamp",
+        warnings: ["Downloaded without your account"],
+      }),
+    ).toEqual({
+      parentJobId: "uk-140",
+      driveFolderId: "folder-uk-140",
+      clubReadyOnly: true,
+    });
+  });
+
+  it("leaves a job that never had a result alone", () => {
+    expect(clearedFailureResult(null)).toBeNull();
   });
 });

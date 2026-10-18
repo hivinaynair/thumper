@@ -8,6 +8,7 @@ import { getBoss } from "../../../../../lib/boss";
 import { jobsToRetry, splitByCookieReadiness } from "../../../../../lib/cookie-retry";
 import { getDb } from "../../../../../lib/db";
 import {
+  clearedFailureResult,
   downloadPayloadFromJob,
   type JobResultMeta,
   playlistContextForChild,
@@ -62,10 +63,6 @@ export async function POST(_req: Request, ctx: Ctx) {
   }
 
   const targetIds = ready.map((row) => row.id);
-  await db
-    .update(jobs)
-    .set({ ...requeueFields(), updatedAt: new Date() })
-    .where(and(eq(jobs.userId, userId), inArray(jobs.id, targetIds)));
 
   const backend = (process.env.PROCESS_BACKEND ?? "pgboss").toLowerCase();
   const retryTargets = catalog.filter((job) => targetIds.includes(job.id));
@@ -78,6 +75,17 @@ export async function POST(_req: Request, ctx: Ctx) {
   // dozens of them into one serverless request.
   const outcomes = await mapWithConcurrency(retryTargets, 8, async (row) => {
     const ctxForChild = playlistContextForChild(row.id, catalog);
+    // Per row rather than one bulk update, because the stale failure flags
+    // being cleared differ per row. Before the enqueue, never after: a worker
+    // that picks the job up must never find it still marked failed.
+    await db
+      .update(jobs)
+      .set({
+        ...requeueFields(),
+        result: clearedFailureResult(row.result as Record<string, unknown> | null),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(jobs.userId, userId), eq(jobs.id, row.id)));
     try {
       if (boss) {
         const payload = downloadPayloadFromJob({

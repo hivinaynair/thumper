@@ -69,3 +69,32 @@ export function playlistContextForChild(
     driveFolderId: child?.result?.driveFolderId || parent?.result?.driveFolderId,
   };
 }
+
+/**
+ * Keys a *failure* wrote. Everything else in `result` — the playlist wiring
+ * and the club-ready switch — is what the retry needs to run the same job
+ * again, so it survives.
+ */
+const FAILURE_RESULT_KEYS = [
+  "qualityRejected",
+  "djTier",
+  "djHeadline",
+  "cutoffHz",
+  "manualDownloadUrl",
+  "manualDownloadTitle",
+  "warnings",
+] as const;
+
+/**
+ * Without this a requeued job shows its old "Open link" button and rejection
+ * badge for as long as it sits in the queue, because `result` is replaced only
+ * once the new run reaches a write.
+ */
+export function clearedFailureResult(
+  result: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  if (!result) return null;
+  const next = { ...result };
+  for (const key of FAILURE_RESULT_KEYS) delete next[key];
+  return next;
+}
