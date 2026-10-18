@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  looksLikeVersionSuffix,
   MIN_MATCH_SCORE,
   type MirrorCandidate,
   normalizeTrackForMatch,
@@ -39,6 +40,39 @@ describe("parseCreditTitle / normalizeTrackForMatch", () => {
     });
     expect(normalized.title).toBe("Drown");
     expect(normalized.artists).toEqual(["WINK", "borne"]);
+  });
+
+  it("does not treat dash remix titles as Artist - Song", () => {
+    // Spotify: artists=["Diffrent"], title="A Little Closer - Oppidan Remix".
+    // Parsing that as artist/title drops Diffrent and fails YouTube Music Topic hits.
+    expect(looksLikeVersionSuffix("Oppidan Remix")).toBe(true);
+    expect(looksLikeVersionSuffix("Radio Edit")).toBe(true);
+    expect(looksLikeVersionSuffix("Drown")).toBe(false);
+    expect(parseCreditTitle("A Little Closer - Oppidan Remix")).toBeNull();
+
+    const normalized = normalizeTrackForMatch({
+      title: "A Little Closer - Oppidan Remix",
+      artists: ["Diffrent"],
+      durationMs: 200_000,
+    });
+    expect(normalized).toEqual({
+      title: "A Little Closer - Oppidan Remix",
+      artists: ["Diffrent"],
+      durationMs: 200_000,
+    });
+    expect(buildYoutubeSearchQuery(normalized)).toBe(
+      "ytsearch8:Diffrent A Little Closer - Oppidan Remix",
+    );
+
+    const scored = scoreMirrorCandidate(normalized, {
+      url: "https://www.youtube.com/watch?v=ytm",
+      title: "Diffrent - A Little Closer (Oppidan Remix)",
+      uploader: "Diffrent - Topic",
+      durationSec: 200,
+      views: 10_000,
+      source: "youtube",
+    });
+    expect(scored.score).toBeGreaterThanOrEqual(MIN_MATCH_SCORE);
   });
 
   it("accepts a ~14s SC/YT duration skew when artist+title are perfect", () => {

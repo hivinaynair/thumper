@@ -11,6 +11,25 @@ import {
 } from "./spotify";
 
 /**
+ * Right-hand side of "Title - …" that is a version/remix descriptor, not a song.
+ * Spotify often stores remixes as "A Little Closer - Oppidan Remix" with the
+ * real artist in the artists field — that must not be parsed as Artist - Song.
+ */
+export function looksLikeVersionSuffix(right: string): boolean {
+  const s = right.trim();
+  if (!s) return false;
+  if (
+    /^(?:radio\s+edit|extended\s+(?:mix|version)|club\s+mix|vip(?:\s+mix)?|instrumental|acoustic|remaster(?:ed)?|slowed(?:\s*\+?\s*reverb)?|sped\s*up|nightcore|8d(?:\s*audio)?)$/i.test(
+      s,
+    )
+  ) {
+    return true;
+  }
+  // "Oppidan Remix", "Showboats Bootleg", "VIP Edit", "Whatever Mix"
+  return /\b(?:remix|bootleg|mashup|rework|refix|flip|edit|mix)\s*$/i.test(s);
+}
+
+/**
  * Label uploads often title tracks "WINK & borne - Drown" with uploader "UKF".
  * Mirror search needs the real credit + song name, not the label as artist.
  */
@@ -29,6 +48,9 @@ export function parseCreditTitle(rawTitle: string): { artists: string[]; title: 
     )
     .trim();
   if (!left || !right) return null;
+  // "Song - Oppidan Remix" / "Song - Radio Edit" keep the full title; the
+  // catalog artist is already correct and must stay in the search query.
+  if (looksLikeVersionSuffix(right)) return null;
   // Avoid treating "Song Title - Live at Brixton" as artist/title.
   const artists = splitArtistNames(left);
   if (artists.length === 0) return null;
