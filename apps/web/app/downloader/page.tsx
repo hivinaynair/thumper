@@ -546,11 +546,15 @@ export default function DownloaderPage() {
     });
   }, []);
 
-  async function retryWithNewCookies(jobId: string) {
+  /**
+   * `needsCookies` gates the extension round trip: re-syncing cookies before
+   * retrying a rate-limited track buys nothing and costs a visible pause.
+   */
+  async function retryJob(jobId: string, needsCookies: boolean) {
     setRetryingId(jobId);
     setMessage(null);
     try {
-      if (extensionReady) {
+      if (needsCookies && extensionReady) {
         const result = await requestExtensionSync();
         if (result.ok) {
           await refreshCookies();
@@ -560,14 +564,13 @@ export default function DownloaderPage() {
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
         retried?: number;
+        skipped?: number;
+        skippedReason?: string | null;
       };
       if (!res.ok) throw new Error(data.error ?? "Retry failed");
       setMessageTone("ok");
-      setMessage(
-        data.retried === 1
-          ? "Retrying with new cookies"
-          : `Retrying ${data.retried} tracks with new cookies`,
-      );
+      const retried = data.retried === 1 ? "Retrying 1 track" : `Retrying ${data.retried} tracks`;
+      setMessage(data.skippedReason ? `${retried} — ${data.skippedReason}` : retried);
       await refreshJobs();
     } catch (err) {
       setMessageTone("error");
@@ -993,6 +996,20 @@ export default function DownloaderPage() {
                                   >
                                     {kidVerdict.lead}
                                   </span>
+                                  {kidFailure ? (
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-6 px-2 text-[11px]"
+                                      disabled={retryingId !== null}
+                                      onClick={() =>
+                                        void retryJob(kid.id, cookieNeedsRefresh(kid.error))
+                                      }
+                                    >
+                                      {retryingId === kid.id ? "Retrying…" : "Retry"}
+                                    </Button>
+                                  ) : null}
                                   {kid.result?.fileId ? (
                                     <Button
                                       asChild
@@ -1049,7 +1066,12 @@ export default function DownloaderPage() {
                           variant="secondary"
                           size="sm"
                           disabled={retryingId !== null}
-                          onClick={() => void retryWithNewCookies(job.id)}
+                          onClick={() =>
+                            void retryJob(
+                              job.id,
+                              retryTargets.some((row) => cookieNeedsRefresh(row.error)),
+                            )
+                          }
                         >
                           {retryingId === job.id
                             ? "Retrying…"

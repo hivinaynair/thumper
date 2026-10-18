@@ -171,7 +171,8 @@ describe("downloader wiring", () => {
       path.join(import.meta.dir, "../app/downloader/page.tsx"),
       "utf8",
     );
-    expect(page).toContain("retryWithNewCookies");
+    expect(page).toContain("retryJob");
+    expect(page).toContain("classifyFailure");
     expect(page).toContain("/api/jobs/${");
     expect(page).toContain("/retry");
     expect(page).toContain("requestExtensionSync");
