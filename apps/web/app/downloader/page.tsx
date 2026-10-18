@@ -33,6 +33,7 @@ import {
 } from "../../lib/cookie-setup";
 import { StatusDot } from "../components/status-dot";
 import { COOKIE_SYNC_EXTENSION_VERSION } from "./cookie-sync";
+import { classifyFailure } from "./failure";
 import {
   type CookieStatus,
   groupJobs,
@@ -316,6 +317,7 @@ export default function DownloaderPage() {
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [clearing, setClearing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [messageTone, setMessageTone] = useState<"ok" | "error">("ok");
@@ -535,6 +537,14 @@ export default function DownloaderPage() {
       setSyncing(false);
     }
   }
+
+  const toggleExpanded = useCallback((id: string) => {
+    setExpandedIds((current) => {
+      const next = new Set(current);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }, []);
 
   async function retryWithNewCookies(jobId: string) {
     setRetryingId(jobId);
@@ -836,6 +846,7 @@ export default function DownloaderPage() {
             <div className="download-list">
               {topLevel.map((job) => {
                 const verdict = verdictOf(job);
+                const failure = classifyFailure(job);
                 const kids = childrenOf(job.id);
                 const rollup = rollups.get(job.id);
                 const retryTargets = jobsToRetry(job, jobs);
@@ -918,7 +929,25 @@ export default function DownloaderPage() {
                       </div>
                     ) : null}
                     <div className="download-row-details">
-                      {verdict.tier !== "pending" ? (
+                      {failure ? (
+                        <button
+                          type="button"
+                          aria-expanded={expandedIds.has(job.id)}
+                          aria-label={`Why ${jobLabel(job)} failed`}
+                          onClick={() => toggleExpanded(job.id)}
+                          className={`mt-3 block w-full border-l-2 bg-muted/50 py-2 pl-3 text-left text-[13px] leading-relaxed ${TIER_RULE.unsuitable}`}
+                        >
+                          <span
+                            className={`font-semibold tracking-wide uppercase ${TIER_TEXT.unsuitable}`}
+                          >
+                            {failure.headline}
+                          </span>
+                          <span className="text-muted-foreground">
+                            {" — "}
+                            {expandedIds.has(job.id) ? failure.raw : failure.detail}
+                          </span>
+                        </button>
+                      ) : verdict.tier !== "pending" ? (
                         <p
                           className={`mt-3 border-l-2 bg-muted/50 py-2 pl-3 text-[13px] leading-relaxed ${TIER_RULE[verdict.tier]}`}
                         >
@@ -947,35 +976,55 @@ export default function DownloaderPage() {
                         <ul className="mt-3 space-y-1.5 border-l border-border pl-3">
                           {kids.map((kid) => {
                             const kidVerdict = verdictOf(kid);
+                            const kidFailure = classifyFailure(kid);
+                            const kidExpanded = expandedIds.has(kid.id);
                             return (
-                              <li key={kid.id} className="flex items-center gap-2.5 text-xs">
-                                <StatusDot status={kid.status} />
-                                <span
-                                  title={jobLabel(kid)}
-                                  className="min-w-0 flex-1 truncate text-muted-foreground"
-                                >
-                                  {jobLabel(kid)}
-                                </span>
-                                <span
-                                  title={kidVerdict.detail ?? undefined}
-                                  className={`text-[10px] font-medium tracking-wider uppercase ${TIER_TEXT[kidVerdict.tier]}`}
-                                >
-                                  {kidVerdict.lead}
-                                </span>
-                                {kid.result?.fileId ? (
-                                  <Button
-                                    asChild
-                                    variant="secondary"
-                                    size="sm"
-                                    className="h-6 px-2 text-[11px]"
+                              <li key={kid.id} className="space-y-1">
+                                <div className="flex items-center gap-2.5 text-xs">
+                                  <StatusDot status={kid.status} />
+                                  <span
+                                    title={jobLabel(kid)}
+                                    className="min-w-0 flex-1 truncate text-muted-foreground"
                                   >
-                                    <a
-                                      href={`/api/files/${kid.result.fileId}`}
-                                      aria-label={`Download ${jobLabel(kid)}`}
+                                    {jobLabel(kid)}
+                                  </span>
+                                  <span
+                                    className={`text-[10px] font-medium tracking-wider uppercase ${TIER_TEXT[kidVerdict.tier]}`}
+                                  >
+                                    {kidVerdict.lead}
+                                  </span>
+                                  {kid.result?.fileId ? (
+                                    <Button
+                                      asChild
+                                      variant="secondary"
+                                      size="sm"
+                                      className="h-6 px-2 text-[11px]"
                                     >
-                                      Download
-                                    </a>
-                                  </Button>
+                                      <a
+                                        href={`/api/files/${kid.result.fileId}`}
+                                        aria-label={`Download ${jobLabel(kid)}`}
+                                      >
+                                        Download
+                                      </a>
+                                    </Button>
+                                  ) : null}
+                                </div>
+                                {kidFailure ? (
+                                  <button
+                                    type="button"
+                                    aria-expanded={kidExpanded}
+                                    aria-label={`Why ${jobLabel(kid)} failed`}
+                                    onClick={() => toggleExpanded(kid.id)}
+                                    className="block w-full pl-[18px] text-left text-[11px] leading-relaxed text-muted-foreground hover:text-foreground"
+                                  >
+                                    <span className={`font-medium ${TIER_TEXT.unsuitable}`}>
+                                      {kidFailure.headline}
+                                    </span>
+                                    <span>
+                                      {" — "}
+                                      {kidExpanded ? kidFailure.raw : kidFailure.detail}
+                                    </span>
+                                  </button>
                                 ) : null}
                               </li>
                             );
